@@ -219,6 +219,25 @@ checks that read rendered pixels need the WebGPU back end). `tests/gfx/xcl.sh` r
   - `D3DCompile` knows only sources prepared ahead of time; a new one fails and is logged.
   - A `Wait…X` holds the whole ring (every queue) while it waits; destroyed buffers keep their memory;
     DirectStorage runs on `Submit`, without zlib or BCPack; WebGPU's constant depth bias is an integer.
+### 3.11 A second kind of title: an old Windows PC game (2026-11-24)
+The question changed from "an Xbox title" to "any Windows game", with Narbacular Drop (2005, 32-bit,
+Direct3D 9, DirectInput 8, FMOD 3) as the first. The references split in two: Wine and Proton for the
+compatibility layer; winepak, PlayOnLinux and Lutris for the per-title recipe; OCI images for how a title is
+packaged in layers from a base. The plan and its milestones are in [status.md](status.md).
+- **Wine first, as the oracle.** A portable Wine (pure WoW64, so no 32-bit system libraries) installs and runs
+  the game with no screen: Xvfb, a virtual desktop, XTEST input. `tools/oracle-wine/` holds it: `oracle.sh`
+  (prefix, start, play, stop), `play.py` (one session-script format, meant to drive our own hosts too) and
+  `summarize.py` (Wine's traces as names and counts).
+- **The census** ([narbacular-drop.md](narbacular-drop.md)): one session from the menu into the first level,
+  traced three times. The game calls 81 Win32 functions (it imports 186), raises no exceptions, creates no
+  shaders, and draws everything with fixed-function Direct3D 9: 5.7 million calls, mostly triangle fans, many
+  lights, vertex blending, vertex fog, point sprites, and portals rendered to textures.
+- **Licences**: our own code became GPL-2.0-or-later with a map per directory ([LICENSING.md](../LICENSING.md),
+  `REUSE.toml`), so code can come from Wine and DXVK into the runtime and from GPL-3.0 projects into separate
+  tools. `rt/d3d12_layout.gen.h` is now generated straight from Microsoft's `d3d12.h` (MIT); the output is
+  byte for byte what XCL's table gave.
+- **A toolchain script and a test runner** (`tools/setup-toolchain.sh`, `tests/run.sh`): this machine had
+  lost its toolchains, and the fixtures had only been run by hand.
 
 ## 4. Roadblocks
 
@@ -239,6 +258,10 @@ checks that read rendered pixels need the WebGPU back end). `tests/gfx/xcl.sh` r
 | R12 | A `switch` in `P_GiveAmmo` | the index was copied (`mov r9d, edx`) more than 24 instructions before the jump | the look-back window is 64 instructions (37 tables recovered in Doom) |
 | R13 | 33 Doom frames differ from native | Doom draws bytes of its zone headers (pointers) in the opening melt and at a few column ends | shown to be Doom's own nondeterminism: native differs from itself there; not an emulation error |
 | R14 | Black frames in Chrome | the back end skipped the first word of each command list, so `SetPipelineState` was lost | fixed; the page can log draw statistics (`&stats=1`) |
+| R15 | No mouse motion reached the game under Wine | with no window manager nothing gives Wine's window the X input focus, and without it Wine reads no raw motion: DirectInput saw buttons with zero movement | the session player sets the focus itself, and moves the pointer only by relative steps (a warp arrives as one huge movement) |
+| R16 | Wine's installer run failed twice | a first boot stopped at the Mono prompt left a prefix that cannot load 32-bit programs; the C locale cannot create the one file whose name has `©` | no Mono / Gecko, `LANG=C.UTF-8`, and `oracle.sh prefix` recreates a half-made prefix |
+| R17 | `+snoop` logged no FMOD calls | the DLL is UPX-packed: when it loads, every export still points at zeros, and snoop skips those | unpack it first (`upx -d`); it behaves the same |
+| R18 | `dxc` for Linux needs glibc 2.38 and Docker was not running | the Doom fixture compiles one HLSL shader | the Windows `dxc.exe` under the oracle's Wine, with paths given the `Z:` drive |
 
 ### Open
 | # | Roadblock | Why it matters | Plan |
@@ -269,6 +292,9 @@ checks that read rendered pixels need the WebGPU back end). `tests/gfx/xcl.sh` r
 - **XCL is the best donor**: its test title is an oracle for console API behaviour, and its decoder and
   container parser came over with their tests passing. Some of its checks encode its own design (memory above
   4 GiB) rather than the console's behaviour; those we do not chase.
+- **Measure the title before designing for it.** The import table said 186 functions, exceptions and a shader
+  compiler; one traced session said 81 functions, no exceptions and no shaders for the first level, and that
+  text and render-to-texture are needed. The plan follows the trace, not the import table.
 - **Process lessons** (our own mistakes): `| head` on a build pipeline killed builds midway; editing runtime
   files while a background build was reading them broke a build; a research subagent once wrote a scratch file
   (`/tmp/x`) despite being read-only. Run long builds in the background, wait for them, then edit.
@@ -299,6 +325,8 @@ checks that read rendered pixels need the WebGPU back end). `tests/gfx/xcl.sh` r
 | `web/run-node.mjs`, `web/browser/` | the hosts: Node, and the page + worker for browsers |
 | `tools/build-title.sh`, `tools/census.sh`, `tools/run-chrome.mjs`, `tools/serve.mjs` | build, census, headless Chrome (WebGPU on SwiftShader, recording, reloads), a server with cross-origin isolation that also records video |
 | `fixtures/` | our own test titles (sources; built binaries are ignored) |
-| `docs/` | this log, status, first-run runbook, memory measurements |
+| `tools/oracle-wine/` | the Wine oracle: prefix, run, session player, trace summaries |
+| `tools/setup-toolchain.sh`, `tests/run.sh` | the toolchains outside the repository; every test title, one line per check |
+| `recipes/<title>/` | per-title files: session scripts now, the recipe later |
+| `docs/` | this log, status, first-run runbook, memory measurements, the Narbacular Drop census |
 
-Nothing is committed yet; the repository is local at `/home/vercel-sandbox/series-web`.

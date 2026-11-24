@@ -1,13 +1,14 @@
 #!/bin/bash
+# SPDX-License-Identifier: GPL-2.0-or-later
 # fixtures/doom/build.sh: our console Doom. Fetches doomgeneric (pinned) and Freedoom into out/doom, builds
 #   out/doom/game/doom.exe   the title (x86-64 PE, llvm-mingw), with freedoom1.wad and shaders/ beside it
 #   out/doom/native/doom     the same doomgeneric for Linux, printing the same frame hashes (the reference)
-# Environment: MINGW (llvm-mingw folder), DXC (dxc command, default ~/winsdk/dxc/dxc-docker), OUT (default out/doom)
+# Environment: MINGW (llvm-mingw folder), DXC (dxc command, default ~/winsdk/dxc/dxc-docker or ~/tools/dxc/dxc), OUT (default out/doom)
 set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd); root=$(cd "$here/../.." && pwd)
 out=${OUT:-$root/out/doom}; mkdir -p "$out"
 MINGW=${MINGW:-$HOME/tools/llvm-mingw-20261117-ucrt-ubuntu-22.04-x86_64}
-DXC=${DXC:-$HOME/winsdk/dxc/dxc-docker}
+DXC=${DXC:-$([ -x "$HOME/winsdk/dxc/dxc-docker" ] && echo "$HOME/winsdk/dxc/dxc-docker" || echo "$HOME/tools/dxc/dxc")}   # tools/setup-toolchain.sh dxc
 # the reference is built by clang too: the title's compiler family, so both read Doom's undefined behaviour alike
 NCC=${NCC:-$(command -v clang || echo /usr/lib64/llvm20/bin/clang)}
 DG_COMMIT=e257a09527062bfb986b6e5e0780839b6cbd5b71

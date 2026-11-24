@@ -5,10 +5,12 @@ it ahead of time and supplying the operating system underneath it. The target is
 Minecraft; until those files are here it is tested on titles we build ourselves and on a real program
 (Stockfish 19's official Windows build).
 
-Licence: GPL-2.0-only (so code from [XCL](https://github.com/ivall/xcl) can be used).
+Licence: GPL-2.0-or-later for our own code; code from other projects keeps its own licence (the shader tools
+from [XCL](https://github.com/ivall/xcl) are GPL-2.0-only). See [LICENSING.md](LICENSING.md).
 
 Docs: [the journey so far](docs/journey.md) (what was built, measured and learned, roadblocks) ·
-[status and next steps](docs/status.md) · [first run of a real title](docs/first-run.md) · [wasm32 or wasm64](docs/memory.md)
+[status and next steps](docs/status.md) · [first run of a real title](docs/first-run.md) · [wasm32 or wasm64](docs/memory.md) ·
+[Narbacular Drop, the first Windows PC title](docs/narbacular-drop.md)
 
 ## How it works
 
@@ -50,7 +52,8 @@ host (web/)   WASI calls, one worker per guest thread over one shared memory
 ## Try it
 
 Needs Rust, Node 24, [wasi-sdk](https://github.com/WebAssembly/wasi-sdk) 34 in `~/tools`, and for the C++
-test [llvm-mingw](https://github.com/mstorsjo/llvm-mingw).
+tests [llvm-mingw](https://github.com/mstorsjo/llvm-mingw). `tools/setup-toolchain.sh` fetches them (and the
+shader tools the Doom test needs); `tests/run.sh` builds and runs every test title.
 
 ```sh
 cargo build --release -p lifter
