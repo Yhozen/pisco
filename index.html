@@ -1,0 +1,14 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>series-web: Doom as an Xbox console title in the browser</title>
+<style>body{font:16px/1.5 system-ui,sans-serif;background:#111;color:#ddd;max-width:1000px;margin:2em auto;padding:0 1em}video{width:100%;background:#000}a{color:#8cf}</style>
+<h1>Doom as an Xbox console title, running in a web browser</h1>
+<video src="doom-series-web.mp4" controls playsinline preload="metadata"></video>
+<p>doomgeneric + Freedoom, built against D3D12.X, GameInput, XAudio2 and XGameSave; its x86-64 code recompiled to WebAssembly,
+D3D12.X translated to WebGPU, XAudio2 mixed into an AudioWorklet, saves kept in the browser (OPFS). Recorded in headless Chrome
+with WebGPU on SwiftShader (no GPU); every frame was read back from WebGPU. Shows: title and attract demo, a new game from scripted keys,
+the automap, a save, a page reload (a new title process), the save loaded back.</p>
+<p>Source: <a href="https://github.com/Yhozen/series-web">github.com/Yhozen/series-web</a> (<code>fixtures/doom</code>, <code>docs/journey.md</code> §3.9).</p>
+<p><small>Game data: <a href="https://freedoom.github.io/">Freedoom</a> (BSD-3-Clause, © the Freedoom contributors).
+Engine: <a href="https://github.com/ozkl/doomgeneric">doomgeneric</a> (GPL-2.0; Chocolate Doom, id Software's Doom).</small></p>
