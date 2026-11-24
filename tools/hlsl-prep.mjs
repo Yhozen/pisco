@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 // node tools/hlsl-prep.mjs <run log>... --title <title folder>: the HLSL a title compiles at run time (D3DCompile),
 // compiled ahead of time. A run logs every source it found no shader for ("d3dcompile-source <key> <target>
 // <entry> <base64>", rt/d3d12.c); this compiles each with dxc to DXIL (shader model 6.0 for 4.x/5.x targets)

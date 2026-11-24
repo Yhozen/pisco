@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 // xcrdapi.dll, the console's DirectStorage: DStorageGetFactory -> factory, queues, files, status arrays.
 // Vtable orders and the request layout are XCL's findings on a retail title (github.com/ivall/xcl, GPL-2.0):
 //   factory: IUnknown, CreateQueue(desc, riid, out), OpenFile(path, riid, out), CreateStatusArray(capacity, name, riid, out), ...

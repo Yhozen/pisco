@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 // The compiler-rt helpers lifted code needs, for wasm32 and wasm64 alike.
 // The empty asm statements stop LLVM from turning these back into the 128-bit operations they implement.
 typedef unsigned long long u64; typedef unsigned int u32;

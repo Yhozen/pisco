@@ -1,4 +1,5 @@
 #!/bin/bash
+# SPDX-License-Identifier: GPL-2.0-or-later
 # build-title.sh <image.exe> <out dir>: lift a title, compile it with the runtime into <out dir>/title.wasm
 # Environment: WASI_SDK (default ~/tools/wasi-sdk-34.0-x86_64-linux), JOBS (parallel compiles), OPT (default -O2)
 set -euo pipefail

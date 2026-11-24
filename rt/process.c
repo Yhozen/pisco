@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 // The process: image loading, the import table, guest calls, memory, threads and waits.
 #include <errno.h>
 #include <setjmp.h>

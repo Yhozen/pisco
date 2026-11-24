@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 // Starts a lifted title in this page: ?wasm=<title.wasm>&exe=<the title's .exe>&args=<space-separated>
 // The title's threads (its main thread too) run in workers; this page owns what a console would: the GPU
 // (web/gpu/backend.js, on this thread), the speakers (an AudioWorklet playing the title's mixer ring), and the

@@ -1,4 +1,5 @@
 #![no_std]
+// SPDX-License-Identifier: GPL-2.0-or-later
 #![no_main]
 mod work;
 use core::panic::PanicInfo;

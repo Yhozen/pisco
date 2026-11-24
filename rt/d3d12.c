@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 // D3D12 and D3D12.X, the front end: COM objects whose methods answer on the calling thread, command lists
 // recorded into words, and one ordered ring of records (rt/d3d12_cmd.h) that a GPU back end consumes
 // (web/gpu/backend.js in the browser, web/gpu/null.js in Node). Nothing here waits for the GPU except

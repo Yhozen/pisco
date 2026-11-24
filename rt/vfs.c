@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 // The title's file system. Console paths map to mounts:
 //   G:\ GAME:\ D:\ C:\title\ and relative paths -> "game": the title's folder, read-only, read through the host;
 //   S:\ -> "pls" (persistent local storage), T:\ -> "temp", any other drive -> "<letter>".

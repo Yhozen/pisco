@@ -1,0 +1,29 @@
+# Licence and copyright of every file, for `reuse lint` (https://reuse.software). People: read LICENSING.md.
+# A file's own SPDX-License-Identifier line is used where it has one; the last matching entry here fills the rest.
+version = 1
+
+[[annotations]]
+path = "**"
+SPDX-FileCopyrightText = "2026 series-web contributors"
+SPDX-License-Identifier = "GPL-2.0-or-later"
+
+[[annotations]]
+path = "crates/shaders/**"
+SPDX-FileCopyrightText = ["2026 XCL contributors (https://github.com/ivall/xcl)", "2026 series-web contributors"]
+SPDX-License-Identifier = "GPL-2.0-only"
+
+[[annotations]]
+path = "crates/shaders/src/rdna2_spec.rs"
+SPDX-FileCopyrightText = ["2026 Advanced Micro Devices, Inc.", "2026 XCL contributors (https://github.com/ivall/xcl)"]
+SPDX-License-Identifier = "GPL-2.0-only AND MIT"
+
+[[annotations]]
+path = "rt/d3d12_layout.gen.h"
+SPDX-FileCopyrightText = "Microsoft Corporation"
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "tests/data/llvm-amdgpu/**"
+precedence = "override"
+SPDX-FileCopyrightText = "LLVM contributors"
+SPDX-License-Identifier = "Apache-2.0 WITH LLVM-exception"

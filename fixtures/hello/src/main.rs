@@ -1,4 +1,5 @@
 #![no_std]
+// SPDX-License-Identifier: GPL-2.0-or-later
 #![no_main]
 use core::panic::PanicInfo;
 #[panic_handler] fn panic(_: &PanicInfo) -> ! { unsafe { ExitProcess(99) } }

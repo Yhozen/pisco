@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 // XAudio2 (xaudio2_9.dll): source voices mixed here, in C, into one ring of 48 kHz stereo float frames in shared
 // memory that the host plays (an AudioWorklet in the browser; Node has no output and the ring just turns).
 // The mixer runs on wall-clock time a little ahead of now, so the title's voices advance in real time even

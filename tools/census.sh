@@ -1,4 +1,5 @@
 #!/bin/bash
+# SPDX-License-Identifier: GPL-2.0-or-later
 # census.sh <the title's exe> [out dir]: what lifting and running it will need, without running it.
 #  - the lifter's census: images, functions, instructions it cannot lift yet
 #  - imports by DLL: how many the runtime implements (rt/*.c IMP(...)), and the missing ones

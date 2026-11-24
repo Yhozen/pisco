@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 // ucrtbase.dll (the api-ms-win-crt-* API sets resolve here). Functions with msvcrt's semantics are found in
 // msvcrt.c: the import lookup falls back to it (see find_import in process.c).
 #include <wchar.h>

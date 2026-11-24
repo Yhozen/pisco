@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 // A static server with the headers shared memory needs (cross-origin isolation).
 // node tools/serve.mjs <port> <dir>... [--capture <out.mp4>] — the first dir is the root; /files/<n>/ maps to the n-th
 // extra dir. With --capture, the page's presented frames (POST /capture/frame) go to ffmpeg at a fixed frame

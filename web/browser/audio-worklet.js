@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 // Plays the title's mixer ring (rt/xaudio2.c: header words write position, read position, capacity, rate,
 // channels; then stereo float frames) from shared memory, keeping a little behind the writer.
 class Ring extends AudioWorkletProcessor {

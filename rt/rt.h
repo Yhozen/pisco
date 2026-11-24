@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 // Runtime internals shared by the import modules. Include libc headers before this file:
 // cpu.h defines the short register macros (R, X) lifted code uses.
 #pragma once

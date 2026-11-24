@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 // dxil2spv <container.dxbc> <out.spv> <out.json>: one DXIL shader to SPIR-V for naga, through dxil-spirv's C API
 // (github.com/HansKristian-Work/dxil-spirv, MIT). The binding scheme is the contract with web/gpu/backend.js:
 //   CBV b<r> space <s> -> @group(0) @binding(r + 100 s); SRV t -> group 1; sampler s -> group 2; UAV u -> group 3.

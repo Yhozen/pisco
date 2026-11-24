@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: GPL-2.0-or-later
 # Cross-compile Microsoft's SimpleTriangleDesktop (Xbox-GDK-Samples) for Windows x64 from Linux.
 # Needs: clang20 (clang-cl, lld-link, llvm-rc), an `xwin splat` tree, the Microsoft.GDK.Windows
 # NuGet package, WinPixEventRuntime, and Linux dxc. Paths are overridable via env.

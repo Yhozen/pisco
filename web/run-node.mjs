@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 // Runs a lifted title under Node: node run-node.mjs title.wasm <the title's .exe> [title arguments...]
 // The main thread only supervises: the title's threads (its main thread too) run in workers, so an exit
 // from any of them ends the process even while others are blocked.

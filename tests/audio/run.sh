@@ -1,4 +1,5 @@
 #!/bin/bash
+# SPDX-License-Identifier: GPL-2.0-or-later
 # tests/audio/run.sh: builds the minimal FFmpeg (tools/build-ffmpeg-audio.sh, skipped when already built), links
 # rt/audio_codec.c + audio_codec_test.c into a wasm32-wasip1-threads program the way tools/build-title.sh links
 # a title (shared imported memory, -pthread), runs it under Node's WASI and passes when the test prints PASS.

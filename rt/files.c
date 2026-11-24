@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 // kernel32's file functions over the title's file system (vfs.c), and the standard handles.
 #include <ctype.h>
 #include "rt.h"

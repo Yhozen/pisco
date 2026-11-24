@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 // Runs a lifted title in headless Chrome and prints its output: node tools/run-chrome.mjs <title.wasm> <title.exe> [args...]
 // Starts tools/serve.mjs and Chrome, follows the page console through the DevTools protocol. WebGPU runs on
 // SwiftShader (Chrome's CPU Vulkan), as in Horizon's WEB.md, so no GPU is needed.

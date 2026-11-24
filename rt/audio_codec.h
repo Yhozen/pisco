@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 // Compressed audio to PCM16 (XMA1, XMA2, Opus) over a minimal FFmpeg libavcodec (tools/build-ffmpeg-audio.sh).
 // Independent of the rest of the runtime. Compiled for real only with -DSW_AUDIO_CODECS (and FFmpeg's include
 // dir / libs); otherwise every function fails (adec_open returns NULL), so builds without FFmpeg keep working.

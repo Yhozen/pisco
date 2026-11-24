@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 // msvcrt.dll and shell32's CommandLineToArgvW for lifted titles; also the process's exit and the virtual CPU's
 // identity. Guest pointers are runtime pointers in wasm32, so most string functions call wasi-libc directly.
 #include <ctype.h>

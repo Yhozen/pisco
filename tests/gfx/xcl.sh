@@ -1,4 +1,5 @@
 #!/bin/bash
+# SPDX-License-Identifier: GPL-2.0-or-later
 # tests/gfx/xcl.sh: step 4's check. XCL's console test title (github.com/ivall/xcl, tests/testtitle, built into
 # out/xcltitle-game) against the current runtime: compiles the HLSL it hands D3DCompile ahead of time
 # (tools/hlsl-prep.mjs: a Node run logs the sources), then runs it in headless Chrome (WebGPU on SwiftShader)

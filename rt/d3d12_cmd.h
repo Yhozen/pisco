@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 // The stream between the D3D12 front end (rt/d3d12.c, on the title's threads) and the GPU back end
 // (web/gpu/backend.js on the page, web/gpu/null.js in Node). tools/gen-cmd-js.mjs turns every
 // `#define GPU_<NAME> <value>` line of this file into web/gpu/cmd.gen.js: keep one define per line.

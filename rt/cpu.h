@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 // Guest CPU state and instruction helpers for lifted x86-64 code.
 // Guest address == offset in wasm linear memory (the image is based below 4 GiB).
 #pragma once

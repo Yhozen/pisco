@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 // The console interfaces our Doom uses, written for this project (no Microsoft header is used or copied):
 // D3D12.X, GameInput, XAudio2 and XGameRuntime as C declarations with explicit vtable slots. Structures follow the
 // public D3D12 / XAudio2 layouts; the console's vtable order follows XCL's observations of retail titles

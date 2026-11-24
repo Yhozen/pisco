@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 // One guest thread. Output and exit go through a BroadcastChannel: the page reads it, whichever worker writes.
 const bus = new BroadcastChannel('series-web');
 bus.onmessage = (e) => { if (e.data.stop) close(); };

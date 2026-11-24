@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 // node captions.mjs <raw.mp4> <marks.json> <out.mp4>: the recording with captions at its marks (what the scripted
 // keys did: menu, new game, save, reload, load), a title card, and a line saying what runs.
 import fs from 'node:fs'; import os from 'node:os'; import path from 'node:path'; import { execFileSync } from 'node:child_process';

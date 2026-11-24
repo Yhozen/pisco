@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 // kernel32.dll (and the ntdll functions it forwards) for lifted titles.
 #include <sched.h>
 #include <time.h>

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 // The WebGPU back end: interprets the front end's ring (rt/d3d12_cmd.h) on the page's main thread (it never
 // blocks: it waits with Atomics.waitAsync and awaits WebGPU's promises). D3D12 state becomes WebGPU passes,
 // pipelines and bind groups; CPU-visible buffers are uploaded from guest memory when a submission uses them;

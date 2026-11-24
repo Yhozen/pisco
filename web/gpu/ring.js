@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 // Reads the front end's ring (rt/d3d12_cmd.h) in order, on a thread that must not block (the page's main
 // thread, Node's supervisor): it waits with Atomics.waitAsync and hands each record to `handle`, which may be
 // async; a record is consumed (its room given back) once `handle` resolves.

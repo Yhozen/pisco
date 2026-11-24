@@ -1,4 +1,5 @@
 #!/bin/bash
+# SPDX-License-Identifier: GPL-2.0-or-later
 # fixtures/doom/video.sh [out.mp4]: records our console Doom in headless Chrome (WebGPU on SwiftShader): the title
 # screen and attract demo, a new game played from scripted keys, a save (F2), a reload of the page (a new title
 # process), the save loaded back (F3) from the browser's storage. Then captions are added at the marks.

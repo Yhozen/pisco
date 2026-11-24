@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-only
 // From XCL (https://github.com/ivall/xcl, GPL-2.0-only), crates/xcl/src/gpu/rdna2.rs at 6025201; module paths adapted.
 //! RDNA2 (Xbox Series X|S GPU) instruction decoder and disassembler.
 //!

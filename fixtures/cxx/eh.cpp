@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 // C++ exceptions as a title uses them: our own test code, built with llvm-mingw (libc++, libunwind, SEH).
 #include <stdexcept>
 #include <cstring>

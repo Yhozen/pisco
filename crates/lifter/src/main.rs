@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 //! Static recompiler: an x86-64 PE image -> C (one function per guest function), to be compiled
 //! to WebAssembly. Also the census: what an image uses that the lifter does not handle yet.
 
