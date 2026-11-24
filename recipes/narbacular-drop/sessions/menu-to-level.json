@@ -1,6 +1,6 @@
 {
  "title": "narbacular-drop",
- "about": "From the main menu through the story and the tutorial into the first level. The game's own cursor starts at (528,398) in the 640x480 client area; Play Game is at about (320,303).",
+ "about": "From the main menu through the story and the tutorial into the first level, with the level's title and its first hint (drawn by D3DX's font). The game's own cursor starts at (528,398) in the 640x480 client area; Play Game is at about (320,303).",
  "steps": [
   {"wait": 40000},
   {"focus": true},
@@ -34,7 +34,11 @@
   {"wait": 5000},
   {"shot": "tutorial-4"},
   {"click": "left"},
-  {"wait": 20000},
+  {"wait": 2500},
+  {"shot": "level-title"},
+  {"wait": 6500},
+  {"shot": "level-hint"},
+  {"wait": 11000},
   {"shot": "level"}
  ]
 }

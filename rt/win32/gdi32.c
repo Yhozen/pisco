@@ -1,19 +1,20 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // gdi32 for Windows desktop titles: memory device contexts, DIB sections with real pixel memory, fonts, brushes
 // and the stock objects, the text state of a device context, and the text functions a title and D3DX's font
-// code call. Rectangles are filled for real. Text is not drawn yet and its measurements are estimates: a font's
-// metrics are derived from the height asked for with the proportions of a common sans-serif face, every
-// character has the average width, and there are no kerning pairs. Real glyphs come with the pixels (the next
-// milestone needs a font to draw from). Uniscribe (usp10.dll) is absent, so D3DX takes its plain-GDI path.
+// code call. Rectangles are filled and text is drawn for real, into the DIB section a DC holds. Fonts, their
+// measurements and their glyphs are font.c's: Liberation Sans for every face name, measured and drawn as Wine's
+// GDI does on the oracle's machine. Uniscribe (usp10.dll) is absent, so D3DX takes its plain-GDI path
+// (GetCharacterPlacement, then ExtTextOutW with glyph indices): docs/narbacular-drop.md says why.
 #include "win32.h"
+#include "font.h"
 
 enum { T_DC = 1, T_BITMAP, T_FONT, T_BRUSH, T_PEN };
 typedef struct {
   u8 type, stock; u32 handle;
   // a bitmap: a DIB section's pixels, or the 1x1 one a new memory DC holds
   s32 width, height; u32 bits_per_pixel, pitch, compression, masks[3]; u8 *bits; int top_down;
-  // a font: LOGFONTA, and what it measures
-  u8 logfont[60]; s32 cell, ascent, descent, internal, external, average, widest, weight;
+  // a font: LOGFONTA, and the face and size it gets
+  u8 logfont[60]; FontSize fs;
   // a brush or a pen
   u32 color, style;
   // a device context
@@ -32,17 +33,9 @@ static Gdi *make(int type) {
   for (unsigned i = 1; i < OBJECTS; i++) if (!objects[i]) { Gdi *o = objects[i] = calloc(1, sizeof *o); o->type = (u8)type; o->handle = FIRST + 4 * i; return o; }
   rt_fatal("gdi32: out of object handles");
 }
-// What a font measures. The height asked for is the cell's (positive), the characters' (negative: the cell is
-// taller by the internal leading), or the default (0). Proportions: a common sans-serif face at 2048 units an em
-// (ascent 1854, descent 434, average character 904).
-static void measure(Gdi *f) {
-  s32 height; memcpy(&height, f->logfont, 4); s32 weight; memcpy(&weight, f->logfont + 16, 4);
-  s32 em = height < 0 ? -height : height > 0 ? (height * 2048 + 1144) / 2288 : 12;
-  f->ascent = (em * 1854 + 1024) / 2048; f->descent = (em * 434 + 1024) / 2048; f->cell = f->ascent + f->descent;
-  if (height > 0) { f->cell = height; f->descent = height - f->ascent; }
-  f->internal = f->cell - em; f->external = (em * 67 + 1024) / 2048; f->average = (em * 904 + 1024) / 2048; if (f->average < 1) f->average = 1;
-  f->widest = 2 * em; f->weight = weight ? weight : 400;
-}
+// The face and size a LOGFONT gets: its height (the cell's if positive, the characters' if negative, the default
+// if 0), italic, quality (font.c)
+static void measure(Gdi *f) { s32 height; memcpy(&height, f->logfont, 4); font_select(&f->fs, height, f->logfont[20] != 0, f->logfont[26]); }
 static void init_stock(void) { // GetStockObject's: brushes 0..5, pens 6..8, fonts 10..17, and (ours, 20 and 21) what a new DC holds
   if (stock[0].type) return;
   static const u32 gray[] = {0xFFFFFF, 0xC0C0C0, 0x808080, 0x404040, 0x000000};
@@ -164,7 +157,11 @@ IMP(gdi32, GetObjectW) { RET(get_object(c, 1)); }
 // ---- fonts ----
 // LOGFONTA: height, width, escapement, orientation, weight (5 longs), italic, underline, strike-out, character
 // set, output precision, clip precision, quality, pitch and family (8 bytes), the face name (32 bytes)
-static u32 font_new(const u8 *lf) { Gdi *f = make(T_FONT); memcpy(f->logfont, lf, 60); f->logfont[59] = 0; measure(f); return f->handle; }
+static u32 font_new(const u8 *lf) {
+  Gdi *f = make(T_FONT); memcpy(f->logfont, lf, 60); f->logfont[59] = 0; measure(f);
+  if (rt_trace) { s32 h, w; memcpy(&h, lf, 4); memcpy(&w, lf + 16, 4); rt_log("gdi32: font \"%s\" height %d weight %d%s quality %u: %s, %d pixels an em", (const char *)lf + 28, h, w, lf[20] ? " italic" : "", lf[26], font_face_name(&f->fs), f->fs.ppem); }
+  return f->handle;
+}
 IMP(gdi32, CreateFontIndirectA) { if (!ARG(0)) { RET(0); return; } RET(font_new((const u8 *)GP(ARG(0)))); }
 IMP(gdi32, CreateFontIndirectW) {
   if (!ARG(0)) { RET(0); return; }
@@ -186,68 +183,121 @@ static u32 text_metrics(Cpu *c, int wide) {
   Gdi *f = font_of(ARG(0)); u64 p = ARG(1);
   if (!f || !p) return 0;
   memset((void *)GP(p), 0, wide ? 60 : 56);
-  s32 v[11] = {f->cell, f->ascent, f->descent, f->internal, f->external, f->average, f->widest, f->weight, 0, 96, 96};
+  const FontSize *s = &f->fs;
+  s32 v[11] = {s->height, s->ascent, s->descent, s->internal, s->external, s->average, s->widest, s->weight, 0, 96, 96};
   memcpy((void *)GP(p), v, 44);
-  u64 q = p + 44;
-  if (wide) { M16(q) = 0x20; M16(q + 2) = 0xFF; M16(q + 4) = 0x1F; M16(q + 6) = 0x20; q += 8; } else { M8(q) = 0x20; M8(q + 1) = 0xFF; M8(q + 2) = 0x1F; M8(q + 3) = 0x20; q += 4; }
-  M8(q) = f->logfont[20]; M8(q + 1) = f->logfont[21]; M8(q + 2) = f->logfont[22];
+  u64 q = p + 44;   // the characters: Wine's answer for the W form (the face goes up to U+FFFC); the A form stops at 255
+  if (wide) { M16(q) = 0x20; M16(q + 2) = 0xFFFC; M16(q + 4) = 0x1F; M16(q + 6) = 0x20; q += 8; } else { M8(q) = 0x20; M8(q + 1) = 0xFF; M8(q + 2) = 0x1F; M8(q + 3) = 0x20; q += 4; }
+  M8(q) = f->logfont[20] ? 0xFF : 0; M8(q + 1) = f->logfont[21]; M8(q + 2) = f->logfont[22];
   M8(q + 3) = 0x27;   // a variable-pitch TrueType vector font of the Swiss family
   M8(q + 4) = f->logfont[23] == 1 ? 0 : f->logfont[23];   // DEFAULT_CHARSET resolves to ANSI
   return 1;
 }
 IMP(gdi32, GetTextMetricsA) { RET(text_metrics(c, 0)); }
 IMP(gdi32, GetTextMetricsW) { RET(text_metrics(c, 1)); }
-// What the font can do beyond plain left-to-right placement (kerning, glyph shaping, reordering): nothing
+// What the font can do beyond plain left-to-right placement. Wine's GDI answers GCP_USEKERNING (8) for Liberation
+// Sans, which has kerning pairs, and D3DX's GDI path then asks GetCharacterPlacement to kern. But D3DX takes that
+// path only because usp10.dll is missing here: on Windows and under Wine it places glyphs with Uniscribe, which
+// leaves the kern table's pairs out (measured: Wine's "HINT:" has the T and the colon 2 pixels further apart than
+// a kerned placement). Nothing here, so D3DX places its glyphs as it does there.
 IMP(gdi32, GetFontLanguageInfo) { RET(font_of(ARG(0)) ? 0 : 0xFFFFFFFFu); }
 
-// ---- text: measured with the estimates above, not drawn yet ----
-static void not_drawn(const char *fn) { static int told; if (!told++ && rt_trace) rt_log("gdi32: %s and the other text functions draw nothing yet", fn); }
-IMP(gdi32, TextOutA) { not_drawn("TextOutA"); RET(get(ARG(0), T_DC) != 0); }       // (dc, x, y, text, count)
-IMP(gdi32, ExtTextOutA) { not_drawn("ExtTextOutA"); RET(get(ARG(0), T_DC) != 0); } // (dc, x, y, options, RECT *, text, count, advances)
-IMP(gdi32, ExtTextOutW) { not_drawn("ExtTextOutW"); RET(get(ARG(0), T_DC) != 0); }
-// GetCharacterPlacement(dc, text, count, widest extent, GCP_RESULTS *, flags): the text in order, a glyph a
-// character (the glyph's index is the character's code), each as wide as the average. GCP_RESULTS: size, output
-// string, order, advances, caret positions, classes, glyphs, glyph count, characters that fit.
-// Returns the text's width and the font's height.
+// ---- text ----
+// The bitmap a DC holds, as font.c draws into it
+static int target_of(Gdi *d, FontTarget *t) {
+  Gdi *b = get(d->bitmap, T_BITMAP);
+  if (!b || !b->bits) return 0;
+  t->bits = b->bits; t->width = b->width; t->height = b->height; t->pitch = b->pitch; t->bits_per_pixel = b->bits_per_pixel; t->top_down = b->top_down;
+  memcpy(t->masks, b->masks, sizeof t->masks);
+  return 1;
+}
+enum { TEXT_MAX = 4096 };
+// ExtTextOut's work: glyphs from (x, y) in the DC's font and colours, aligned as the DC says; with TA_UPDATECP from
+// and to the DC's current position. options: ETO_OPAQUE 2, ETO_CLIPPED 4, ETO_GLYPH_INDEX 0x10, ETO_PDY 0x2000.
+static int text_out(Cpu *c, u64 hdc, s32 x, s32 y, u32 options, u64 rect, const u32 *glyphs, u32 n, u64 dx) {
+  Gdi *d = get(hdc, T_DC), *f = d ? get(d->font, T_FONT) : 0;
+  if (!d || !f) return 0;
+  FontTarget t; FontRect r, *rp = 0; s32 *adv = 0;
+  if (rect) { r.left = (s32)M32(rect); r.top = (s32)M32(rect + 4); r.right = (s32)M32(rect + 8); r.bottom = (s32)M32(rect + 12); rp = &r; }
+  static s32 advances[2 * TEXT_MAX];   // (not from the heap, which is the title's too)
+  if (dx) { u32 k = (options & 0x2000) ? 2 * n : n; adv = advances; for (u32 i = 0; i < k; i++) adv[i] = (s32)M32(dx + 4 * i); }
+  if (d->text_align & 1) { x = d->x; y = d->y; }   // TA_UPDATECP
+  s32 ex, ey;
+  if (target_of(d, &t)) font_text_out(&f->fs, &t, x, y, d->text_align, options, rp, glyphs, n, adv, d->text_color, d->bk_color, d->bk_mode == 2, &ex, &ey);
+  else { FontTarget none = {0}; font_text_out(&f->fs, &none, x, y, d->text_align, options & ~6u, 0, glyphs, n, adv, 0, 0, 0, &ex, &ey); }   // no pixels: only where the pen ends
+  if (d->text_align & 1) { d->x = ex; d->y = ey; }
+  return 1;
+}
+// A string's glyphs: code page 1252 (A) or UTF-16 (W) characters through the face's character map, or glyph indices as they are
+static u32 glyphs_of(Gdi *f, u64 str, u32 n, int wide, int indices, u32 *out) {
+  if (n > TEXT_MAX) n = TEXT_MAX;
+  for (u32 i = 0; i < n; i++) {
+    u32 ch = wide ? GWSTR(str)[i] : font_cp1252((u8)GSTR(str)[i]);
+    out[i] = indices ? ch : font_glyph(&f->fs, ch);
+  }
+  return n;
+}
+static u32 text_call(Cpu *c, int wide, int ext) {   // TextOutA(dc, x, y, text, count); ExtTextOut(dc, x, y, options, RECT *, text, count, advances)
+  Gdi *f = font_of(ARG(0));
+  if (!f) return 0;
+  u32 options = ext ? (u32)ARG(3) : 0; u64 str = ext ? ARG(5) : ARG(3); u32 n = (u32)(ext ? ARG(6) : ARG(4));
+  static u32 glyphs[TEXT_MAX];
+  n = str ? glyphs_of(f, str, n, wide, wide && (options & 0x10), glyphs) : 0;
+  return (u32)text_out(c, ARG(0), (s32)ARG(1), (s32)ARG(2), options, ext ? ARG(4) : 0, glyphs, n, ext ? ARG(7) : 0);
+}
+IMP(gdi32, TextOutA) { RET(text_call(c, 0, 0)); }
+IMP(gdi32, ExtTextOutA) { RET(text_call(c, 0, 1)); }
+IMP(gdi32, ExtTextOutW) { RET(text_call(c, 1, 1)); }
+// GetCharacterPlacement(dc, text, count, widest extent, GCP_RESULTS *, flags), as Wine does it without
+// GCP_REORDER: the text in order, the face's glyphs, each glyph's advance (adjusted by the kerning pair it starts
+// with GCP_USEKERNING, 8), the caret positions. GCP_RESULTS: size, output string, order, advances, caret
+// positions, classes, glyphs, glyph count, characters that fit. Returns the text's width and the font's height.
 static u32 placement(Cpu *c, int wide) {
   Gdi *f = font_of(ARG(0)); u32 n = (u32)ARG(2); u64 r = ARG(4);
-  if (!f) return 0;
+  if (!f || !n) return 0;
+  if (n > TEXT_MAX) n = TEXT_MAX;
+  if (r && M32(r + 28) < n) n = M32(r + 28);
+  static u32 glyphs[TEXT_MAX]; static s32 dx[TEXT_MAX];
+  glyphs_of(f, ARG(1), n, wide, 0, glyphs);
+  s32 width = font_place(&f->fs, glyphs, n, (ARG(5) & 8) != 0, dx);
   if (r) {
-    u32 room = M32(r + 28); if (M32(r + 24) && room < n) n = room;
+    s32 caret = 0;
     for (u32 i = 0; i < n; i++) {
-      u32 ch = wide ? GWSTR(ARG(1))[i] : (u8)GSTR(ARG(1))[i];
-      if (M32(r + 4)) { if (wide) M16(M32(r + 4) + 2 * i) = (u16)ch; else M8(M32(r + 4) + i) = (u8)ch; }
+      if (M32(r + 4)) { if (wide) M16(M32(r + 4) + 2 * i) = GWSTR(ARG(1))[i]; else M8(M32(r + 4) + i) = (u8)GSTR(ARG(1))[i]; }
       if (M32(r + 8)) M32(M32(r + 8) + 4 * i) = i;
-      if (M32(r + 12)) M32(M32(r + 12) + 4 * i) = (u32)f->average;
-      if (M32(r + 16)) M32(M32(r + 16) + 4 * i) = i * (u32)f->average;
-      if (M32(r + 24)) M16(M32(r + 24) + 2 * i) = (u16)ch;
+      if (M32(r + 12)) M32(M32(r + 12) + 4 * i) = (u32)dx[i];
+      if (M32(r + 16)) M32(M32(r + 16) + 4 * i) = (u32)caret;
+      if (M32(r + 24)) M16(M32(r + 24) + 2 * i) = (u16)glyphs[i];
+      caret += dx[i];
     }
     M32(r + 28) = n; M32(r + 32) = n;
   }
-  return (n * (u32)f->average & 0xFFFF) | (u32)f->cell << 16;
+  return ((u32)width & 0xFFFF) | (u32)f->fs.height << 16;
 }
 IMP(gdi32, GetCharacterPlacementA) { RET(placement(c, 0)); }
 IMP(gdi32, GetCharacterPlacementW) { RET(placement(c, 1)); }
-// Glyphs by index (the index is the character's code here). GetCharABCWidthsI(dc, first, count, indices or
-// null, ABC *): the space before the glyph, its width, the space after; GetCharWidthI the same as one advance.
-// D3DX's font needs both to exist on Windows 2000 and later, with GetFontUnicodeRanges.
+// Glyphs by index. GetCharABCWidthsI(dc, first, count, indices (16-bit) or null for first..first+count-1, ABC *):
+// the space before the glyph's black box, the box, the space after; GetCharWidthI the same as one advance. D3DX's
+// font needs both to exist on Windows 2000 and later, with GetFontUnicodeRanges.
+static u32 index_at(Cpu *c, u32 i) { return ARG(3) ? M16(ARG(3) + 2 * i) : (u32)ARG(1) + i; }
 IMP(gdi32, GetCharABCWidthsI) {
   Gdi *f = font_of(ARG(0)); u32 n = (u32)ARG(2); u64 out = ARG(4);
   if (!f || !out) { RET(0); return; }
-  for (u32 i = 0; i < n; i++) { M32(out + 12 * i) = 0; M32(out + 12 * i + 4) = (u32)f->average; M32(out + 12 * i + 8) = 0; }
+  for (u32 i = 0; i < n; i++) { s32 a, b, cc; font_abc(&f->fs, index_at(c, i), &a, &b, &cc); M32(out + 12 * i) = (u32)a; M32(out + 12 * i + 4) = (u32)b; M32(out + 12 * i + 8) = (u32)cc; }
   RET(1);
 }
 IMP(gdi32, GetCharWidthI) {
   Gdi *f = font_of(ARG(0)); u32 n = (u32)ARG(2); u64 out = ARG(4);
   if (!f || !out) { RET(0); return; }
-  for (u32 i = 0; i < n; i++) M32(out + 4 * i) = (u32)f->average;
+  for (u32 i = 0; i < n; i++) M32(out + 4 * i) = (u32)font_advance(&f->fs, index_at(c, i));
   RET(1);
 }
-// GetFontUnicodeRanges(dc, GLYPHSET * or null): size, flags, glyphs supported, ranges, then each range's first
-// character and length (16 bits each). The characters of code page 1252's Latin-1 part: 0x20..0x7E and 0xA0..0xFF.
+// GetFontUnicodeRanges(dc, GLYPHSET * or null): size, flags, characters covered, ranges, then each range's first
+// character and length (16 bits each): the face's character map
 IMP(gdi32, GetFontUnicodeRanges) {
-  u64 p = ARG(1);
-  if (!font_of(ARG(0))) { RET(0); return; }
-  if (p) { M32(p) = 24; M32(p + 4) = 0; M32(p + 8) = 95 + 96; M32(p + 12) = 2; M16(p + 16) = 0x20; M16(p + 18) = 95; M16(p + 20) = 0xA0; M16(p + 22) = 96; }
-  RET(24);
+  Gdi *f = font_of(ARG(0)); u64 p = ARG(1);
+  if (!f) { RET(0); return; }
+  static u16 first[512], count[512]; u32 glyphs, n = font_unicode_ranges(&f->fs, first, count, 512, &glyphs); if (n > 512) n = 512;
+  if (p) { M32(p) = 16 + 4 * n; M32(p + 4) = 0; M32(p + 8) = glyphs; M32(p + 12) = n; for (u32 i = 0; i < n; i++) { M16(p + 16 + 4 * i) = first[i]; M16(p + 18 + 4 * i) = count[i]; } }
+  RET(16 + 4 * n);
 }

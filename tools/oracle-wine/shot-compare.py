@@ -2,13 +2,14 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 """Sets a screenshot of ours against the oracle's of the same checkpoint, in numbers.
 
-  shot-compare.py <ours.png> <wine.png> [--threshold N] [--diff out.png]
+  shot-compare.py <ours.png> <wine.png> [--threshold N] [--diff out.png] [--box x0,y0,x1,y1]
   shot-compare.py --table <our folder> <wine's folder> [--threshold N] [--diff <folder>]
 
 One pair prints one line: the mean absolute difference of each channel (0 to 255), the share of pixels where
 any channel differs by more than the threshold (default 16), and the largest difference. --table does it for
 every <name>.png of our folder that the oracle's folder has too, in the order ours were written (a session's
-order). --diff writes the differences as pictures (four times amplified). Only the standard library: PNGs are
+order). --diff writes the differences as pictures (four times amplified). --box compares only the pixels of
+that rectangle (x1, y1 excluded): the text of a checkpoint, say. Only the standard library: PNGs are
 read with zlib (8-bit RGB or RGBA, not interlaced: what play.py and tools/serve.mjs write, and more).
 """
 import os, struct, sys, zlib
@@ -52,10 +53,16 @@ def write_png(path, w, h, rgb):
     open(path, 'wb').write(b'\x89PNG\r\n\x1a\n' + chunk(b'IHDR', struct.pack('>IIBBBBB', w, h, 8, 2, 0, 0, 0)) + chunk(b'IDAT', zlib.compress(rows, 6)) + chunk(b'IEND', b''))
 
 
-def compare(ours, wine, threshold, diff=None):
+def crop(w, h, rgb, box):
+    x0, y0, x1, y1 = box
+    return x1 - x0, y1 - y0, b''.join(rgb[3 * (y * w + x0):3 * (y * w + x1)] for y in range(y0, y1))
+
+
+def compare(ours, wine, threshold, diff=None, box=None):
     """-> None if the sizes differ, else (mean R, mean G, mean B, share of pixels over the threshold, largest difference)"""
     (w, h, a), (w2, h2, b) = read_png(ours), read_png(wine)
     if (w, h) != (w2, h2): return None
+    if box: (w, h, a), (_, _, b) = crop(w, h, a, box), crop(w2, h2, b, box)
     d = bytes(abs(x - y) for x, y in zip(a, b))
     n = w * h
     means = [sum(d[c::3]) / n for c in range(3)]
@@ -69,17 +76,18 @@ def line(r): return 'sizes differ' if r is None else f'{r[0]:6.2f} {r[1]:6.2f} {
 
 
 def main():
-    args = sys.argv[1:]; threshold, diff, table = 16, None, False
-    for flag in ('--threshold', '--diff'):
+    args = sys.argv[1:]; threshold, diff, table, box = 16, None, False, None
+    for flag in ('--threshold', '--diff', '--box'):
         if flag in args:
             i = args.index(flag); value = args[i + 1]; del args[i:i + 2]
             if flag == '--threshold': threshold = int(value)
+            elif flag == '--box': box = tuple(int(v) for v in value.split(','))
             else: diff = value
     if '--table' in args: args.remove('--table'); table = True
     if len(args) != 2: raise SystemExit(__doc__)
     head = f'mean |difference| R, G, B     pixels over {threshold}   largest'
     if not table:
-        print(head); print(line(compare(args[0], args[1], threshold, diff))); return
+        print(head); print(line(compare(args[0], args[1], threshold, diff, box))); return
     names = [f[:-4] for f in sorted(os.listdir(args[0]), key=lambda f: os.path.getmtime(os.path.join(args[0], f))) if f.endswith('.png') and os.path.exists(os.path.join(args[1], f))]
     if not names: raise SystemExit(f'no <name>.png of {args[0]} is in {args[1]} too')
     if diff: os.makedirs(diff, exist_ok=True)

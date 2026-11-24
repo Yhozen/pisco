@@ -23,8 +23,6 @@ tables = {}; exec(src[src.index('RS = {'):src.index('pair = ')], tables)
 STATE_NAMES = {'device_SetRenderState': tables['RS'], 'device_SetTextureStageState': tables['TSS'], 'device_SetSamplerState': tables['SAMP'], 'device_SetTransform': tables['TS']}
 # Reference counting and interface queries: Wine logs its own along with the title's, under names of its own
 REFS = re.compile(r'(^|_)(AddRef|Release|QueryInterface|incref|decref)$')
-# Per-frame comparison: methods whose calls depend on something we know differs (see the report)
-TEXT = {'texture_2d_GetLevelDesc'}
 
 def number(v):
     if v.startswith('0x'): return int(v, 16)
@@ -122,10 +120,15 @@ for key in sorted(o['args']):
     if key.startswith('draw '): print(f'    {key}: ' + ', '.join(f'{hex(int(v))} x{n}' for v, n in sorted(o['args'][key].items(), key=lambda t: -t[1])))
 
 print('== frames: the calls one frame makes (reference counting left out)')
-strip = lambda key: ', '.join(x for x in key.split(', ') if x.rsplit(' ', 1)[0] not in TEXT)
-fw = collections.Counter(); fo = collections.Counter()
-for k, n in w['frames'].items(): fw[strip(k)] += n
-for k, n in o['frames'].items(): fo[strip(k)] += n
+def passed_through(key):   # Wine's texture_2d_(Un)LockRect calls its surface_(Un)LockRect, which its trace shows too
+    calls = dict(x.rsplit(' ', 1) for x in key.split(', ') if x)
+    for m in ('LockRect', 'UnlockRect'):
+        n = int(calls.get('surface_' + m, 0)) - int(calls.get('texture_2d_' + m, 0))
+        if 'surface_' + m in calls: calls['surface_' + m] = str(n)
+        if calls.get('surface_' + m) == '0': del calls['surface_' + m]
+    return ', '.join(f'{k} {v}' for k, v in sorted(calls.items()))
+fw = collections.Counter(); fo = collections.Counter(o['frames'])
+for k, n in w['frames'].items(): fw[passed_through(k)] += n
 if not fo: print('  (no "frames" lines in our log: run with SW_D3D9_FRAMES=1)')
 else:
     common = set(fw) & set(fo)

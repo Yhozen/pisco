@@ -32,3 +32,15 @@ path = "tests/data/llvm-amdgpu/**"
 precedence = "override"
 SPDX-FileCopyrightText = "LLVM contributors"
 SPDX-License-Identifier = "Apache-2.0 WITH LLVM-exception"
+
+[[annotations]]
+path = "rt/win32/third_party/stb_truetype.h"
+precedence = "override"
+SPDX-FileCopyrightText = "2017 Sean Barrett"
+SPDX-License-Identifier = "MIT OR Unlicense"
+
+[[annotations]]
+path = "rt/win32/fonts/**"
+precedence = "override"
+SPDX-FileCopyrightText = ["2010 Google Corporation", "2012 Red Hat, Inc."]
+SPDX-License-Identifier = "OFL-1.1"

@@ -40,7 +40,7 @@ Wine at run time). Wine is the oracle it is compared with. What the game needs, 
 | M1 | 32-bit lifter and CPU | all 91 indirect jumps of the game resolved, only MMX / SSE / 3DNow left unlifted; `hello32` and an x87 title print what they print under Wine | **done** (2026-11-24): `hello` as a 32-bit program passes 7/7 and `fixtures/x87` prints the 27 lines it prints under Wine, in Node and in headless Chrome. On the game: 349,540 instructions lifted, all 88 jump tables recovered, 8,279 MMX / 3DNow instructions left out. 3 indirect jumps stay unresolved: they are not tables but the C++ exception machinery's jumps (see below) |
 | M2 | Win32 process for a 32-bit guest | the game reaches `Direct3DCreate9` under `SW_STRICT=1` with the same import sequence as under Wine | **done** (2026-11-24): the game runs its C runtime's start-up, reads `File.Ore`, registers its class, creates and shows its window, and calls `Direct3DCreate9` from the same address as under Wine. Its calls up to there are Wine's: 81 steps, repeats folded (`tests/run.sh nd`). Our Direct3D 9 then declines; the game shows its own message box and exits cleanly |
 | M3 | Headless main loop (null GPU, DirectInput, silent FMOD, virtual clock, session player) | the session reaches the level in Node; Direct3D method counts equal Wine's | **done** (2026-11-24): in Node, in strict mode, the game plays the `menu-to-level` session to its end on a virtual clock: 6,256 frames in 4 s, exit code 0, the same log on every run (`tests/run.sh nd`). Frame by frame it makes Wine's Direct3D 9 calls: 27 kinds of frame are identical on both sides and cover 94 % of Wine's frames; the others are the level's, which are Wine's minus the 9 text draws a frame D3DX makes under Wine and not here, where GDI draws no glyphs yet ([narbacular-drop.md](narbacular-drop.md)) |
-| M4 | Pixels: Direct3D 9 on WebGPU | checkpoint screenshots match Wine's in headless Chrome | **first part done** (2026-11-24): in headless Chrome (WebGPU on SwiftShader) the session plays to its end in strict mode and a PNG is saved at each of the 11 checkpoints (`tests/run.sh ndgfx`). The eight still screens equal Wine's to one level in 255 once Wine's D3DX runs the code ours runs; the menu and the level differ from Wine's by less than two of Wine's own runs differ from each other ([narbacular-drop.md](narbacular-drop.md)). Left for the second part: text (GDI draws no glyphs yet), so D3DX's in-level hints are absent |
+| M4 | Pixels: Direct3D 9 on WebGPU | checkpoint screenshots match Wine's in headless Chrome | **done** (2026-11-24): in headless Chrome (WebGPU on SwiftShader) the session plays to its end in strict mode and a PNG is saved at each of its 13 checkpoints (`tests/run.sh ndgfx`). The eight still screens equal Wine's to one level in 255 once Wine's D3DX runs the code ours runs; the menu and the level differ from Wine's by less than two of Wine's own runs differ from each other. Second part: GDI draws text with Liberation Sans (built in, OFL) through stb_truetype, measured and drawn as Wine's GDI does (`tests/run.sh gdi`: every metric, ABC width, advance and placement equal), so D3DX's level title and hint appear where Wine has them, and the level's frames make Wine's Direct3D calls (73 kinds of frame identical, covering 11,851 of Wine's 11,857 frames). Left: Wine's TrueType hinting (glyph edges differ by up to half a pixel) ([narbacular-drop.md](narbacular-drop.md)) |
 | M5 | Input, sound, persistence | a scripted session places portals; music in the captured video; files survive a reload | |
 | M6 | Recipes and images | `sw build` + `sw run` from a clean checkout; identical digests on a second build | |
 | M7 | Playable in the browser | a full playthrough by hand on a real GPU | |
@@ -50,7 +50,16 @@ first level; gdi32 text is needed (memory DCs, DIB sections, a real font); Unisc
 to GDI). The runtime's stack sits where the game's fixed image must load (`0x400000`), so the 32-bit profile
 needs its own memory layout.
 
-What Windows desktop titles have since M4's first part: Direct3D 9 drawn. The device's state at each draw
+What Windows desktop titles have since M4's second part: gdi32 text drawn for real (`rt/win32/font.c`): every
+face is Liberation Sans, regular or italic, built into the module (`#embed`, SIL Open Font License), measured as
+Wine's GDI measures it and rasterised with stb_truetype (17 grey levels blended as Wine blends them, or one bit),
+into the DIB section a memory DC holds: `TextOutA`, `ExtTextOutA/W` (glyph indices, opaque and clipped
+rectangles, alignment, advances), `GetCharacterPlacementA/W`, `GetCharABCWidthsI`, `GetCharWidthI`,
+`GetFontUnicodeRanges`, `GetTextMetricsA/W`. A 32-bit title's uninitialised heap blocks are filled with `0xCD`, the
+same on every host. Not yet: bold faces (no file: bold asks get the regular face), other families (Times New Roman,
+Courier New), TrueType hinting, rotated text.
+
+What they had after M4's first part: Direct3D 9 drawn. The device's state at each draw
 becomes fixed-function shaders written by the runtime as WGSL (`rt/win32/d3d9_ffp.c`: a pure function of a state
 key, checked natively with naga), a pipeline, bindings and data, sent as explicit records on the same GPU ring
 D3D12 uses (`rt/win32/d3d9_gpu.c`, `rt/gpu_ring.c`, `rt/d3d12_cmd.h`) to the one back end (`web/gpu/backend.js`

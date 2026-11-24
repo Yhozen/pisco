@@ -103,6 +103,19 @@ SW_STRICT=1 SW_CLOCK=16667 SW_D3D9_STATS=1 SW_D3D9_FRAMES=1 SW_SESSION=recipes/n
 python3 tools/oracle-wine/d3d9-compare.py out/oracle/narbacular-drop/d3d9/wine.log out/nd.session.log
 ```
 
+## GDI: asking the oracle about fonts
+
+`gdiprobe.c` asks Wine's GDI about the fonts Narbacular Drop makes (the face it picks, metrics, kerning, ranges,
+glyph indices, ABC widths, placements) and draws every glyph the game and D3DX draw, as they draw them;
+`gdi-compare.py` sets the answers of `rt/win32/font.c` (printed in the same format by `tests/gdi/fonts.c`) against
+them. Its output holds pixels of the host's fonts, so it stays under `out/`:
+
+```sh
+$MINGW/bin/i686-w64-mingw32-clang tools/oracle-wine/gdiprobe.c -o out/caps32/gdiprobe.exe -lgdi32 -luser32
+$O run narbacular-drop out/caps32/gdiprobe.exe | tr -d '\r' > out/oracle/narbacular-drop/gdiprobe.txt
+tests/run.sh gdi
+```
+
 ## Comparing screenshots
 
 `shot-compare.py` sets our PNG of a checkpoint against the oracle's: the mean absolute difference of each colour
@@ -112,6 +125,7 @@ largest difference. Only Python's standard library (PNGs are read with `zlib`).
 ```sh
 python3 tools/oracle-wine/shot-compare.py out/nd/shots/intro.png out/oracle/narbacular-drop/d3d9/intro.png
 python3 tools/oracle-wine/shot-compare.py --table out/nd/shots out/oracle/narbacular-drop/d3d9 --diff out/nd/shots-diff   # every checkpoint; --diff: the differences as pictures
+python3 tools/oracle-wine/shot-compare.py out/nd/shots/level-hint.png out/oracle/narbacular-drop/plain/level-hint.png --box 60,48,560,96   # a rectangle only
 ```
 
 A still screen should be all but equal. A scene that moves (a menu with flickering torches, a level with flames and

@@ -48,8 +48,10 @@ same screens on every run, from a freshly made prefix.
   (17,504 calls), `kernel32!IsProcessorFeaturePresent`, gdi32's `GetCharABCWidthsI`, `GetCharWidthI`,
   `GetFontUnicodeRanges`, and all of `usp10.dll` (Uniscribe). D3DX falls back to plain GDI when `usp10.dll`
   is missing.
-- **Text is drawn.** The game renders 256 glyphs with `TextOutA` into a bitmap at start (its own font), and
-  D3DX's font draws the in-level hint with `ExtTextOutW`. So gdi32 text has to be real, not a stub.
+- **Text is drawn.** The game renders 256 characters with `TextOutA` into a bitmap at start (a font of its own
+  making: height 60, no face name, `NONANTIALIASED_QUALITY`), and D3DX's font draws the level's title and its
+  hint with `ExtTextOutW`, one glyph at a time (fonts of height 24 and 48, no face name, `ANTIALIASED_QUALITY`).
+  So gdi32 text has to be real, not a stub: see [the second part of M4](#text-gdi-draws-glyphs-m4-the-second-part).
 - **Exceptions:** none raised by the game in this session. x86 exception dispatch can wait.
 
 ### Direct3D 9
@@ -161,7 +163,8 @@ The differences, all of them:
   has nothing to draw: under Wine a level frame has 9 more `DrawIndexedPrimitive` (three texts in each of the
   three scenes), with `GetLevelDesc` on the glyph texture (5,703 calls, the one method we never see) and a
   vertex buffer `Lock` with `NOOVERWRITE` (5,700, the one flag value we never see). With a filled box in place of
-  each glyph the calls appear here too (8.4 `GetLevelDesc` a level frame; Wine: 8.3): real glyphs come with M4.
+  each glyph the calls appear here too (8.4 `GetLevelDesc` a level frame; Wine: 8.3): real glyphs came with M4's
+  second part, and with them these calls.
   The other level frames differ from Wine's by one or two particle vertex buffers or one light, as frames of
   different lengths do.
 - **Uniscribe.** Wine has `usp10.dll`, so D3DX lays text out with `ScriptShape` / `ScriptPlace` there and with
@@ -262,13 +265,121 @@ stencil, user clip planes, `DrawPrimitiveUP`, a `Clear` of part of a target. Sta
 nothing here: `DITHERENABLE`, `LASTPIXEL`, `CLIPPING`, `WRAP0`, the multisample and patch states, `MIPMAPLODBIAS`,
 `MAXMIPLEVEL`, `SRGBTEXTURE`, the bump-mapping stage states, `RESULTARG`.
 
+## Text: GDI draws glyphs (M4, the second part)
+
+```sh
+SW_TRACE=1 ... node web/run-node.mjs ...                     # "gdi32: font ..." for every font made
+tests/run.sh gdi                                             # font.c natively against Wine's GDI (tools/oracle-wine/gdiprobe.c)
+```
+
+**What is asked for**, logged in our runtime (the same calls, with the same arguments, are in Wine's `+relay` log):
+
+| Who, when | Font | Under Wine (`gdiprobe.c`) | Drawn |
+|---|---|---|---|
+| the game, at start | `CreateFontA` height 60, weight 0, no face name, `NONANTIALIASED_QUALITY` | Liberation Sans, 54 pixels an em | 256 characters, each with `TextOutA` centred on the bottom of a 64x64 DIB section, white on magenta, then copied into a texture of its own |
+| D3DX, at start | `CreateFontIndirectA` height 24, weight 400, `DEFAULT_CHARSET`, `ANTIALIASED_QUALITY`, face `""` | Liberation Sans, 21 pixels an em | the level's hint, 63 characters, 28 glyphs |
+| D3DX, at start | the same, height 48, italic | Liberation Sans Italic, 43 | nothing in this session |
+| D3DX, in the level | the same, height 48 | Liberation Sans, 43 | the level's title, *Polishing Up*, 11 glyphs |
+
+D3DX draws each glyph by itself: `ExtTextOutW(ETO_GLYPH_INDEX | ETO_OPAQUE)` of one glyph index at (0, 0) into a
+32-bit DIB section, white on black with an opaque background, then `GetCharABCWidthsI` for its box, then copies
+it into its glyph texture (39 glyphs on both sides, the same indices in the same order).
+
+**Uniscribe or not.** Under Wine `usp10.dll` loads, so D3DX lays text out with `ScriptItemize`, `ScriptShape` and
+`ScriptPlace` (93,636 shapes in the session); here `LoadLibraryA("usp10.dll")` fails and D3DX uses
+`GetCharacterPlacementA` (12,838 calls), `GetFontLanguageInfo` and the ABC widths instead. Both paths end in the
+same GDI calls, with the same glyph indices, and in the same Direct3D calls frame by frame (below). Uniscribe
+would add an API of its own (items, runs, script analysis, clusters, glyph attributes) for no difference
+Direct3D can see, so the census's answer stands: no `usp10.dll`. One thing the paths do differently: Uniscribe
+places glyphs without the font's kerning pairs, while D3DX's GDI path asks `GetCharacterPlacement` to kern when
+`GetFontLanguageInfo` says the font can (Wine's GDI says so for Liberation Sans). Kerned, our hint had its colon
+2 pixels closer to the T than Wine's, and everything after it 2 pixels to the left; so our
+`GetFontLanguageInfo` answers 0, and D3DX places its glyphs as under Wine (`GetCharacterPlacement` itself still
+kerns as Wine's does when asked).
+
+**How** (`rt/win32/font.c`, used by `gdi32.c`): every face name becomes Liberation Sans 2.1.5 (regular or
+italic, SIL Open Font License, `rt/win32/fonts/`), the face and version Wine gives the game on the oracle's
+machine; no game file is read. The two font files are built into the module with C23's `#embed` (0.8 MB more for
+a Windows desktop title): no file for a host to provide, and the build stays a function of the repository. Their
+outlines are read and rasterised with stb_truetype (`rt/win32/third_party/`). What Wine does was measured with
+`tools/oracle-wine/gdiprobe.c` (each of the four fonts: the face chosen, `TEXTMETRICW`, kerning, Unicode ranges,
+glyph indices, ABC widths, advances, `GetCharacterPlacementA` of the session's two texts with and without
+`GCP_USEKERNING`, and the pixels of every glyph drawn as D3DX and the game draw them) and is done the same way:
+the em size for a height (the largest whose `usWinAscent + usWinDescent` fits), FreeType's fixed-point rounding
+of every metric, black boxes from the floor of a glyph's left edge to the ceiling of its right, kerning from the
+`kern` table rounded as Wine rounds it, the opaque box (advance by the cell height), and antialiased glyphs as 17 levels of coverage blended through Wine's fixed ramp (white on black
+gives 0x68, 0x7c, ... 0xff; measured), one-bit glyphs for `NONANTIALIASED_QUALITY`. Wine's FreeType also runs the
+font's TrueType hinting, which stb_truetype does not have; `font.c` stands in with vertical hinting only: the
+font's blue zones (baseline, x-height, cap height, ascender, descender) snapped to whole pixels, overshoots onto
+the same pixel (kept, rounded, for one-bit glyphs, as Wine's are).
+
+**Against Wine's GDI** (`tests/run.sh gdi`): every measurement D3DX and the game read is Wine's: 138 lines, the
+four fonts' metrics, kerning pairs (908; 857 italic), 125 Unicode ranges, glyph indices, all 256 ABC widths and
+advances, and the placements (advances, kerned or not, and the totals). Only `GetCharABCWidthsW` of U+007F, a
+character the face lacks, differs, and nothing calls it. The pixels differ where hinting moves an edge:
+
+| | glyphs | pixels that differ (of the DIB) | mean difference | text pixels, Wine / ours |
+|---|---|---|---|---|
+| height 24, antialiased | 30 | 0.69 % | 0.23 of 255 | 1,935 / 2,073 |
+| height 48 italic, antialiased | 30 | 0.95 % | 0.34 | 6,847 / 7,192 |
+| height 48, antialiased | 30 | 0.86 % | 0.34 | 6,700 / 7,133 |
+| height 60, one bit (the game's 256 characters) | 256 | 0.72 % (9 % of the text's pixels) | | 81,356 / 80,460 |
+
+(Without the vertical hinting: 0.85 %, 1.12 %, 0.98 %, 0.81 %.) What is left is Wine's horizontal hinting (a stem
+or a bowl half a pixel narrower) and stem heights it rounds up.
+
+**Direct3D 9, frame by frame**, the same session against Wine's `+d3d9` trace (`d3d9-compare.py`, which now also
+folds Wine's `texture_2d_LockRect` passing through its own `surface_LockRect`):
+
+| | before (no glyphs) | now |
+|---|---|---|
+| kinds of frame identical on both sides | 28 | 73 |
+| Wine's frames whose calls we make too | 11,169 of 11,857 | 11,851 of 11,857 |
+| our frames whose calls Wine makes too | 5,058 of 6,256 | 6,240 of 6,256 |
+| level frames (Wine 687, ours 1,197) with a kind the other side has | Wine 0, ours 0 | Wine 681, ours 1,181 |
+| methods called on both sides | 70 | 71 (`GetLevelDesc` too) |
+| arguments with the same set of values | 140 | 142 (`Lock` with `NOOVERWRITE` too) |
+
+A level frame now makes D3DX's 9 text draws (three texts in each of three scenes) with Wine's `GetLevelDesc` and
+`NOOVERWRITE` locks. The 6 frames of Wine's and 16 of ours left over differ by a light or a particle vertex buffer
+(frames of different lengths: Wine's clock is the wall's), and the frame in which D3DX makes the title's glyph
+texture differs by one draw of the scene's.
+
+**On the screen** (`tests/run.sh ndgfx`; the session has two checkpoints more for this, `level-title` 2.5 s
+and `level-hint` 9 s after the last click, and the oracle's `plain` screenshots were taken again with it): the
+title and the hint are where Wine has them, in its colours. Of the text's pixels in Wine's shot (white, or green)
+1,787 of 1,789 are text in ours too for the title, 2,517 of 2,591 for the hint; ours has more (2,243 and 3,027):
+its glyphs are a little bolder, Wine's being hinted narrower. Mean difference of each channel, and the share of
+pixels over 16:
+
+| | whole picture | | the text's box | |
+|---|---|---|---|---|
+| `level-title` (box 195,222-445,262) | 1.62 1.34 1.24 | 1.41 % | 10.3 10.8 11.1 | 24.1 % |
+| `level-hint` (box 60,48-560,96) | 1.43 1.58 1.12 | 2.36 % | 3.76 8.73 4.00 | 21.6 % |
+| `level` (no text, as before) | 1.33 1.01 0.89 | 0.69 % | | |
+
+Two runs of Wine differ by 1.04 0.50 0.26 (0.11 %) in the hint's box, and by 1.14 0.71 0.59 (0.40 %) in a box of
+the same size just below it, where we differ by 1.90 1.47 1.29 (1.19 %): what is left in the text's box is the
+glyphs' edges (hinting). The title fades in and out, so its numbers also depend on the moment. The still
+screens stay within 0.11 of Wine's. The menu shows none of this text (its words are the game's textures); where
+the game shows the 256 characters it draws at start, none of the session's screenshots tells.
+
+**A game bug found on the way.** With glyphs drawn, the first level sometimes crashed in its first frame, in
+Node or in Chrome, depending on what the heap held: the player, starting the level, attaches the camera to
+itself only if a pointer it sets a few instructions later is already non-zero (`0x41d9cb` tests `[this+0x1e4]`,
+`0x41da5e` sets it); in a fresh, zeroed block the camera is not attached, and the frame then reads another
+entity's float as a pointer. Under Wine the game plays on: the block held something non-zero there. A 32-bit title's
+`HeapAlloc` (and the growth of a `HeapReAlloc`) without `HEAP_ZERO_MEMORY` now fills small blocks with `0xCD`,
+the same on every host (`rt/kernel32.c`); stb_truetype's memory comes from a pool of `font.c`'s, not the title's
+heap.
+
 ## What this decides
 
 | Question | Answer |
 |---|---|
 | Is x86 exception dispatch needed for the first level? | No. `RaiseException` and `RtlUnwind` stay stubs that stop the run |
 | Is gdi32 text needed? | Yes: memory DCs, DIB sections, `TextOutA`, `ExtTextOutW` with a real font |
-| Uniscribe? | No: report `usp10.dll` as missing and D3DX takes its GDI path |
+| Uniscribe? | No: report `usp10.dll` as missing and D3DX takes its GDI path, which ends in the same glyphs, the same GDI calls and the same Direct3D calls as Wine's Uniscribe path (M4, the second part) |
 | Shader translation for the first level? | No. The one effect is compiled when first used, later in the game |
 | Clip planes or stencil for the portals? | No: render-to-texture |
 | How much of kernel32? | 35 functions for this session, 11 of them not in `rt/` yet |
