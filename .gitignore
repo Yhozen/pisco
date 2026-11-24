@@ -1,0 +1,9 @@
+target/
+out/
+# built test titles (rebuilt from their sources)
+fixtures/*/target/
+fixtures/**/*.exe
+fixtures/**/*.dll
+fixtures/**/*.obj
+fixtures/**/*.lib
+fixtures/**/*.a

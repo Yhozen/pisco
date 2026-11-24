@@ -1,0 +1,8 @@
+[package]
+name = "lifter"
+version = "0.1.0"
+edition = "2021"
+license = "GPL-2.0-only"
+[dependencies]
+iced-x86 = { version = "1.21", default-features = false, features = ["std", "decoder", "instr_info", "intel"] }
+object = { version = "0.36", default-features = false, features = ["read_core", "pe", "std"] }

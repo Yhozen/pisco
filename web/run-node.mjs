@@ -1,0 +1,125 @@
+// Runs a lifted title under Node: node run-node.mjs title.wasm <the title's .exe> [title arguments...]
+// The main thread only supervises: the title's threads (its main thread too) run in workers, so an exit
+// from any of them ends the process even while others are blocked.
+import fs from 'node:fs';
+import path from 'node:path';
+import { Worker, isMainThread, workerData } from 'node:worker_threads';
+
+const EXIT = new BroadcastChannel('series-web-exit');
+const GPU_OPEN = new BroadcastChannel('series-web-gpu'); // a title thread opened the GPU ring: the supervisor runs the null back end
+const STACK_MB = 64; // wasm frames of recursive guest code live on the worker's native stack
+
+if (isMainThread) {
+  const [wasmPath, exePath, ...args] = process.argv.slice(2);
+  const module = await WebAssembly.compile(fs.readFileSync(wasmPath));
+  const memory = new WebAssembly.Memory({ initial: 1024, maximum: 65536, shared: true });
+  const dir = path.dirname(path.resolve(exePath)); // the title's folder: its exe and the DLLs it ships
+  const tids = new Int32Array(new SharedArrayBuffer(4)); tids[0] = 1;
+  // SW_SAVES=<folder>: the title's persistent storage (S:\) lives there between runs
+  const saves = process.env.SW_SAVES ? path.resolve(process.env.SW_SAVES) : null, store = [];
+  const walk = (d, rel) => { let es = []; try { es = fs.readdirSync(d, { withFileTypes: true }); } catch {} for (const e of es) { const p = path.join(d, e.name), r = rel ? `${rel}/${e.name}` : e.name; if (e.isDirectory()) walk(p, r); else store.push({ name: `pls/${r}`, data: fs.readFileSync(p) }); } };
+  if (saves) walk(saves, '');
+  EXIT.onmessage = (e) => { process.exit(e.data); };
+  GPU_OPEN.onmessage = async (e) => {
+    const { startNull } = await import('./gpu/null.js');
+    startNull(memory, e.data, { dir, log: (s) => fs.writeSync(2, `series-web: ${s}\n`) });
+  };
+  new Worker(new URL(import.meta.url), { workerData: { module, memory, dir, tids, tid: 0, saves, store, args, env: Object.fromEntries(Object.entries(process.env).filter(([k]) => k.startsWith('SW_'))) },
+    resourceLimits: { stackSizeMb: STACK_MB } }).on('error', (e) => { console.error(e); process.exit(121); });
+} else {
+  const { module, memory, dir, tids, tid, args, env, saves, store } = workerData;
+  const kinds = ['trap', 'instruction not lifted', 'import not implemented', 'indirect call to unknown code', 'image does not fit', 'fatal'];
+  const u8 = () => new Uint8Array(memory.buffer);
+  const dv = () => new DataView(memory.buffer);
+  const text = (p, n) => Buffer.from(memory.buffer, p, n).toString();
+  const exit = (code) => { EXIT.postMessage(code); Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0); };
+  const argv = ['title.wasm', ...args], envv = Object.entries(env).map(([k, v]) => `${k}=${v}`);
+  const strings = (list, ptrs, buf) => { let p = buf; list.forEach((s, i) => { dv().setUint32(ptrs + 4 * i, p, true); const b = Buffer.from(s + '\0'); u8().set(b, p); p += b.length; }); return 0; };
+  const sizes = (list, a, b) => { dv().setUint32(a, list.length, true); dv().setUint32(b, list.reduce((n, s) => n + Buffer.byteLength(s) + 1, 0), true); return 0; };
+  const sleeper = new Int32Array(new SharedArrayBuffer(4));
+  const wasi = {
+    args_get: (p, b) => strings(argv, p, b), args_sizes_get: (a, b) => sizes(argv, a, b),
+    environ_get: (p, b) => strings(envv, p, b), environ_sizes_get: (a, b) => sizes(envv, a, b),
+    fd_write: (fd, iovs, n, written) => {
+      let total = 0;
+      for (let i = 0; i < n; i++) { const p = dv().getUint32(iovs + 8 * i, true), len = dv().getUint32(iovs + 8 * i + 4, true);
+        if (fd === 1 || fd === 2) fs.writeSync(fd, new Uint8Array(memory.buffer, p, len).slice()); total += len; }
+      dv().setUint32(written, total, true); return fd === 1 || fd === 2 ? 0 : 8;
+    },
+    fd_read: (fd, iovs, n, read) => {
+      if (fd !== 0) return 8;
+      let total = 0;
+      for (let i = 0; i < n; i++) { const p = dv().getUint32(iovs + 8 * i, true), len = dv().getUint32(iovs + 8 * i + 4, true);
+        const tmp = Buffer.alloc(len); let k = 0; try { k = fs.readSync(0, tmp, 0, len, null); } catch { k = 0; }
+        u8().set(tmp.subarray(0, k), p); total += k; if (k < len) break; }
+      dv().setUint32(read, total, true); return 0;
+    },
+    fd_close: () => 0, fd_seek: () => 70, fd_sync: () => 0,
+    fd_fdstat_get: (fd, p) => { if (fd > 2) return 8; u8().fill(0, p, p + 24); dv().setUint8(p, 2); return 0; },
+    fd_fdstat_set_flags: () => 0, fd_filestat_get: () => 8,
+    fd_prestat_get: () => 8, fd_prestat_dir_name: () => 8, path_open: () => 44, path_filestat_get: () => 44,
+    proc_exit: (code) => exit(code),
+    clock_time_get: (id, prec, out) => { const ns = id === 0 ? BigInt(Date.now()) * 1000000n : BigInt(Math.round(performance.now() * 1e6)); dv().setBigUint64(out, ns, true); return 0; },
+    clock_res_get: (id, out) => { dv().setBigUint64(out, 1000n, true); return 0; },
+    random_get: (p, n) => { crypto.getRandomValues(new Uint8Array(memory.buffer, p, n).subarray(0)); return 0; },
+    sched_yield: () => 0,
+    poll_oneoff: (subs, events, n, nevents) => {
+      // only clock subscriptions (nanosleep): block this worker
+      let ns = 0n;
+      for (let i = 0; i < n; i++) { const base = subs + 48 * i; if (dv().getUint8(base + 8) === 0) { const t = dv().getBigUint64(base + 24, true); if (t > ns) ns = t; } }
+      Atomics.wait(sleeper, 0, 0, Number(ns) / 1e6);
+      dv().setUint32(nevents, 0, true); return 0;
+    },
+  };
+  // a path in the title's folder, matched without regard to case as Windows does: the real path or null
+  const resolve = (name) => {
+    let p = dir;
+    for (const part of name.split(/[\\/]/).filter(Boolean)) {
+      let list; try { list = fs.readdirSync(p); } catch { return null; }
+      const real = list.find((f) => f.toLowerCase() === part.toLowerCase()); if (!real) return null;
+      p = path.join(p, real);
+    }
+    return p;
+  };
+  const fds = new Map();
+  const open = (name) => {
+    if (!fds.has(name)) { const real = resolve(name); let fd = -1; try { if (real) fd = fs.openSync(real, 'r'); } catch {} fds.set(name, fd); }
+    return fds.get(name);
+  };
+  const host = {
+    fault: (kind, a) => { console.error(`series-web: ${kinds[kind]}${kind === 5 ? '' : ` at 0x${BigInt.asUintN(64, a).toString(16)}`}`); exit(120); },
+    now_us: () => performance.now() * 1000,
+    read_file: (name, nlen, off, len, dst) => {
+      const fd = open(text(name, nlen)); if (fd < 0) { if (process.env.SW_DEBUG_READ) console.error(`read_file ${text(name, nlen)}: not found`); return 0; }
+      const got = fs.readSync(fd, new Uint8Array(memory.buffer, Number(dst), Number(len)), 0, Number(len), Number(off));
+      if (got < Number(len) && process.env.SW_DEBUG_READ) console.error(`read_file ${text(name, nlen)} off ${off} len ${len} dst ${dst} -> ${got}`);
+      return got;
+    },
+    stat: (name, nlen) => { const real = resolve(text(name, nlen)); if (!real) return -1n; try { const st = fs.statSync(real); return st.isDirectory() ? -2n : BigInt(st.size); } catch { return -1n; } },
+    list: (name, nlen, buf, cap) => {
+      const real = resolve(text(name, nlen)); if (!real) return 0;
+      let out = ''; try { for (const e of fs.readdirSync(real, { withFileTypes: true })) out += e.name + (e.isDirectory() ? '/' : '') + '\n'; } catch { return 0; }
+      const b = Buffer.from(out); if (buf && cap >= b.length) u8().set(b, buf); return b.length;
+    },
+    log: (p, n) => { fs.writeSync(2, `series-web: ${text(p, n)}\n`); },
+    gpu_open: (ring) => { GPU_OPEN.postMessage(ring >>> 0); },
+    audio_open: () => {}, // no output in Node: the mixer's ring turns on its own
+    store_info: (i, name, cap) => { const f = store[i]; if (!f) return -1n; const b = Buffer.from(f.name + '\0'); if (b.length <= cap) u8().set(b, name); return BigInt(f.data.length); },
+    store_read: (i, dst) => { u8().set(store[i].data, dst); },
+    store_save: (name, len, data, n) => { if (!saves) return; const p = path.join(saves, ...text(name, len).slice(4).split('/')); fs.mkdirSync(path.dirname(p), { recursive: true }); fs.writeFileSync(p, new Uint8Array(memory.buffer, data, n)); },
+    store_remove: (name, len) => { if (saves) fs.rmSync(path.join(saves, ...text(name, len).slice(4).split('/')), { force: true }); },
+    input_open: () => {}, // no keyboard or gamepad: readings stay empty
+    exit: (code) => exit(code),
+  };
+  const spawn = (arg) => {
+    const t = Atomics.add(tids, 0, 1);
+    new Worker(new URL(import.meta.url), { workerData: { module, memory, dir, tids, tid: t, args, env, saves, store, start: arg }, resourceLimits: { stackSizeMb: STACK_MB } })
+      .on('error', (e) => { console.error(e); exit(122); });
+    return t;
+  };
+  const instance = new WebAssembly.Instance(module, { env: { memory }, wasi_snapshot_preview1: wasi, wasi: { 'thread-spawn': spawn }, host });
+  try {
+    if (tid === 0) { instance.exports._start(); exit(0); }
+    else instance.exports.wasi_thread_start(tid, workerData.start);
+  } catch (e) { console.error(String(e.stack || e)); exit(123); }
+}

@@ -1,0 +1,98 @@
+// One guest thread. Output and exit go through a BroadcastChannel: the page reads it, whichever worker writes.
+const bus = new BroadcastChannel('series-web');
+bus.onmessage = (e) => { if (e.data.stop) close(); };
+const kinds = ['trap', 'instruction not lifted', 'import not implemented', 'indirect call to unknown code', 'image does not fit', 'fatal'];
+// A pooled worker waits on its slot of `ctl` (state, tid, start argument): 1 = idle, 2 = claimed.
+onmessage = (e) => {
+  const { pool } = e.data;
+  if (pool && pool.slot >= 0) {
+    const { ctl, slot } = pool, at = slot * 4;
+    Atomics.store(ctl, at, 1);
+    while (Atomics.load(ctl, at) !== 2) Atomics.wait(ctl, at, 1);
+    bus.postMessage({ refill: slot }); // the page starts a new worker for this slot
+    run({ ...e.data, tid: ctl[at + 1], start: ctl[at + 2] });
+  } else run(e.data);
+};
+function run(d) {
+  const { module, memory, dir, tids, tid, args, env, start, pool, store = [] } = d;
+  const u8 = () => new Uint8Array(memory.buffer), dv = () => new DataView(memory.buffer);
+  const dec = new TextDecoder(), enc = new TextEncoder();
+  const text = (p, n) => dec.decode(new Uint8Array(memory.buffer, p, n).slice());
+  const exit = (code) => { bus.postMessage({ exit: code }); Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0); };
+  const argv = ['title.wasm', ...args], envv = Object.entries(env).map(([k, v]) => `${k}=${v}`);
+  const strings = (list, ptrs, buf) => { let p = buf; list.forEach((s, i) => { dv().setUint32(ptrs + 4 * i, p, true); const b = enc.encode(s + '\0'); u8().set(b, p); p += b.length; }); return 0; };
+  const sizes = (list, a, b) => { dv().setUint32(a, list.length, true); dv().setUint32(b, list.reduce((n, s) => n + enc.encode(s).length + 1, 0), true); return 0; };
+  const sleeper = new Int32Array(new SharedArrayBuffer(4));
+  const wasi = {
+    args_get: (p, b) => strings(argv, p, b), args_sizes_get: (a, b) => sizes(argv, a, b),
+    environ_get: (p, b) => strings(envv, p, b), environ_sizes_get: (a, b) => sizes(envv, a, b),
+    fd_write: (fd, iovs, n, written) => {
+      let total = 0, s = '';
+      for (let i = 0; i < n; i++) { const p = dv().getUint32(iovs + 8 * i, true), len = dv().getUint32(iovs + 8 * i + 4, true); s += text(p, len); total += len; }
+      if (fd === 1 || fd === 2) bus.postMessage({ out: s });
+      dv().setUint32(written, total, true); return fd === 1 || fd === 2 ? 0 : 8;
+    },
+    fd_read: (fd, iovs, n, read) => { dv().setUint32(read, 0, true); return fd === 0 ? 0 : 8; },
+    fd_close: () => 0, fd_seek: () => 70, fd_sync: () => 0,
+    fd_fdstat_get: (fd, p) => { if (fd > 2) return 8; u8().fill(0, p, p + 24); dv().setUint8(p, 2); return 0; },
+    fd_fdstat_set_flags: () => 0, fd_filestat_get: () => 8,
+    fd_prestat_get: () => 8, fd_prestat_dir_name: () => 8, path_open: () => 44, path_filestat_get: () => 44,
+    proc_exit: (code) => exit(code),
+    clock_time_get: (id, prec, out) => { const ns = id === 0 ? BigInt(Date.now()) * 1000000n : BigInt(Math.round(performance.now() * 1e6)); dv().setBigUint64(out, ns, true); return 0; },
+    clock_res_get: (id, out) => { dv().setBigUint64(out, 1000n, true); return 0; },
+    random_get: (p, n) => { const t = new Uint8Array(n); crypto.getRandomValues(t); u8().set(t, p); return 0; },
+    sched_yield: () => 0,
+    poll_oneoff: (subs, events, n, nevents) => {
+      let ns = 0n;
+      for (let i = 0; i < n; i++) { const base = subs + 48 * i; if (dv().getUint8(base + 8) === 0) { const t = dv().getBigUint64(base + 24, true); if (t > ns) ns = t; } }
+      Atomics.wait(sleeper, 0, 0, Number(ns) / 1e6); dv().setUint32(nevents, 0, true); return 0;
+    },
+  };
+  // the title's files, fetched on first use (a synchronous request: workers may block)
+  const files = new Map();
+  const file = (name) => {
+    if (!files.has(name)) { const x = new XMLHttpRequest(); x.open('GET', dir + name.split('/').map(encodeURIComponent).join('/'), false); x.responseType = 'arraybuffer'; x.send(); files.set(name, x.status === 200 ? new Uint8Array(x.response) : null); }
+    return files.get(name);
+  };
+  const host = {
+    fault: (kind, a) => { bus.postMessage({ out: `series-web: ${kinds[kind]}${kind === 5 ? '' : ` at 0x${BigInt.asUintN(64, a).toString(16)}`}\n` }); exit(120); },
+    now_us: () => performance.now() * 1000,
+    read_file: (name, nlen, off, len, dst) => {
+      const f = file(text(name, nlen)); if (!f) return 0;
+      const o = Number(off), src = f.subarray(o, o + Number(len)); u8().set(src, Number(dst)); return src.length;
+    },
+    stat: (name, nlen) => { const x = new XMLHttpRequest(); x.open('GET', dir + text(name, nlen).split('/').map(encodeURIComponent).join('/') + '?stat', false); x.send(); return x.status === 200 ? BigInt(x.responseText) : -1n; },
+    list: (name, nlen, buf, cap) => {
+      const x = new XMLHttpRequest(); x.open('GET', dir + text(name, nlen).split('/').map(encodeURIComponent).join('/') + '?list', false); x.send();
+      if (x.status !== 200) return 0; const b = enc.encode(x.responseText); if (buf && cap >= b.length) u8().set(b, buf); return b.length;
+    },
+    log: (p, n) => bus.postMessage({ out: `series-web: ${text(p, n)}\n` }),
+    // the title's persistent storage: the page loaded it from OPFS before the title started, and saves changes there
+    store_info: (i, name, cap) => { const f = store[i]; if (!f) return -1n; const b = enc.encode(f.name + '\0'); if (b.length <= cap) u8().set(b, name); return BigInt(f.data.length); },
+    store_read: (i, dst) => { u8().set(store[i].data, dst); },
+    store_save: (name, len, data, n) => bus.postMessage({ save: { name: text(name, len), data: new Uint8Array(memory.buffer, data, n).slice() } }),
+    store_remove: (name, len) => bus.postMessage({ remove: text(name, len) }),
+    gpu_open: (ring) => bus.postMessage({ gpu: ring >>> 0 }),     // the page runs the GPU back end on this ring
+    audio_open: (ring) => bus.postMessage({ audio: ring >>> 0 }), // and plays this one
+    input_open: (block) => bus.postMessage({ input: block >>> 0 }), // and writes the keyboard and gamepad here
+    exit: (code) => exit(code),
+  };
+  // a new guest thread: claim an idle pooled worker (the page cannot start one for us while we block)
+  const spawn = (arg) => {
+    const { ctl } = pool;
+    for (let i = 0; i < ctl.length / 4; i++) {
+      if (Atomics.compareExchange(ctl, 4 * i, 1, 3) === 1) {
+        const t = Atomics.add(tids, 0, 1);
+        ctl[4 * i + 1] = t; ctl[4 * i + 2] = arg;
+        Atomics.store(ctl, 4 * i, 2); Atomics.notify(ctl, 4 * i);
+        return t;
+      }
+    }
+    return -6; // EAGAIN: no idle worker
+  };
+  const instance = new WebAssembly.Instance(module, { env: { memory }, wasi_snapshot_preview1: wasi, wasi: { 'thread-spawn': spawn }, host });
+  try {
+    if (tid === 0) { instance.exports._start(); exit(0); }
+    else instance.exports.wasi_thread_start(tid, start);
+  } catch (err) { bus.postMessage({ out: `series-web: ${err && err.stack || err}\n` }); exit(123); }
+}
