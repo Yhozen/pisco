@@ -2,7 +2,8 @@
 // Starts a lifted title in this page: ?wasm=<title.wasm>&exe=<the title's .exe>&args=<space-separated>
 // The title's threads (its main thread too) run in workers; this page owns what a console would: the GPU
 // (web/gpu/backend.js, on this thread), the speakers (an AudioWorklet playing the title's mixer ring), and the
-// keyboard and gamepad (written into the title's input block).
+// keyboard and gamepad (written into the title's input block), or for a Windows desktop title the keyboard and the
+// mouse under Pointer Lock (events into its input ring).
 // Options: &pace=off (no frame clock), &hash=1 (log a hash of every presented frame),
 //          &capture=1 (send presented frames and the audio to the server, which records them: tools/serve.mjs),
 //          &SW_<NAME>=<value>: the runtime's settings, as the Node host takes them from the environment. For
@@ -20,7 +21,7 @@ const POOL = 32; // guest threads come from workers the page starts ahead of tim
 let ctl, boot, memory, device, dir;
 const log = (s) => { console.log(s); out.textContent += s + '\n'; };
 const startPooled = (slot) => { const w = new Worker('worker.js'); workers.push(w); w.postMessage({ ...boot, pool: { ctl, slot } }); };
-const capture = q.get('capture') === '1', hashFrames = q.get('hash') === '1';
+const capture = q.get('capture') === '1', hashFrames = q.get('hash') === '1', clockStep = +(q.get('SW_CLOCK') || 0);
 const post = (path, body, headers = {}) => fetch(path, { method: 'POST', body, headers }).catch(() => {});
 
 // ---- presented frames: hashes for tests, frames for recordings ----
@@ -30,8 +31,10 @@ function onFrame(f) {
     for (let i = 0; i < p.length; i += 4) for (const k of bgra ? [0, 1, 2] : [2, 1, 0]) h = Math.imul(h ^ p[i + k], 16777619) >>> 0;
     console.log(`gpu frame ${f.index} ${h.toString(16).padStart(8, '0')}`);
   }
-  // wall-clock times (they continue across a reload of the page)
-  if (capture) post('/capture/frame', f.pixels, { 'x-frame': JSON.stringify({ index: f.index, time: performance.timeOrigin + f.time, width: f.width, height: f.height, format: f.format }) });
+  // wall-clock times (they continue across a reload of the page); with a virtual clock (SW_CLOCK: microseconds a
+  // frame) the title's: frame n shows from (n + 1) frames on, and the sound is placed on the same clock (startAudio)
+  const time = clockStep ? performance.timeOrigin + (f.index + 1) * clockStep / 1000 : performance.timeOrigin + f.time;
+  if (capture) post('/capture/frame', f.pixels, { 'x-frame': JSON.stringify({ index: f.index, time, width: f.width, height: f.height, format: f.format }) });
 }
 // a session's checkpoint: the frame it names, to the server; and how fast frames came since the one before
 let lastShot = { index: 0, time: performance.now() };
@@ -60,9 +63,10 @@ async function startAudio(addr) {
       const n = w - read; if (!n) return;
       const chunk = new Float32Array(n * 2);
       for (let i = 0; i < n; i++) { const at = (read + i) % cap; chunk[2 * i] = data[2 * at]; chunk[2 * i + 1] = data[2 * at + 1]; }
+      // the mixer runs `lead` frames ahead of the clock: the chunk's first frame plays at now + (lead - n) / rate.
+      // A mix that follows a virtual clock (header word 5) says where its frame 0 is on that clock (words 6, 7)
+      const time = u32[5] ? performance.timeOrigin + (u32[6] + u32[7] * 2 ** 32) / 1000 + read / rate * 1000 : performance.timeOrigin + performance.now() + (lead - n) / rate * 1000;
       read = w;
-      // the mixer runs `lead` frames ahead of the clock: the chunk's first frame plays at now + (lead - n) / rate
-      const time = performance.timeOrigin + performance.now() + (lead - n) / rate * 1000;
       post('/capture/audio', chunk.buffer, { 'x-audio': JSON.stringify({ time, rate }) });
     }, 100);
   }
@@ -94,6 +98,40 @@ function startInput(addr) {
     if (label && capture) post('/capture/mark', JSON.stringify({ label, time: performance.timeOrigin + performance.now() }));
   }, ms); };
   if (scripted) playKeys(scripted);
+}
+// ---- input for a Windows desktop title (rt/win32/input.c): the keyboard as DirectInput scan codes, the mouse as
+// relative motion under Pointer Lock (a click on the canvas takes the pointer; Escape gives it back, as browsers
+// do, and is passed on to the title as its Escape key) ----
+const DIK = { Escape: 0x01, Minus: 0x0C, Equal: 0x0D, Backspace: 0x0E, Tab: 0x0F, BracketLeft: 0x1A, BracketRight: 0x1B, Enter: 0x1C, ControlLeft: 0x1D,
+  Semicolon: 0x27, Quote: 0x28, Backquote: 0x29, ShiftLeft: 0x2A, Backslash: 0x2B, Comma: 0x33, Period: 0x34, Slash: 0x35, ShiftRight: 0x36,
+  NumpadMultiply: 0x37, AltLeft: 0x38, Space: 0x39, CapsLock: 0x3A, NumLock: 0x45, ScrollLock: 0x46, Numpad7: 0x47, Numpad8: 0x48, Numpad9: 0x49,
+  NumpadSubtract: 0x4A, Numpad4: 0x4B, Numpad5: 0x4C, Numpad6: 0x4D, NumpadAdd: 0x4E, Numpad1: 0x4F, Numpad2: 0x50, Numpad3: 0x51, Numpad0: 0x52,
+  NumpadDecimal: 0x53, IntlBackslash: 0x56, F11: 0x57, F12: 0x58, NumpadEnter: 0x9C, ControlRight: 0x9D, NumpadDivide: 0xB5, PrintScreen: 0xB7,
+  AltRight: 0xB8, Pause: 0xC5, Home: 0xC7, ArrowUp: 0xC8, PageUp: 0xC9, ArrowLeft: 0xCB, ArrowRight: 0xCD, End: 0xCF, ArrowDown: 0xD0,
+  PageDown: 0xD1, Insert: 0xD2, Delete: 0xD3, MetaLeft: 0xDB, MetaRight: 0xDC, ContextMenu: 0xDD };
+'1234567890'.split('').forEach((d, i) => { DIK[`Digit${d}`] = 0x02 + i; });
+for (const [row, first] of [['QWERTYUIOP', 0x10], ['ASDFGHJKL', 0x1E], ['ZXCVBNM', 0x2C]]) row.split('').forEach((k, i) => { DIK[`Key${k}`] = first + i; });
+for (let i = 1; i <= 10; i++) DIK[`F${i}`] = 0x3A + i;
+function startWin32Input(addr) {
+  const i32 = new Int32Array(memory.buffer, addr, 4 + 4 * 512), cap = i32[2], held = new Set();
+  const push = (kind, a, b) => {
+    const w = Atomics.load(i32, 0); if (w - Atomics.load(i32, 1) >= cap) return;   // the title has not read for a while: dropped
+    const at = 4 + 4 * (w % cap); i32[at] = kind; i32[at + 1] = a; i32[at + 2] = b; Atomics.store(i32, 0, w + 1);
+  };
+  const key = (code, down) => { const scan = DIK[code]; if (!scan || held.has(code) === down) return false; if (down) held.add(code); else held.delete(code); push(1, scan, down ? 1 : 0); return true; };
+  addEventListener('keydown', (e) => { if (DIK[e.code]) e.preventDefault(); if (!e.repeat) key(e.code, true); });
+  addEventListener('keyup', (e) => { key(e.code, false); });
+  addEventListener('blur', () => { for (const code of [...held]) key(code, false); });
+  const locked = () => document.pointerLockElement === canvas;
+  canvas.addEventListener('click', () => { if (!locked()) canvas.requestPointerLock(); });
+  let wasLocked = false;
+  document.addEventListener('pointerlockchange', () => { if (wasLocked && !locked()) { push(1, 0x01, 1); push(1, 0x01, 0); } wasLocked = locked(); });
+  addEventListener('mousemove', (e) => { if (locked() && (e.movementX || e.movementY)) push(2, e.movementX, e.movementY); });
+  const button = { 0: 0, 1: 2, 2: 1, 3: 3, 4: 4 };   // the browser's left, middle, right, back, forward -> DirectInput's 0 left, 1 right, 2 middle
+  canvas.addEventListener('mousedown', (e) => { if (locked()) { push(3, button[e.button] ?? 0, 1); e.preventDefault(); } });
+  addEventListener('mouseup', (e) => { if (locked()) push(3, button[e.button] ?? 0, 0); });
+  canvas.addEventListener('wheel', (e) => { if (locked()) { push(4, e.deltaY < 0 ? 120 : -120, 0); e.preventDefault(); } }, { passive: false });
+  canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 }
 // window.swKeys([[ms, code, keyCode, down], ...]): key presses, played once the title reads its input
 let scripted = null, playKeys = null;
@@ -135,13 +173,14 @@ bus.onmessage = (e) => {
   if (m.audio !== undefined) startAudio(m.audio);
   if (m.save !== undefined || m.remove !== undefined) persist(m);
   if (m.input !== undefined) startInput(m.input);
+  if (m.win32input !== undefined) startWin32Input(m.win32input);
   if (m.exit !== undefined) {
     status.textContent = `exit ${m.exit}`; document.title = `exit ${m.exit}`;
     if (line) console.log(line);
     // a title drawn through the explicit records (Direct3D 9): what the back end made of them, in one line
     if (window.swGpu?.explicit?.draws) console.log(`gpu explicit records: ${JSON.stringify(window.swGpu.explicit)}, ${window.swGpu.presents} presents, ${window.swGpu.errors.count} WebGPU errors`);
-    console.log(`series-web exit ${m.exit}`);
-    bus.postMessage({ stop: true });
+    // what the title stored last is written to OPFS first (a title that saves as it quits: Narbacular Drop's system.opt)
+    storeQueue.then(() => { console.log(`series-web exit ${m.exit}`); bus.postMessage({ stop: true }); });
   }
 };
 if (!crossOriginIsolated) { status.textContent = 'not cross-origin isolated: shared memory is unavailable'; console.log('series-web exit 125'); }

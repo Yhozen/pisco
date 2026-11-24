@@ -293,7 +293,9 @@ u64 rt_now_us(void) {
   if (rt_clock_virtual()) return 1104580800000000ull + __atomic_load_n(&clock_virtual, __ATOMIC_SEQ_CST);
   struct timespec t; clock_gettime(CLOCK_REALTIME, &t); return (u64)t.tv_sec * 1000000 + (u64)t.tv_nsec / 1000;
 }
-void rt_clock_advance(u64 us) { if (rt_clock_virtual()) __atomic_add_fetch(&clock_virtual, us, __ATOMIC_SEQ_CST); }
+void mixer_clock_moved(void);   // mixer.c: under a virtual clock the sound is mixed up to the clock as it moves
+void rt_clock_advance(u64 us) { if (rt_clock_virtual()) { __atomic_add_fetch(&clock_virtual, us, __ATOMIC_SEQ_CST); mixer_clock_moved(); } }
+u64 rt_clock_virtual_us(void) { return __atomic_load_n(&clock_virtual, __ATOMIC_SEQ_CST); }   // the virtual clock since it started
 void rt_clock_advance_frame(void) { rt_clock_advance(clock_step); }
 // What the system has been up for: it started a minute before the first time anyone asked
 u64 rt_uptime_us(void) { static u64 boot; u64 now = rt_now_us(); if (!boot) boot = now - 60000000; return now - boot; }

@@ -21,6 +21,7 @@ function captureFrame(meta, body) {
       '-vf', `scale=${meta.width * 2}:${meta.height * 2}:flags=neighbor`, '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-crf', '18', '-preset', 'veryfast', tmp], { stdio: ['pipe', 'inherit', 'inherit'] });
     cap = { ff, tmp, t0: meta.time, written: 0, last: null, frames: 0, done: new Promise((r) => ff.on('close', r)) };
   }
+  if (cap.ending) return;   // a frame that arrives while the recording is being finished
   cap.frames++;
   // fill the video up to this frame's time with the previous frame, then this one
   const k = Math.round((meta.time - cap.t0) * FPS / 1000);
@@ -30,7 +31,7 @@ function captureFrame(meta, body) {
 }
 async function captureEnd() {
   if (!cap) return 'no frames';
-  cap.ff.stdin.end(); await cap.done;
+  cap.ending = true; cap.ff.stdin.end(); await cap.done;
   const pcm = captureOut + '.audio.f32';
   // the audio track: each chunk at its time on the video's clock (gaps stay silent, as across a reload)
   const rate = audioChunks[0]?.rate || 48000, total = Math.ceil(cap.written / FPS * rate);

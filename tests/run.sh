@@ -24,6 +24,10 @@
 #            and the glyph pixels' differences are printed
 #   ndgfx    tests/gfx/nd.sh: Narbacular Drop's session in headless Chrome, drawn (WebGPU on SwiftShader): a PNG at
 #            every checkpoint, and the still screens close to the oracle's screenshots when those are there (minutes)
+#   ndplay   tests/gfx/ndplay.sh: Narbacular Drop played (M5): the level1-portals session in Node (both portals, out of
+#            the cage; its sound not silent and the same on a second run; its FMOD calls against Wine's +snoop trace
+#            when the oracle's is there), system.opt written by Quit and read again by a second run (SW_SAVES), then
+#            the same in Chrome: the session's screenshots, and a reload that finds system.opt in OPFS (minutes)
 #   doom     tests/gfx/doom.sh: Doom as a console title in Node and Chrome (minutes)
 #   xcl      tests/gfx/xcl.sh: XCL's console test title in Chrome, when it has been built into out/xcltitle-game
 #   audio    tests/audio/run.sh: the XMA2 / Opus decoders (builds FFmpeg's the first time)
@@ -130,6 +134,7 @@ for s in ${*:-build node bench win32 ffp gdi}; do case $s in
   ffp)    if command -v naga > /dev/null; then step ffp tests/gfx/d3d9-ffp.sh; else echo "skip  ffp: naga is not installed (tools/setup-toolchain.sh naga)"; fi ;;
   gdi)    LINES_SHOWN=5 step gdi gdi ;;
   ndgfx)  if [ -f "$ND/Narbacular Drop.exe" ]; then LINES_SHOWN=16 ND=$ND step ndgfx tests/gfx/nd.sh; else echo "skip  ndgfx: the game is not installed (ND=$ND)"; fi ;;
+  ndplay) if [ -f "$ND/Narbacular Drop.exe" ]; then LINES_SHOWN=16 ND=$ND step ndplay tests/gfx/ndplay.sh; else echo "skip  ndplay: the game is not installed (ND=$ND)"; fi ;;
   doom)   LINES_SHOWN=4 step doom tests/gfx/doom.sh ;;
   audio)  step audio tests/audio/run.sh ;;
   xcl)    if [ -f out/xcltitle-game/xcl_testtitle.exe ]; then LINES_SHOWN=3 step xcl tests/gfx/xcl.sh; else echo "skip  xcl: out/xcltitle-game/xcl_testtitle.exe is not built"; fi ;;

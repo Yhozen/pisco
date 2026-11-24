@@ -9,26 +9,32 @@
 //   CAPTURE=<out.mp4> record the presented frames and the audio; DURATION=<s> then stop the title (it is
 //   recorded until then); KEYS=<json> key presses for the page, [[ms, code, keyCode, down, label?], ...] (a label
 //   marks the recording); RELOAD_AT=<s> load the page again then (a new title process, the same browser profile:
-//   what the title stored survives), with KEYS2 for the new page
+//   what the title stored survives), with KEYS2 for the new page; CHROME_PROFILE=<folder> keep the browser's profile
+//   there (OPFS: what titles stored) and use it again next time, with PORT=<n> for the same origin (OPFS is per origin)
 import { spawn } from 'node:child_process'; import path from 'node:path'; import fs from 'node:fs'; import os from 'node:os';
 import { sessionSteps } from '../web/session.mjs';
 const [wasm, exe, ...args] = process.argv.slice(2);
 const root = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..');
-const port = 8000 + Math.floor(Math.random() * 1000), dbg = port + 1000;
+const port = +(process.env.PORT || 8000 + Math.floor(Math.random() * 1000)), dbg = port + 1000;
 const capture = process.env.CAPTURE ? path.resolve(process.env.CAPTURE) : null;
 const server = spawn(process.execPath, [path.join(root, 'tools/serve.mjs'), port, path.join(root, 'web'), path.dirname(path.resolve(wasm)), path.dirname(path.resolve(exe)), ...(capture ? ['--capture', capture] : []),
   '--shots', path.join(path.dirname(path.resolve(wasm)), 'shots')], { stdio: 'inherit' });
 // the runtime's settings for the page: every SW_* of the environment (SW_TRACE has its own, older, page option), the session as its steps
 const settings = Object.entries(process.env).filter(([k]) => k.startsWith('SW_') && k !== 'SW_TRACE' && k !== 'SW_SESSION');
 if (process.env.SW_SESSION) settings.push(['SW_SESSION_STEPS', sessionSteps(JSON.parse(fs.readFileSync(process.env.SW_SESSION, 'utf8')))]);
-const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'sw-chrome-'));
+const keepProfile = !!process.env.CHROME_PROFILE;
+const profile = keepProfile ? path.resolve(process.env.CHROME_PROFILE) : fs.mkdtempSync(path.join(os.tmpdir(), 'sw-chrome-'));
+fs.mkdirSync(profile, { recursive: true });
 const gpuFlags = ['--enable-unsafe-webgpu', '--enable-features=Vulkan', '--use-webgpu-adapter=swiftshader', '--enable-unsafe-swiftshader', '--use-angle=swiftshader', '--use-gl=angle', '--autoplay-policy=no-user-gesture-required'];
 const chrome = spawn('google-chrome', ['--headless=new', `--remote-debugging-port=${dbg}`, `--user-data-dir=${profile}`, '--no-first-run', '--no-sandbox', ...gpuFlags, 'about:blank'], { stdio: 'ignore' });
 let ending = false;
 const done = async (code) => {
   if (ending) return; ending = true;
   if (capture) { try { console.log(await (await fetch(`http://127.0.0.1:${port}/capture/end`, { method: 'POST' })).text()); } catch (e) { console.error(`capture: ${e.message}`); } }
-  chrome.kill(); server.kill(); try { fs.rmSync(profile, { recursive: true, force: true }); } catch {} process.exit(code);
+  chrome.kill(); server.kill();
+  if (keepProfile) await new Promise((r) => (chrome.exitCode !== null ? r() : chrome.on('exit', r)));   // the profile is written when Chrome ends
+  else try { fs.rmSync(profile, { recursive: true, force: true }); } catch {}
+  process.exit(code);
 };
 setTimeout(() => { console.error('timed out'); done(124); }, +(process.env.TIMEOUT || 600) * 1000);
 if (process.env.DURATION) setTimeout(() => { console.log(`stopping after ${process.env.DURATION} s`); done(0); }, +process.env.DURATION * 1000);

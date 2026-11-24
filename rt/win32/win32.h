@@ -10,10 +10,13 @@ int gdi_fill_rect(u32 hdc, const s32 *rect, u32 brush);
 
 // ---- input.c: the one input state DirectInput (and later user32) reads ----
 // Keys are DirectInput scan codes (DIK_*); mouse buttons 0 left, 1 right, 2 middle, ...
-// Whoever has input to give (the session player now, the host's keyboard and mouse later) calls the first three.
+// Whoever has input to give (the session player, the page's keyboard and mouse) calls the first three.
 void input_key(u32 scan, int down);
 void input_mouse_move(s32 dx, s32 dy, s32 wheel);       // relative motion
 void input_mouse_button(u32 button, int down);
+// What the page sent since the last call (its keyboard, the mouse under Pointer Lock: web/browser/main.js), into
+// the state: DirectInput calls it before it reads. The first call opens the page's event ring.
+void input_poll(void);
 // The state: 256 keys and 8 buttons, 0x80 where one is down; the mouse's position as the sum of all motion
 const u8 *input_keys(void);
 const u8 *input_mouse_buttons(void);

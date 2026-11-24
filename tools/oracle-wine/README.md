@@ -13,8 +13,23 @@ $O play   narbacular-drop recipes/narbacular-drop/sessions/menu-to-level.json
 $O stop   narbacular-drop
 ```
 
-Screenshots and Wine's log go to the run folder, `out/oracle/<title>/` (`ORACLE_RUN` overrides it). `out/` is
-ignored by git: screenshots and logs of a title never enter the repository.
+Screenshots, Wine's log and what the title played (`wine-audio.wav`) go to the run folder, `out/oracle/<title>/`
+(`ORACLE_RUN` overrides it). `out/` is ignored by git: screenshots, sound and logs of a title never enter the repository.
+
+## The sound device
+
+Wine plays into a PipeWire null sink, run as the user with no hardware and no root (`oracle.sh sound start`, which
+`start` and `run` do when needed; `ORACLE_SOUND=0` runs a title without a device, as before M5): one `pipewire`
+daemon with `pipewire.conf` (a null sink consumed in real time by PipeWire's dummy driver, and the PulseAudio
+protocol, which Wine's `winepulse.drv` speaks), and `wireplumber`, which links the streams. Its runtime folder is
+`$ORACLE_HOME/sound`. While a title runs, ffmpeg records the sink's monitor (48 kHz stereo) to the run folder's
+`wine-audio.wav`; `stop` ends the recording. ALSA's `null` plugin is not an alternative: it is not paced, and Wine
+then plays several times faster than real time.
+
+```sh
+python3 tools/oracle-wine/fsound-compare.py out/oracle/narbacular-drop/portals/wine.log out/nd.play.log   # +snoop FMOD calls against ours (SW_FMOD_TRACE=1)
+python3 tools/oracle-wine/audio-compare.py out/nd.play.wav out/oracle/narbacular-drop/portals/wine-audio.wav  # levels and loudness envelopes
+```
 
 ## Session scripts
 
@@ -36,6 +51,9 @@ session describes what a player does, not how a host does it.
 | `{"button": "right", "down": true\|false}` | press or release only |
 | `{"key": "w", "ms": n}` or `{"key": "w", "down": true\|false}` | a key by X keysym name, or `space`, `enter`, `esc`, `up`, ... |
 | `{"shot": "name"}` | save `<name>.png` (the title's client area) and `<name>.full.png` (the screen) |
+
+`play.py` turns X's pointer acceleration off first: X would otherwise scale every motion event of more than 4
+pixels, and the title under Wine would see other deltas than the session gives (our runtime passes them on unchanged).
 
 In our own runtime the same file drives the title through `SW_SESSION=<session.json>` (the Node host and
 `tools/run-chrome.mjs`; the steps reach the runtime's session player, `rt/win32/input.c`). Time there is the
@@ -159,5 +177,7 @@ $O reg narbacular-drop delete 'HKLM\Software\Microsoft\Direct3D' /f /reg:32
 - **A prefix whose first boot was interrupted is broken** (32-bit programs fail to load `kernel32`); `prefix`
   recreates one that has no `system.reg`.
 - **No crash debugger** (`winedbg.exe=d`): a crashing program otherwise waits in Wine's debugger for input.
-- **No sound device here**: FMOD's `FSOUND_Init` fails, so a title loads no sounds. A sound census needs a
-  PulseAudio-compatible server first.
+- **A sound device** (above): without one FMOD's `FSOUND_Init` fails, and a title loads no sounds.
+- **Heap filling** (`warn+heap`, always on in `start`): Wine's heap then fills new blocks with 0x55, as our runtime
+  fills a 32-bit title's with 0xCD. Narbacular Drop reads a field of a new block before it sets it; with sound
+  loaded, the zeroed blocks Wine handed out otherwise made it crash entering its first level.

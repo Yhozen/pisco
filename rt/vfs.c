@@ -4,6 +4,9 @@
 //   S:\ -> "pls" (persistent local storage), T:\ -> "temp", any other drive -> "<letter>".
 // Writes go to an in-memory overlay (a copy of the file is made on first write); deletes leave a whiteout;
 // listings merge the overlay with the folder. Nothing in the title's folder is ever changed.
+// What persists (the host keeps it between runs, below): S:\ for every title; for a Windows desktop title
+// (rt/win32/glue.c sets vfs_writable_game) also what it writes in its own folder, the top layer over its files
+// (Narbacular Drop's system.opt): the files it changed or made there, whole (files it deletes there are not recorded).
 #include <ctype.h>
 #include <time.h>
 #include "rt.h"
@@ -26,6 +29,8 @@ static pthread_mutex_t vfs_lock = PTHREAD_MUTEX_INITIALIZER;
 static u32 hash(const char *s) { u32 h = 2166136261u; while (*s) h = (h ^ (u8)*s++) * 16777619u; return h % BUCKETS; }
 static Node *node_raw(const char *p) { for (Node *n = nodes[hash(p)]; n; n = n->next) if (!strcmp(n->path, p)) return n; return 0; }
 static Node *node_new(const char *p);
+__attribute__((weak)) const int vfs_writable_game = 0;   // rt/win32/glue.c: 1
+static int persistent(const char *p) { return !strncmp(p, "pls/", 4) || (vfs_writable_game && !strncmp(p, "game/", 5)); }
 static int store_loaded;
 static void store_load(void) {
   if (store_loaded) return;
@@ -34,14 +39,13 @@ static void store_load(void) {
   for (u32 i = 0;; i++) {
     s64 size = host_store_info(i, name, sizeof name);
     if (size < 0) break;
-    if (strncmp(name, "pls/", 4)) continue;
-    for (char *sl = strchr(name + 4, '/'); sl; sl = strchr(sl + 1, '/')) { *sl = 0; Node *d = node_new(name); d->dir = 1; d->gone = 0; *sl = '/'; }
+    if (!persistent(name)) continue;
+    for (char *sl = strchr(strchr(name, '/') + 1, '/'); sl; sl = strchr(sl + 1, '/')) { *sl = 0; Node *d = node_new(name); d->dir = 1; d->gone = 0; *sl = '/'; }
     Node *n = node_new(name); n->dir = 0; n->gone = 0; n->size = (u64)size; n->cap = (u64)size + 1; n->data = malloc((size_t)size + 1); n->mtime = 132000000000000000ull;
     if (size) host_store_read(i, n->data);
   }
 }
 static Node *node(const char *p) { store_load(); return node_raw(p); }
-static int persistent(const char *p) { return !strncmp(p, "pls/", 4); }
 static Node *node_new(const char *p) { Node *n = node_raw(p); if (n) return n; n = calloc(1, sizeof *n); n->path = strdup(p); u32 h = hash(p); n->next = nodes[h]; nodes[h] = n; return n; }
 static u64 now_ft(void) { struct timespec t; clock_gettime(CLOCK_REALTIME, &t); return (u64)t.tv_sec * 10000000 + (u64)t.tv_nsec / 100 + 116444736000000000ull; }
 

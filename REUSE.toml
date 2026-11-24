@@ -40,6 +40,18 @@ SPDX-FileCopyrightText = "2017 Sean Barrett"
 SPDX-License-Identifier = "MIT OR Unlicense"
 
 [[annotations]]
+path = "rt/win32/third_party/stb_vorbis.c"
+precedence = "override"
+SPDX-FileCopyrightText = "2017 Sean Barrett"
+SPDX-License-Identifier = "MIT OR Unlicense"
+
+[[annotations]]
+path = "rt/win32/third_party/minimp3.h"
+precedence = "override"
+SPDX-FileCopyrightText = "lieff (https://github.com/lieff/minimp3)"
+SPDX-License-Identifier = "CC0-1.0"
+
+[[annotations]]
 path = "rt/win32/fonts/**"
 precedence = "override"
 SPDX-FileCopyrightText = ["2010 Google Corporation", "2012 Red Hat, Inc."]

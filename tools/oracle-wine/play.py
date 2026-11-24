@@ -8,6 +8,9 @@ from Xlib.ext import xtest
 
 d = display.Display(sys.argv[1]); session = json.load(open(sys.argv[2])); out = sys.argv[3]
 root = d.screen().root
+# No pointer acceleration: X would otherwise scale each motion event of more than 4 pixels, and the title would see
+# other deltas than the session gives (our runtime's session player passes them on unchanged)
+d.change_pointer_control(accel=(1, 1), threshold=1); d.sync()
 BUTTON = {'left': 1, 'middle': 2, 'right': 3}
 KEYSYM = {' ': 'space', '~': 'grave', '`': 'grave', 'enter': 'Return', 'esc': 'Escape', 'escape': 'Escape',
           'up': 'Up', 'down': 'Down', 'left': 'Left', 'right': 'Right', 'tab': 'Tab', 'shift': 'Shift_L', 'ctrl': 'Control_L'}

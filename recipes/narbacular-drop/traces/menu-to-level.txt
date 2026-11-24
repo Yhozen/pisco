@@ -13,6 +13,6 @@ checkpoint tutorial-2 frame 4429: 11 methods, 7062 calls
 checkpoint tutorial-3 frame 4738: 11 methods, 7062 calls
 checkpoint tutorial-4 frame 5047: 11 methods, 7059 calls
 checkpoint level-title frame 5206: 61 methods, 313136 calls
-checkpoint level-hint frame 5596: 66 methods, 885340 calls
-checkpoint level frame 6256: 41 methods, 1687888 calls
+checkpoint level-hint frame 5596: 66 methods, 885349 calls
+checkpoint level frame 6256: 41 methods, 1686551 calls
 session done: 38 steps, 6256 frames

@@ -41,7 +41,7 @@ Wine at run time). Wine is the oracle it is compared with. What the game needs, 
 | M2 | Win32 process for a 32-bit guest | the game reaches `Direct3DCreate9` under `SW_STRICT=1` with the same import sequence as under Wine | **done** (2026-11-24): the game runs its C runtime's start-up, reads `File.Ore`, registers its class, creates and shows its window, and calls `Direct3DCreate9` from the same address as under Wine. Its calls up to there are Wine's: 81 steps, repeats folded (`tests/run.sh nd`). Our Direct3D 9 then declines; the game shows its own message box and exits cleanly |
 | M3 | Headless main loop (null GPU, DirectInput, silent FMOD, virtual clock, session player) | the session reaches the level in Node; Direct3D method counts equal Wine's | **done** (2026-11-24): in Node, in strict mode, the game plays the `menu-to-level` session to its end on a virtual clock: 6,256 frames in 4 s, exit code 0, the same log on every run (`tests/run.sh nd`). Frame by frame it makes Wine's Direct3D 9 calls: 27 kinds of frame are identical on both sides and cover 94 % of Wine's frames; the others are the level's, which are Wine's minus the 9 text draws a frame D3DX makes under Wine and not here, where GDI draws no glyphs yet ([narbacular-drop.md](narbacular-drop.md)) |
 | M4 | Pixels: Direct3D 9 on WebGPU | checkpoint screenshots match Wine's in headless Chrome | **done** (2026-11-24): in headless Chrome (WebGPU on SwiftShader) the session plays to its end in strict mode and a PNG is saved at each of its 13 checkpoints (`tests/run.sh ndgfx`). The eight still screens equal Wine's to one level in 255 once Wine's D3DX runs the code ours runs; the menu and the level differ from Wine's by less than two of Wine's own runs differ from each other. Second part: GDI draws text with Liberation Sans (built in, OFL) through stb_truetype, measured and drawn as Wine's GDI does (`tests/run.sh gdi`: every metric, ABC width, advance and placement equal), so D3DX's level title and hint appear where Wine has them, and the level's frames make Wine's Direct3D calls (73 kinds of frame identical, covering 11,851 of Wine's 11,857 frames). Left: Wine's TrueType hinting (glyph edges differ by up to half a pixel) ([narbacular-drop.md](narbacular-drop.md)) |
-| M5 | Input, sound, persistence | a scripted session places portals; music in the captured video; files survive a reload | |
+| M5 | Input, sound, persistence | a scripted session places portals; music in the captured video; files survive a reload | **done** (2026-11-24): the oracle has a sound device (a PipeWire null sink, recorded). FMOD 3 plays on XAudio2's mixer, factored out (`rt/mixer.c`), with WAV, Ogg Vorbis (stb_vorbis) and MP3 (minimp3) read through the game's own file functions; on the virtual clock the mix is the same on every run (`SW_AUDIO_WAV`). Against Wine's `+snoop`: the same functions, the first 177 non-per-frame calls identical with their results (channel handles included) up to the game's first random choice of a sound, per-frame calls equal phase by phase, sounds started by family equal but for footsteps and torch pops, whose times are random; the first level's loudness within 0.4 dB of Wine's recording. The page feeds the keyboard (scan codes) and the mouse under Pointer Lock. `level1-portals` places both portals and walks out of the cage, in Node and in Chrome (its level views within 1-2 levels in 255 of Wine's on average); `system.opt`, written on Quit, survives a rerun (`SW_SAVES`) and a reload (OPFS), equal to Wine's to the byte (`tests/run.sh ndplay`). Video with sound: `recipes/narbacular-drop/video.sh` (108 s, its audio track at -26.4 dB mean, -2.5 dB peak) ([narbacular-drop.md](narbacular-drop.md)) |
 | M6 | Recipes and images | `sw build` + `sw run` from a clean checkout; identical digests on a second build | |
 | M7 | Playable in the browser | a full playthrough by hand on a real GPU | |
 
@@ -50,7 +50,15 @@ first level; gdi32 text is needed (memory DCs, DIB sections, a real font); Unisc
 to GDI). The runtime's stack sits where the game's fixed image must load (`0x400000`), so the 32-bit profile
 needs its own memory layout.
 
-What Windows desktop titles have since M4's second part: gdi32 text drawn for real (`rt/win32/font.c`): every
+What Windows desktop titles have since M5: FMOD 3 (`rt/win32/fmod3.c`: samples, streams, channels as FMOD numbers them,
+3D with several listeners) on the runtime's one sound output (`rt/mixer.c`, shared with XAudio2; mixed on the title's
+thread under a virtual clock), sound files decoded by `rt/win32/audio_decode.c`; input from the page (keyboard,
+Pointer Lock mouse) through a ring `rt/win32/input.c` drains when DirectInput reads; a writable top layer over the
+title's own folder that the host keeps (`SW_SAVES/@game` in Node, OPFS in the browser). Not yet: ADPCM WAVs, Doppler,
+reverb, the other FSOUND functions (none of the 33 imports is missing, but FMOD has hundreds), deleting a title's own
+files across runs.
+
+What they had after M4's second part: gdi32 text drawn for real (`rt/win32/font.c`): every
 face is Liberation Sans, regular or italic, built into the module (`#embed`, SIL Open Font License), measured as
 Wine's GDI measures it and rasterised with stb_truetype (17 grey levels blended as Wine blends them, or one bit),
 into the DIB section a memory DC holds: `TextOutA`, `ExtTextOutA/W` (glyph indices, opaque and clipped
@@ -115,5 +123,6 @@ word, 80-bit precision, and every import beyond the four the two test titles cal
 
 - Exceptions resume only at landing pads the lifter found (GCC/LLVM LSDA, C scope tables); MSVC funclets not yet.
 - x87 is emulated with doubles (no 80-bit precision).
-- Memory protection, guard pages and write watches do not exist; the VFS has no persistence.
+- Memory protection, guard pages and write watches do not exist; the VFS keeps S:\ and (Windows desktop titles) what a
+  title writes in its own folder, not deletions of its own files.
 - One wait list serves all waits (events, semaphores, mutexes, address waits): correct, not fast with many threads.

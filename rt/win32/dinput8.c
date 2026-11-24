@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // DirectInput 8 for Windows desktop titles: the system mouse and the system keyboard, read from the runtime's
 // input state (input.c) as immediate data (GetDeviceState: DIMOUSESTATE, DIMOUSESTATE2, the 256-byte keyboard)
-// and as buffered data (GetDeviceData, once the title has set a buffer size: the events since its last read).
+// and as buffered data (GetDeviceData, once the title has set a buffer size: the events since its last read). In the
+// browser the page's keyboard and the mouse under Pointer Lock feed that state (input_poll, before each read).
 // The title's window always has the focus, so a device is never lost. No game controller is attached.
 // The data formats understood are the three standard ones (by their size); others are refused.
 #include "com.h"
@@ -131,6 +132,7 @@ IMP(dinput8, IDirectInputDevice8A_GetProperty) {
 // Acquire: needs a data format; a second Acquire has no effect. What moved before does not count afterwards.
 IMP(dinput8, IDirectInputDevice8A_Acquire) {
   Device *d = DEV;
+  input_poll();   // what the page sent since
   if (!d->data_size) { RET(DIERR_INVALIDPARAM); return; }
   if (d->acquired) { RET(S_FALSE); return; }
   d->acquired = 1; d->next_event = input_event_count(); input_mouse_position(&d->x, &d->y, &d->wheel);
@@ -141,6 +143,7 @@ IMP(dinput8, IDirectInputDevice8A_Poll) { RET(DEV->acquired ? S_FALSE : DIERR_NO
 // GetDeviceState(size, data): the state now
 IMP(dinput8, IDirectInputDevice8A_GetDeviceState) {
   Device *d = DEV; u64 out = ARG(2);
+  input_poll();   // what the page sent since
   if (!out) { RET(E_POINTER); return; }
   if (!d->acquired) { RET(DIERR_NOTACQUIRED); return; }
   if ((u32)ARG(1) != d->data_size) { RET(DIERR_INVALIDPARAM); return; }
@@ -157,6 +160,7 @@ IMP(dinput8, IDirectInputDevice8A_GetDeviceState) {
 // A device keeps `buffer` events: if more happened since the last read the oldest are lost and it says so.
 IMP(dinput8, IDirectInputDevice8A_GetDeviceData) {
   Device *d = DEV; u32 item = (u32)ARG(1); u64 out = ARG(2), count = ARG(3);
+  input_poll();   // what the page sent since
   if (!count) { RET(E_POINTER); return; }
   if (item != 20 && item != 16) { RET(DIERR_INVALIDPARAM); return; }
   if (!d->acquired) { RET(DIERR_NOTACQUIRED); return; }

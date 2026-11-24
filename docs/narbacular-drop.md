@@ -81,9 +81,11 @@ The capabilities the oracle's device reports are in [`tools/oracle-wine/d3d9caps
 
 ### Sound (FMOD)
 
-`FSOUND_SetMemorySystem` hands FMOD a 16 MB pool, then `FSOUND_Init(44100, 32, 0)` **fails** here because the
-machine has no sound device, and the game loads no sounds. Afterwards it still calls `FSOUND_SetVolume` and
-`FSOUND_3D_Listener_SetCurrent` every frame. The sound census needs a sound server for Wine first.
+Without a sound device (the oracle as it was until M5) `FSOUND_Init(44100, 32, 0)` fails and the game loads no
+sounds. With one ([M5](#played-input-sound-and-saves-m5)) it calls 28 of the 33 FSOUND functions it imports: it sets
+its own file functions (`FSOUND_File_SetCallbacks`: FMOD reads `File.Ore` through the game), opens its music and loops
+as streams and its effects as samples (all of them 3D, `FSOUND_HW3D`, but the music), and moves three listeners
+a frame in the level (the camera and the two portals' views).
 
 ### Input
 
@@ -372,6 +374,111 @@ entity's float as a pointer. Under Wine the game plays on: the block held someth
 `HeapAlloc` (and the growth of a `HeapReAlloc`) without `HEAP_ZERO_MEMORY` now fills small blocks with `0xCD`,
 the same on every host (`rt/kernel32.c`); stb_truetype's memory comes from a pool of `font.c`'s, not the title's
 heap.
+
+## Played: input, sound and saves (M5)
+
+```sh
+tools/oracle-wine/oracle.sh sound start                       # the oracle's sound device (start does it too)
+O=tools/oracle-wine/oracle.sh; S=recipes/narbacular-drop/sessions/level1-portals.json
+ORACLE_RUN=out/oracle/narbacular-drop/portals TRACE=+snoop $O start narbacular-drop "$EXE" && $O play narbacular-drop $S; $O stop narbacular-drop
+SW_CLOCK=16667 SW_FMOD_TRACE=1 SW_AUDIO_WAV=out/nd.play.wav SW_SESSION=$S node web/run-node.mjs out/nd/title.wasm "<folder>/Narbacular Drop.exe" > out/nd.play.log
+python3 tools/oracle-wine/fsound-compare.py out/oracle/narbacular-drop/portals/wine.log out/nd.play.log
+python3 tools/oracle-wine/audio-compare.py out/nd.play.wav out/oracle/narbacular-drop/portals/wine-audio.wav
+tests/run.sh ndplay                                           # all of it, Node and Chrome; recipes/narbacular-drop/video.sh: the video
+```
+
+**The oracle hears.** Wine now has a sound device without any hardware: a PipeWire daemon run as the user with a
+null sink that its dummy driver consumes in real time (`tools/oracle-wine/pipewire.conf`), wireplumber to link
+streams, and Wine's `winepulse.drv` talking to it. ffmpeg records the sink's monitor, so every oracle run leaves
+`wine-audio.wav` beside its screenshots. (ALSA's `null` plugin was tried first: it is not paced, Wine wrote 7 times
+faster than real time.) Two more things became oracle defaults on the way: `warn+heap` (Wine's heap fills new
+blocks with 0x55; with sounds loaded, the zeroed blocks it handed out otherwise made the game crash entering the
+level, the bug M4 found, now under Wine) and no pointer acceleration in the player (X scaled each motion event
+above 4 pixels, so Wine's game saw other mouse deltas than the session's).
+
+**FMOD 3** (`rt/win32/fmod3.c`) answers the 33 imports on the runtime's sound output, which is XAudio2's mixer
+factored out of `rt/xaudio2.c` into `rt/mixer.c` (the same ring and AudioWorklet; Doom uses it unchanged). Sounds are
+read through the game's own file functions (called with `rt_guest_call` when a sound is loaded or opened, the whole
+file at once) and decoded by `rt/win32/audio_decode.c`: WAV (every one in `File.ore` is PCM, so ADPCM is not there),
+Ogg Vorbis (stb_vorbis) and MP3 (minimp3), both vendored unchanged. Short looping streams are decoded once and shared
+(20 torches play the same Ogg file); the music is decoded as it plays. Under the virtual clock the title's own thread
+mixes, exactly up to the clock each time it moves, so the sound of a run is a function of the run: two runs of the
+portal session give the same samples, and `SW_AUDIO_WAV=<file>` makes Node write them out.
+
+What is measured and what is guessed (the details are at the top of `fmod3.c`):
+
+| | |
+|---|---|
+| measured (`+snoop`) | every return value; channel handles `(use count << 12) \| channel`, software channels from 0 and hardware ones (3D) from 32, the lowest free one taken, the use count raised by a start and by `StopSound` but not when a sound ends by itself; `GetFrequency` of a new channel |
+| measured (Wine's recording) | 2D sounds, stereo ones too, are panned with equal power (-3 dB a side in the middle): the first level's music came out 2.2 dB louder than Wine's with 0 dB there, and within 0.4 dB with -3 dB |
+| from FMOD 3's documentation | volumes, `SetVolumeAbsolute` not scaled by the SFX master volume, a sound's minimum distance is the distance factor when it was made (32 here), the closest of several listeners is heard and without panning |
+| guessed | 3D attenuation `(minimum distance / distance) ^ rolloff`, equal-power panning by the angle to the listener's right; no Doppler shift, no reverb (`Reverb_SetProperties` fails under Wine too: no EAX), no hardware channel limit (64) |
+
+**Against Wine's calls** (`fsound-compare.py`; Wine's clock is the wall's, ours virtual, so phases last different
+numbers of frames, and the game starts torch pops and footsteps at random times and picks among numbered variants):
+
+| | menu-to-level | level1-portals |
+|---|---|---|
+| FSOUND calls, Wine / here | 71,917 / 65,617 | 51,626 / 68,232 |
+| functions called | the same 28 | the same 29 (`SetPan` too) |
+| calls that are not per frame: the same from the start, with the same results (handles included) | the first 177 (start-up, the title music, 20 torch loops), up to the game's first random choice of a sound | the first 177 |
+| events with a counterpart on the other side | 796 of Wine's 869, of our 813 | 895 of Wine's 979, of our 907 |
+| per frame, by phase (still screens / menu / level): `SetVolume`, `SetVolumeAbsolute`, `Listener_SetCurrent` | 0 / 20.03 / 4.08; 1.76 / 1.00 / 2.00; 0 / 0 / 3 under Wine, 0 / 20.02 / 4.05; 1.74 / 1.00 / 2.00; 0 / 0 / 3 here | the same to 0.2 |
+| sounds started, by family, Wine / here | footsteps 53 / 47, torch pops 23 / 21, every other sound the same (torch loops 30, music 2, lava 1, crate 1, run 1) | footsteps 63 / 56, torch pops 23 / 21, runs 2 / 3; a floor button pressed and released under Wine only (where the princess lands after the portal differs a little); every other sound the same |
+
+**The sound itself** (`audio-compare.py`; 1-second loudness envelopes, aligned): over menu-to-level ours is
+-24.1 dB mean against Wine's -26.0 (Wine's recording starts while the game loads, ours does not), the envelopes
+correlate at 0.84, and the first level, where the music at volume 128 is most of what is heard, is -22.2 dB here and
+-21.8 dB under Wine.
+
+**Input from the page.** In the browser a Windows desktop title's keyboard and mouse go into a ring of events the
+runtime drains whenever DirectInput reads (`rt/win32/input.c`, `web/browser/main.js`): keys as DirectInput scan
+codes (the full table), the mouse as relative motion under Pointer Lock (a click on the canvas takes the pointer;
+Escape gives it back, as browsers do, and reaches the title as its Escape key), buttons and the wheel. The session
+player feeds the same state; the console's GameInput path (Doom) is untouched.
+
+**The sessions.** `level1-portals.json`: menu-to-level's steps into the first level, then look down at the cage's
+floor and left-click (the blue portal), look up and right-click a wall beyond the grate (the red one), look down
+through the linked pair, walk forward into it and out of the cage; a still shot after each. `menu-quit.json`: Quit
+from the main menu. The game's cursor follows the mouse at about 1.25 x and 0.95 y, more for fast motion, so a
+cursor that has to hit a menu item is first pushed into the top left corner; the pause menu's items take a click in
+a band only a few pixels high, and where a fast move lands differs between Wine (real-time frames) and us (one
+frame each 16.7 ms), which is why the session quits from the main menu and not the pause menu.
+
+**On the screen** (headless Chrome, the portal session against the oracle's screenshots of it; mean difference of
+each channel and the share of pixels over 16):
+
+| Checkpoint | R G B | over 16 | |
+|---|---|---|---|
+| `level-hint` | 1.67 1.71 1.24 | 3.2 % | in the cage, the hint up |
+| `look-down` | 1.36 1.58 1.17 | 2.4 % | the cage's floor |
+| `blue` | 1.25 1.71 1.78 | 3.5 % | the blue portal on the floor, where Wine has it |
+| `red` | 2.03 1.48 1.23 | 2.6 % | the red one beyond the grate |
+| `linked` | 1.30 1.08 0.95 | 1.1 % | the room seen through the floor portal |
+| `escaped` | 14.0 12.2 11.4 | 39 % | out of the cage, in the same place, the view turned a few degrees from Wine's (a floor of fine texture: every pixel moves) |
+| `menu` | 10.0 6.7 5.0 | 18.6 % | the flickering torches, as at M4 |
+
+The level's views are as close as M4's `level` was (1.3 1.0 0.9) with the camera moved by the session's mouse and
+keys: the same motion turns and walks the princess as far under both clocks. Only the landing after the portal
+differs a little, by the time Wine's frames take while she falls. In Chrome the session takes 7 minutes (6,484
+frames; 5 to 8 a second in the level on SwiftShader).
+
+With sound the game also draws random numbers for its sounds (which footstep, a pitch), and its particles then
+come out a little differently: menu-to-level's last two checkpoints were recorded again
+(`traces/menu-to-level.txt`: 9 and 1,337 Direct3D calls apart).
+
+**What the game writes.** Only on Quit: `system.opt` beside its exe (20 bytes: two flags, the effects and music
+volumes as floats, a word). The title's own folder now has a writable top layer that the host keeps (`rt/vfs.c`,
+`vfs_writable_game`, set by the Windows desktop profile): in Node in `SW_SAVES/@game/` (S:\ stays at the folder's
+top, as for Doom), in the browser in OPFS beside S:\'s files. `tests/run.sh ndplay` quits once and starts again: the
+file is Wine's to the byte, and the second run (Node), or a second page in the same browser profile (Chrome), reads it.
+
+**A video with sound** (`recipes/narbacular-drop/video.sh`, to `out/nd/video.mp4`): the portal session recorded in
+headless Chrome through `tools/serve.mjs --capture`. Under the virtual clock the page places each presented frame
+and the sound by the title's clock (the mixer's ring says where its first frame is on that clock), so the 108 s of
+game play as 108 s of video, in sync, although SwiftShader took 6 minutes to draw them. The audio track (ffmpeg's
+volumedetect): mean -26.4 dB, peak -2.5 dB; -35.9 dB over the first 15 s (the title music fading in, as the game
+fades it), -22.0 dB in the level.
 
 ## What this decides
 

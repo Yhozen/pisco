@@ -53,6 +53,29 @@ void input_mouse_position(s32 *x, s32 *y, s32 *wheel) { pthread_mutex_lock(&lock
 u32 input_event_count(void) { return __atomic_load_n(&event_count, __ATOMIC_ACQUIRE); }
 const InputEvent *input_event(u32 number) { u32 n = input_event_count(); return number < n && n - number <= EVENTS ? &events[number % EVENTS] : 0; }
 
+// ---- input from the page ----
+// A ring of events in shared memory: words [0] events written (by the page), [1] events read (here), [2] capacity;
+// from word 4, four words an event: kind, a, b, 0. Kinds: 1 key (a: DirectInput scan code, b: down), 2 motion
+// (a: dx, b: dy, in pixels), 3 button (a: 0 left, 1 right, 2 middle, 3 / 4 the side buttons; b: down), 4 wheel
+// (a: 120 a notch, positive away from the user). Node has no page: its ring stays empty.
+HOST("win32_input_open") void host_win32_input_open(u32 ring);
+enum { RING_EVENTS = 512 };
+static u32 *ring;
+void input_poll(void) {
+  if (!ring) { ring = calloc(4 + 4 * RING_EVENTS, 4); ring[2] = RING_EVENTS; host_win32_input_open((u32)(uptr)ring); return; }
+  u32 w = __atomic_load_n(&ring[0], __ATOMIC_ACQUIRE), r = ring[1];
+  for (; r != w; r++) {
+    const s32 *e = (const s32 *)&ring[4 + 4 * (r % RING_EVENTS)];
+    switch (e[0]) {
+    case 1: input_key((u32)e[1], e[2]); break;
+    case 2: input_mouse_move(e[1], e[2], 0); break;
+    case 3: input_mouse_button((u32)e[1], e[2]); break;
+    case 4: input_mouse_move(0, 0, e[1]); break;
+    }
+  }
+  __atomic_store_n(&ring[1], r, __ATOMIC_RELEASE);
+}
+
 // ---- the session player ----
 enum { S_WAIT, S_FOCUS, S_MOVE, S_CLICK, S_BUTTON, S_KEY, S_KEYDOWN, S_KEYUP, S_SHOT };
 typedef struct { int kind; s32 a, b; u64 us; char name[40]; } Step;
