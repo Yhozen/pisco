@@ -15,9 +15,14 @@
   XGameSave's folder kept in OPFS. Its `-timedemo` frames, read back from WebGPU, equal native doomgeneric's on
   every frame native draws deterministically. Video: `fixtures/doom/video.sh`.
 
+- **XCL's console test title: 50 of 50 checks** in headless Chrome (step 4 of the ladder; `docs/journey.md`
+  §3.10, `tests/gfx/xcl.sh`): D3D12.X's UMA memory and console methods, DirectStorage, MFPlat, XG, XAudio2
+  with XMA2 / Opus. What passing does not cover is listed in §3.10 (no raytracing, our own XG layout, no
+  RDNA2 shaders yet).
+
 ## Not done, in the order Minecraft probably needs it
 
-0. **The graphics ladder's steps 1–2** (SimpleTriangleDesktop, SimplePBR) and **4** (XCL's 19 graphics checks):
+0. **The graphics ladder's steps 1–2** (SimpleTriangleDesktop, SimplePBR):
    the MSVC C++ runtime DLLs, the AVX rule in the lifter, DXGI swap chains, vertex / index / constant buffers,
    depth, BC textures. The shared D3D12 core they need exists (written for all of D3D12, tested on Doom's part).
 1. **D3D12.X** (historical note, before 2026-11-24): nothing yet. First a null device (objects that accept every call, as XCL's M1) to reach the
@@ -28,7 +33,7 @@
 3. **MSVC C++ exceptions** (`__CxxFrameHandler3/4`, `_CxxThrowException`): a test title builds
    (`fixtures/msvc`, clang for the MSVC ABI with import libraries from .def files) but the runtime has no
    handler yet. Needed only if the title throws during normal play; the census and a run will say.
-4. **Audio** (XAudio2 → AudioWorklet, XMA2 / Opus decoding: XCL has pure-Rust XMA2 and uses Opus).
+4. **Audio**: done for PCM, XMA2 and Opus (FFmpeg); XMA streamed across buffers is not.
 5. **Input**: GameInput's object exists with timestamps only; readings from the Gamepad API next.
 6. **Persistence**: the VFS overlay is in memory; saves should go to OPFS in the browser, a folder in Node.
 7. **Speed**: lifted code runs ~1.3–6× native on our micro-benchmarks. Next: keep flags lazily, register

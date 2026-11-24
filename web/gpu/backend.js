@@ -5,6 +5,7 @@
 // <title folder>/shaders/<container digest>.wgsl + .json, bindings by register (dxil2spv.cpp's scheme).
 import { GPU } from './cmd.gen.js';
 import { Ring, words } from './ring.js';
+import { memWrite, memFill, memCopy, memWait } from './memops.js';
 
 const FORMATS = {
   1: 'rgba32float', 2: 'rgba32float', 3: 'rgba32uint', 4: 'rgba32sint', 9: 'rgba16float', 10: 'rgba16float', 11: 'rgba16unorm', 12: 'rgba16uint', 13: 'rgba16snorm', 14: 'rgba16sint',
@@ -69,16 +70,34 @@ export function parseRootSignature(bytes) {
   return { params, samplers };
 }
 
+// the title layout of a texture in guest memory (rt/d3d12.c footprints(): subresources one after another,
+// 512-byte aligned, rows 256-byte aligned): [{offset, pitch, rows, width, height, depth, mip, layer}]
+const BYTES = { 'rgba32float': 16, 'rgba32uint': 16, 'rgba32sint': 16, 'rgba16float': 8, 'rgba16unorm': 8, 'rgba16uint': 8, 'rgba16snorm': 8, 'rgba16sint': 8, 'rg32float': 8, 'rg32uint': 8, 'rg32sint': 8,
+  'rg8unorm': 2, 'rg8uint': 2, 'rg8snorm': 2, 'rg8sint': 2, 'r16float': 2, 'r16unorm': 2, 'r16uint': 2, 'r16snorm': 2, 'r16sint': 2, 'depth16unorm': 2, 'r8unorm': 1, 'r8uint': 1, 'r8snorm': 1, 'r8sint': 1 };
+const texelBytes = (f) => (f.startsWith('bc1') || f.startsWith('bc4') ? 8 : f.startsWith('bc') ? 16 : BYTES[f] ?? 4);
+export function titleLayout(r) {
+  const out = []; let off = 0; const bl = blockOf(r.format), bpe = texelBytes(r.format);
+  const layers = r.dim === 3 ? 1 : r.depth;
+  for (let layer = 0; layer < layers; layer++) for (let mip = 0; mip < r.mips; mip++) {
+    const w = Math.max(1, r.width >> mip), h = Math.max(1, r.height >> mip), d = r.dim === 3 ? Math.max(1, r.depth >> mip) : 1;
+    const rows = Math.ceil(h / bl), pitch = Math.ceil(Math.ceil(w / bl) * bpe / 256) * 256;
+    off = Math.ceil(off / 512) * 512;
+    out.push({ offset: off, pitch, rows, width: w, height: h, depth: d, mip, layer });
+    off += pitch * rows * d;
+  }
+  return { subs: out, size: off };
+}
+
 export async function startBackend({ memory, ring: ringAddr, device, canvas, dir, log = console.log, onFrame = null, keepAll = false }) {
   const ring = new Ring(memory, ringAddr), g = ring.g;
-  const res = new Map(), rootsigs = new Map(), psos = new Map(), shaders = new Map();
+  const res = new Map(), rootsigs = new Map(), psos = new Map(), shaders = new Map(), queryHeaps = new Map();
   const vas = []; // buffers by address: [va, end, r]
   const errors = { count: 0 };
   device.onuncapturederror = (e) => { if (errors.count++ < 20) log(`gpu: WebGPU error: ${e.error.message}`); };
   const ctx = canvas.getContext('webgpu'), canvasFormat = navigator.gpu.getPreferredCanvasFormat();
   ctx.configure({ device, format: canvasFormat, alphaMode: 'opaque' });
   let samplerCache = new Map(), pipelineCache = new Map(), presents = 0;
-  const stats = { executes: 0, draws: 0, presents: 0, errors, skipped: {} };
+  const stats = { executes: 0, draws: 0, presents: 0, segments: 0, readbacks: 0, errors, skipped: {} };
   const skip = (why) => { stats.skipped[why] = (stats.skipped[why] || 0) + 1; };
 
   const findVA = (va) => {
@@ -86,12 +105,13 @@ export async function startBackend({ memory, ring: ringAddr, device, canvas, dir
     while (lo < hi) { const m = (lo + hi) >> 1; if (vas[m][0] <= va) lo = m + 1; else hi = m; }
     const e = vas[lo - 1]; return e && va < e[1] ? { r: e[2], offset: va - e[0] } : null;
   };
-  const guestBytes = (a, n) => { g.refresh(); return new Uint8Array(g.buf, a, n); };
-  let writeShared = true; // writeBuffer straight from shared memory, until the browser refuses
-  const upload = (r) => {
-    const n = Math.ceil(r.size / 4) * 4, src = guestBytes(r.backing, n);
-    if (writeShared) { try { device.queue.writeBuffer(r.gpu, 0, src); return; } catch (e) { writeShared = false; log(`gpu: writeBuffer from shared memory refused (${e.message}): copying`); } }
-    device.queue.writeBuffer(r.gpu, 0, src.slice());
+  // an address in guest memory (untagged, or in the console's GPU-visible region), not a PC GPU-only buffer's
+  const isGuest = (va) => { const hi = Math.floor(va / 4294967296); return hi === 0 || (hi >= 4 && hi < 8); };
+  const guestBytes = (a, n) => { g.refresh(); return new Uint8Array(g.buf, a >>> 0, n); };
+  let writeShared = true; // writeBuffer / writeTexture straight from shared memory, until the browser refuses
+  const writeBuf = (buf, off, src) => {
+    if (writeShared) { try { device.queue.writeBuffer(buf, off, src); return; } catch (e) { writeShared = false; log(`gpu: writeBuffer from shared memory refused (${e.message}): copying`); } }
+    device.queue.writeBuffer(buf, off, src.slice());
   };
 
   // ---- resources ----
@@ -100,10 +120,8 @@ export async function startBackend({ memory, ring: ringAddr, device, canvas, dir
     const r = { id, dim, dxgi: fmt, format: FORMATS[fmt], width: u64(wlo, whi), height, depth, mips, samples, flags, heap, backing, va: u64(valo, vahi), views: new Map() };
     if (dim === 0) {
       r.size = r.width;
-      const usage = heap === 3 ? GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ
-        : GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST | GPUBufferUsage.VERTEX | GPUBufferUsage.INDEX | GPUBufferUsage.UNIFORM | GPUBufferUsage.STORAGE | GPUBufferUsage.INDIRECT;
+      const usage = GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST | GPUBufferUsage.VERTEX | GPUBufferUsage.INDEX | GPUBufferUsage.UNIFORM | GPUBufferUsage.STORAGE | GPUBufferUsage.INDIRECT;
       r.gpu = device.createBuffer({ size: Math.max(16, Math.ceil(r.size / 4) * 4), usage });
-      r.cpu = heap === 2 || heap === 3 || (heap === 4 && backing);
       const at = vas.findIndex((e) => e[0] > r.va); vas.splice(at < 0 ? vas.length : at, 0, [r.va, r.va + r.size, r]);
     } else {
       let f = r.format;
@@ -116,6 +134,7 @@ export async function startBackend({ memory, ring: ringAddr, device, canvas, dir
       const size = { width: r.width, height: dim === 1 ? 1 : height, depthOrArrayLayers: depth };
       const viewFormats = SRGB[f] ? [SRGB[f]] : [];
       r.gpu = device.createTexture({ size, format: f, usage, mipLevelCount: mips, sampleCount: samples, dimension: dim === 3 ? '3d' : dim === 1 ? '1d' : '2d', viewFormats });
+      if (backing) { r.title = titleLayout(r); r.hash = -1; } // texels in title memory: the GPU follows them
     }
     res.set(id, r);
   }
@@ -131,6 +150,19 @@ export async function startBackend({ memory, ring: ringAddr, device, canvas, dir
   };
   const descriptor = (a) => { g.refresh(); return g.u32.slice(a >>> 2, (a >>> 2) + 8); };
   const viewFormat = (r, dxgi) => { const f = dxgi ? FORMATS[dxgi] : r.format; return f && (f === r.format || SRGB[r.format] === f) ? f : r.format; };
+  // a texture in title memory: uploaded again when its bytes changed (no write protection in wasm: a hash)
+  const hashGuest = (a, n) => { g.refresh(); const w = new Uint32Array(g.buf, a >>> 0, n >>> 2); let h = 2166136261; for (let i = 0; i < w.length; i++) h = Math.imul(h ^ w[i], 16777619); return h >>> 0; };
+  const syncTitleTexture = (r) => {
+    if (!r?.title) return;
+    const h = hashGuest(r.backing, r.title.size); if (h === r.hash) return;
+    r.hash = h;
+    for (const s of r.title.subs) {
+      const src = guestBytes(r.backing + s.offset, s.pitch * s.rows * s.depth), dst = { texture: r.gpu, mipLevel: s.mip, origin: { x: 0, y: 0, z: r.dim === 3 ? 0 : s.layer } };
+      const layout = { bytesPerRow: s.pitch, rowsPerImage: s.rows }, size = { width: s.width, height: s.height, depthOrArrayLayers: s.depth };
+      if (writeShared) { try { device.queue.writeTexture(dst, src, layout, size); continue; } catch (e) { writeShared = false; } }
+      device.queue.writeTexture(dst, src.slice(), layout, size);
+    }
+  };
 
   // ---- shaders and pipelines ----
   const shader = (digest) => {
@@ -150,6 +182,7 @@ export async function startBackend({ memory, ring: ringAddr, device, canvas, dir
     const w = g.u32, h = at >>> 2, id = w[h], rootId = w[h + 1], kind = w[h + 2], ne = w[h + 3];
     const d = at + 16, dv = new DataView(g.buf), r32 = (o) => dv.getUint32(d + o, true), f32 = (o) => dv.getFloat32(d + o, true);
     const blob = (o) => { const off = Number(dv.getBigUint64(d + o, true)), size = Number(dv.getBigUint64(d + o + 8, true)); return off && size ? g.copy(at + off, size) : null; };
+    // a DXIL container is translated; a console one (RDNA2 code) is not: its pipeline draws nothing
     const digestOf = (b) => Array.from(b.subarray(4, 20), (x) => x.toString(16).padStart(2, '0')).join('');
     const p = { id, rootId, kind };
     if (kind === 1) { const cs = blob(8); p.cs = cs && shader(digestOf(cs)); p.csBlob = cs; psos.set(id, p); return; }
@@ -170,9 +203,10 @@ export async function startBackend({ memory, ring: ringAddr, device, canvas, dir
     p.dsv = r32(612); p.samples = r32(616) || 1;
     psos.set(id, p);
   }
-  async function renderPipeline(p, st, colorFormats, depthFormat, samples) {
+  async function renderPipeline(p, st, colorFormats, depthFormat, samples, ibFormat) {
     const strides = p.elements.map((e) => st.vbs[e.slot]?.stride ?? 0).join(',');
-    const key = `${p.id}|${st.topo}|${strides}|${st.ib?.format ?? ''}|${colorFormats.join(',')}|${depthFormat}|${samples}`;
+    const bias = st.bias ? st.bias.join('/') : '';
+    const key = `${p.id}|${st.topo}|${strides}|${ibFormat ?? ''}|${colorFormats.join(',')}|${depthFormat}|${samples}|${bias}`;
     let pl = pipelineCache.get(key);
     if (pl !== undefined) return pl;
     const vs = await p.vs, ps = p.ps ? await p.ps : null;
@@ -204,13 +238,14 @@ export async function startBackend({ memory, ring: ringAddr, device, canvas, dir
       primitive: { topology, cullMode: [null, 'none', 'front', 'back'][p.raster.cull] || 'none', frontFace: p.raster.ccw ? 'ccw' : 'cw', unclippedDepth: false },
       multisample: { count: samples, mask: p.sampleMask >>> 0, alphaToCoverageEnabled: !!p.blend.a2c },
     };
-    if (topology.endsWith('strip') && st.ib) desc.primitive.stripIndexFormat = st.ib.format;
+    if (topology.endsWith('strip') && ibFormat) desc.primitive.stripIndexFormat = ibFormat;
     if (ps) desc.fragment = { module: ps.module, entryPoint: 'main', targets };
     if (depthFormat) {
       const face = (f) => ({ compare: COMPARE[f.func] || 'always', failOp: STENCIL_OP[f.fail] || 'keep', depthFailOp: STENCIL_OP[f.depthFail] || 'keep', passOp: STENCIL_OP[f.pass] || 'keep' });
       desc.depthStencil = { format: depthFormat, depthWriteEnabled: !!(p.depth.enable && p.depth.write), depthCompare: p.depth.enable ? COMPARE[p.depth.func] || 'less' : 'always' };
       if (p.depth.stencil && depthFormat.includes('stencil')) Object.assign(desc.depthStencil, { stencilFront: face(p.depth.front), stencilBack: face(p.depth.back), stencilReadMask: p.depth.readMask, stencilWriteMask: p.depth.writeMask });
-      if (topology.startsWith('triangle')) Object.assign(desc.depthStencil, { depthBias: p.raster.bias, depthBiasSlopeScale: p.raster.slope, depthBiasClamp: p.raster.biasClamp });
+      // RSSetDepthBiasX overrides the pipeline's own bias; WebGPU's constant bias is an integer
+      if (topology.startsWith('triangle')) Object.assign(desc.depthStencil, st.bias ? { depthBias: Math.round(st.bias[0]), depthBiasClamp: st.bias[1], depthBiasSlopeScale: st.bias[2] } : { depthBias: p.raster.bias, depthBiasSlopeScale: p.raster.slope, depthBiasClamp: p.raster.biasClamp });
     }
     try { pl = await device.createRenderPipelineAsync(desc); } catch (e) { log(`gpu: pipeline ${p.id}: ${e.message}`); pl = null; }
     pl && (pl.stages = [vs, ps].filter(Boolean));
@@ -232,13 +267,30 @@ export async function startBackend({ memory, ring: ringAddr, device, canvas, dir
   };
 
   // ---- one submission ----
+  // Guest memory is the truth for buffers with backing (all of the console's): a segment of work uploads the
+  // ranges it reads before it runs and reads back the ranges it writes before anything later runs. A segment
+  // ends where a memory operation (Write/Fill/Copy/Wait...X) has to see the work before it.
   async function execute(at, n) {
-    const end = at + n, w = words(g, at, n >> 2);
-    const enc = device.createCommandEncoder();
-    const st = { pso: null, root: [null, null], args: [[], []], rts: [], dsv: null, vp: null, sc: null, topo: 4, vbs: [], ib: null, blend: [1, 1, 1, 1], stencil: 0 };
-    const dirty = new Set(), clears = new Map(), uniforms = [];
-    let pass = null, passKey = '', passSize = null, passFormats = null, passDepth = null, passSamples = 1;
+    const w = words(g, at, n >> 2);
+    const st = { pso: null, root: [null, null], args: [[], []], rts: [], dsv: null, vp: null, sc: null, topo: 4, vbs: [], ib: null, blend: [1, 1, 1, 1], stencil: 0, bias: null, active: new Set() };
+    const clears = new Map(), sums = new Map(); // occlusion: query key -> samples, over the whole submission
+    let enc, uniforms, uploads, written, temps, pass, passKey, passSize, passFormats, passDepth, passSamples, qs, qn, drawQueries, resolves;
+    const begin = () => {
+      enc = device.createCommandEncoder(); uniforms = []; uploads = new Map(); written = new Map(); temps = [];
+      pass = null; passKey = ''; passSize = null; passFormats = null; passDepth = null; passSamples = 1; qs = null; qn = 0; drawQueries = []; resolves = [];
+      st.uniformBuffer = device.createBuffer({ size: 256 * 1024, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+    };
+    begin();
     const endPass = () => { if (pass) { pass.end(); pass = null; passKey = ''; } };
+    // what the segment reads of a buffer in guest memory (offset, bytes; undefined: all of it)
+    const useBuffer = (r, off = 0, size) => { if (!r || !r.backing || r.dim !== 0) return; const l = uploads.get(r) || []; l.push([off, size ?? r.size - off]); uploads.set(r, l); };
+    const wrote = (r, off = 0, size) => { if (!r || !r.backing || r.dim !== 0) return; const l = written.get(r) || []; l.push([off, size ?? r.size - off]); written.set(r, l); };
+    // bytes of guest memory no resource holds (an index buffer at a title address): a buffer for this segment
+    const guestBuffer = (va, size) => {
+      const n4 = Math.max(4, Math.ceil(size / 4) * 4), b = device.createBuffer({ size: n4, usage: GPUBufferUsage.INDEX | GPUBufferUsage.VERTEX | GPUBufferUsage.UNIFORM | GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC });
+      writeBuf(b, 0, guestBytes(va, n4)); temps.push(b); return { r: { gpu: b, size: n4 }, offset: 0 };
+    };
+    const bufferAt = (va, size) => { const f = findVA(va); if (f) { useBuffer(f.r, f.offset, size); return f; } return isGuest(va) && va ? guestBuffer(va, size) : null; };
     const rtView = (d) => { const r = res.get(d[1]); if (!r || !r.gpu.createView) return null; const f = viewFormat(r, d[2]); return { r, key: `${d[1]}/${d[4]}/${d[6]}/${f}`, v: view(r, { format: f, dim: '2d', mip: d[4], slice: d[6] }), f }; };
     const dsView = (d) => { const r = res.get(d[1]); if (!r) return null; return { r, key: `d${d[1]}/${d[4]}`, v: view(r, { format: r.format, dim: '2d', mip: d[4] }), f: r.format }; };
     const beginPass = () => {
@@ -253,10 +305,11 @@ export async function startBackend({ memory, ring: ringAddr, device, canvas, dir
         desc.depthStencilAttachment = { view: depth.v, depthLoadOp: cl.depth !== undefined ? 'clear' : 'load', depthClearValue: cl.depth ?? 1, depthStoreOp: 'store' };
         if (hasStencil) Object.assign(desc.depthStencilAttachment, { stencilLoadOp: cl.stencil !== undefined ? 'clear' : 'load', stencilClearValue: cl.stencil ?? 0, stencilStoreOp: 'store' });
       }
+      if (qs) desc.occlusionQuerySet = qs;
       for (const c of colors) if (c) clears.delete(c.key);
       if (depth) clears.delete(depth.key);
       pass = enc.beginRenderPass(desc); passKey = key;
-      const sz = any.r; passSize = [Math.max(1, sz.width >> (any === depth ? 0 : 0)), Math.max(1, sz.height)];
+      const sz = any.r; passSize = [Math.max(1, sz.width), Math.max(1, sz.height)];
       passFormats = colors.map((c) => c?.f ?? null); passDepth = depth?.f ?? null; passSamples = any.r.samples || 1;
       pass.setBlendConstant(st.blend); pass.setStencilReference(st.stencil);
       return true;
@@ -273,7 +326,6 @@ export async function startBackend({ memory, ring: ringAddr, device, canvas, dir
       }
       clears.clear();
     };
-    const useBuffer = (r) => { if (r && r.cpu && r.heap !== 3) dirty.add(r); };
     // the root arguments of a binding, resolved against the root signature
     const resolve = (bp, kind, space, reg) => {
       const rs = rootsigs.get(st.root[bp]); if (!rs) return null;
@@ -305,17 +357,18 @@ export async function startBackend({ memory, ring: ringAddr, device, canvas, dir
         } else if (kind === 'cbv') {
           if (rr?.constants) { const off = uniforms.length * 256; uniforms.push(rr.constants); resource = { buffer: st.uniformBuffer, offset: off, size: 256 }; }
           else {
-            const va = rr?.va ?? (rr?.desc ? u64(rr.desc[2], rr.desc[3]) : 0), size = rr?.desc ? rr.desc[4] : 65536, f = va && findVA(va);
-            if (f) { useBuffer(f.r); resource = { buffer: f.r.gpu, offset: f.offset, size: Math.min(65536, size || 65536, Math.ceil(f.r.size / 4) * 4 - f.offset) }; }
+            const va = rr?.va ?? (rr?.desc ? u64(rr.desc[2], rr.desc[3]) : 0), size = rr?.desc ? rr.desc[4] : 65536, f = va && bufferAt(va, size || 65536);
+            if (f) resource = { buffer: f.r.gpu, offset: f.offset, size: Math.min(65536, size || 65536, Math.ceil(f.r.size / 4) * 4 - f.offset) };
           }
         } else if (rr?.desc && rr.desc[0] && !type.startsWith('array') && !type.startsWith('ptr')) {
           const r = res.get(rr.desc[1]);
           if (r && r.dim !== 0) {
+            syncTitleTexture(r);
             const dimension = type.startsWith('texture_cube_array') ? 'cube-array' : type.startsWith('texture_cube') || type.startsWith('texture_depth_cube') ? 'cube' : type.includes('2d_array') ? '2d-array' : type.startsWith('texture_3d') || type.includes('storage_3d') ? '3d' : type.startsWith('texture_1d') || type.includes('storage_1d') ? '1d' : '2d';
             const d = rr.desc, f = isDepth(r.format) ? r.format : viewFormat(r, d[2]);
             resource = view(r, { format: f, dim: dimension, mip: d[4], mips: kind === 'uav' ? 1 : Math.min(d[5] === 0xFFFFFFFF || !d[5] ? r.mips - d[4] : d[5], r.mips - d[4]), slice: d[6], slices: dimension === '2d' || dimension === '3d' ? 1 : Math.max(1, Math.min(d[7] || r.depth, r.depth - d[6])), aspect: isDepth(r.format) ? 'depth-only' : 'all' });
-          } else if (r) { useBuffer(r); resource = { buffer: r.gpu }; }
-        } else if (rr?.va) { const f = findVA(rr.va); if (f) { useBuffer(f.r); resource = { buffer: f.r.gpu, offset: f.offset }; } }
+          } else if (r) { useBuffer(r); if (kind === 'uav') wrote(r); resource = { buffer: r.gpu }; }
+        } else if (rr?.va) { const f = bufferAt(rr.va); if (f) { if (kind === 'uav') wrote(f.r); resource = { buffer: f.r.gpu, offset: f.offset }; } }
         groups[b.group].set(b.binding, resource);
       }
       const out = [];
@@ -327,31 +380,75 @@ export async function startBackend({ memory, ring: ringAddr, device, canvas, dir
       }
       return out;
     };
-    st.uniformBuffer = device.createBuffer({ size: 256 * 1024, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
-    const draw = async (indexed, args) => {
+    const draw = async (indexed, args, ibOverride) => {
       const p = psos.get(st.pso); if (!p || p.kind !== 0) return skip('no graphics pipeline state');
+      if (st.active.size && !qs) { endPass(); qs = device.createQuerySet({ type: 'occlusion', count: 4096 }); temps.push(qs); } // passes need it from their start
       if (!beginPass()) return skip('no render target');
-      const pl = await renderPipeline(p, st, passFormats, passDepth, passSamples); if (!pl) return skip('no pipeline');
+      let ib = null;
+      if (indexed) { ib = ibOverride ?? (st.ib && { ...st.ib, at: bufferAt(st.ib.va, st.ib.size) }); if (!ib?.at) return skip('no index buffer'); }
+      const pl = await renderPipeline(p, st, passFormats, passDepth, passSamples, ib?.format); if (!pl) return skip('no pipeline');
       const bgs = bindGroups(pl, 0); if (!bgs) return skip('a binding is missing');
+      if (!pass) beginPass(); // (awaiting the pipeline never ends a pass; kept for safety)
       pass.setPipeline(pl);
       for (const [i, bg] of bgs) pass.setBindGroup(i, bg);
-      for (let s = 0; s < st.vbs.length; s++) { const vb = st.vbs[s]; if (!vb) continue; const f = findVA(vb.va); if (f) { useBuffer(f.r); pass.setVertexBuffer(s, f.r.gpu, f.offset, Math.min(vb.size, f.r.gpu.size - f.offset)); } }
+      for (let s = 0; s < st.vbs.length; s++) { const vb = st.vbs[s]; if (!vb) continue; const f = bufferAt(vb.va, vb.size); if (f) pass.setVertexBuffer(s, f.r.gpu, f.offset, Math.min(vb.size, f.r.gpu.size - f.offset)); }
       if (st.vp) { const [x, y, ww, hh, mn, mx] = st.vp; pass.setViewport(x, y, Math.max(0, ww), Math.max(0, hh), Math.max(0, Math.min(1, mn)), Math.max(0, Math.min(1, mx))); }
       const [pw, ph] = passSize;
       if (st.sc) { const [l, t, r, b] = st.sc, x0 = Math.max(0, Math.min(pw, l)), y0 = Math.max(0, Math.min(ph, t)); pass.setScissorRect(x0, y0, Math.max(0, Math.min(pw, r) - x0), Math.max(0, Math.min(ph, b) - y0)); }
       else pass.setScissorRect(0, 0, pw, ph);
       stats.draws++;
+      // occlusion queries: each draw inside any gets its own WebGPU query (D3D12 nests them, WebGPU does not)
+      const q = st.active.size && qs && qn < 4096 ? qn++ : -1;
+      if (q >= 0) { pass.beginOcclusionQuery(q); drawQueries.push([q, [...st.active]]); }
       if (indexed) {
-        const f = st.ib && findVA(st.ib.va); if (!f) return; useBuffer(f.r);
-        pass.setIndexBuffer(f.r.gpu, st.ib.format, f.offset, Math.min(st.ib.size, f.r.gpu.size - f.offset));
+        pass.setIndexBuffer(ib.at.r.gpu, ib.format, ib.at.offset, Math.min(ib.size, ib.at.r.gpu.size - ib.at.offset));
         pass.drawIndexed(args[0], args[1], args[2], args[3] | 0, args[4]);
       } else pass.draw(args[0], args[1], args[2], args[3]);
+      if (q >= 0) pass.endOcclusionQuery();
     };
     const location = (p) => ({ id: p[0], type: p[1], sub: p[2], offset: u64(p[3], p[4]), format: p[5], width: p[6], height: p[7], depth: p[8], pitch: p[9] });
+    // the segment so far goes to the GPU; what it wrote of guest memory comes back before this returns
+    const flush = async () => {
+      endPass(); flushClears();
+      if (uniforms.length) { const u = new Uint32Array(uniforms.length * 64); uniforms.forEach((v, k) => u.set(v.subarray(0, 64), k * 64)); device.queue.writeBuffer(st.uniformBuffer, 0, u); }
+      for (const [r, list] of uploads) {
+        if (list.some(([o, s]) => o === 0 && s >= r.size)) { writeBuf(r.gpu, 0, guestBytes(r.backing, Math.ceil(r.size / 4) * 4)); continue; }
+        for (const [o, s] of list) { const a = Math.floor(o / 4) * 4, e = Math.min(Math.ceil(r.size / 4) * 4, Math.ceil((o + s) / 4) * 4); if (e > a) writeBuf(r.gpu, a, guestBytes(r.backing + a, e - a)); }
+      }
+      // read back: ranges of written buffers, then the occlusion results, into one staging buffer
+      const back = []; let total = 0;
+      for (const [r, list] of written) for (const [o, s] of list) { const a = Math.floor(o / 4) * 4, e = Math.min(Math.ceil(r.size / 4) * 4, Math.ceil((o + s) / 4) * 4); if (e > a) { back.push([r, a, e - a, total]); total += e - a; } }
+      let qAt = -1;
+      if (qn) { const qb = device.createBuffer({ size: 8 * qn, usage: GPUBufferUsage.QUERY_RESOLVE | GPUBufferUsage.COPY_SRC }); enc.resolveQuerySet(qs, 0, qn, qb, 0); temps.push(qb); qAt = total; total += 8 * qn; back.push([{ gpu: qb }, 0, 8 * qn, qAt]); }
+      let staging = null;
+      if (total) { staging = device.createBuffer({ size: total, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ }); for (const [r, a, s, to] of back) enc.copyBufferToBuffer(r.gpu, a, staging, to, s); }
+      device.queue.submit([enc.finish()]);
+      stats.segments++;
+      const ub = st.uniformBuffer, tmp = temps; device.queue.onSubmittedWorkDone().then(() => { ub.destroy(); for (const b of tmp) b.destroy(); });
+      if (staging) {
+        await staging.mapAsync(GPUMapMode.READ); stats.readbacks++;
+        const src = new Uint8Array(staging.getMappedRange()); g.refresh();
+        for (const [r, a, s, to] of back) if (r.backing) new Uint8Array(g.buf, (r.backing >>> 0) + a, s).set(src.subarray(to, to + s));
+        if (qAt >= 0) {
+          const counts = new BigUint64Array(src.buffer.slice(qAt, qAt + 8 * qn));
+          for (const [q, keys] of drawQueries) for (const k of keys) sums.set(k, (sums.get(k) ?? 0n) + counts[q]);
+        }
+        staging.unmap(); staging.destroy();
+      }
+      // ResolveQueryData: the sums so far, into the destination's guest memory
+      for (const v of resolves) {
+        const r = res.get(v.dst); if (!r?.backing) continue; g.refresh();
+        for (let i = 0; i < v.count; i++) { let x = sums.get(`${v.heap}/${v.first + i}`) ?? 0n; if (v.type === 1 && x) x = 1n; g.dv.setBigUint64((r.backing >>> 0) + v.offset + 8 * i, x, true); }
+      }
+      begin();
+    };
+    let replay = 0; // words still to replay as state only (KickoffX ran them)
     for (let i = 0; i < w.length;) { // the list's words (the queue id is not part of them)
       const op = w[i] & 0xFFFF, len = w[i] >>> 16, a = w.subarray(i + 1, i + 1 + len);
-      i += 1 + len;
+      const work = replay <= 0;
+      replay -= 1 + len; i += 1 + len;
       switch (op) {
+      case GPU.L_REPLAY: replay = a[0]; break;
       case GPU.L_PSO: st.pso = a[0]; break;
       case GPU.L_TOPOLOGY: st.topo = a[0]; break;
       case GPU.L_ROOTSIG: st.root[a[0]] = a[1]; st.args[a[0]] = []; break;
@@ -364,65 +461,70 @@ export async function startBackend({ memory, ring: ringAddr, device, canvas, dir
       case GPU.L_SCISSORS: if (a[0]) st.sc = Array.from(new Int32Array(a.buffer, a.byteOffset + 4, 4)); break;
       case GPU.L_BLEND_FACTOR: st.blend = Array.from(new Float32Array(a.buffer, a.byteOffset, 4)); if (pass) pass.setBlendConstant(st.blend); break;
       case GPU.L_STENCIL_REF: st.stencil = a[0]; if (pass) pass.setStencilReference(a[0]); break;
+      case GPU.L_DEPTH_BIAS: { const f = Array.from(new Float32Array(a.buffer, a.byteOffset, 3)); st.bias = f.some((x) => x !== 0) ? f : null; break; }
       case GPU.L_SET_RTS: {
         const nrt = a[0]; st.rts = []; for (let k = 0; k < nrt; k++) { const d = a.slice(1 + 8 * k, 9 + 8 * k); st.rts.push(d[0] ? d : null); }
         const ds = a.slice(1 + 8 * nrt, 9 + 8 * nrt); st.dsv = ds[0] ? ds : null; break;
       }
-      case GPU.L_CLEAR_RTV: { const c = rtView(a); if (!c) break; if (pass && passKey.split('|')[0].split(',').includes(c.key)) endPass(); const f = new Float32Array(a.buffer, a.byteOffset + 32, 4); clears.set(c.key, { r: f[0], g: f[1], b: f[2], a: f[3] }); break; }
-      case GPU.L_CLEAR_DSV: { const d = dsView(a); if (!d) break; if (pass && passKey.endsWith(d.key)) endPass(); const cl = clears.get(d.key) || {}; if (a[8] & 1) cl.depth = new Float32Array(a.buffer, a.byteOffset + 36, 1)[0]; if (a[8] & 2) cl.stencil = a[10]; clears.set(d.key, cl); break; }
-      case GPU.L_DRAW: await draw(false, a); break;
-      case GPU.L_DRAW_INDEXED: await draw(true, [a[0], a[1], a[2], a[3] | 0, a[4]]); break;
-      case GPU.L_COPY_BUFFER: {
-        endPass(); flushClears();
-        const d = res.get(a[0]), s = res.get(a[3]), n = u64(a[6], a[7]); if (!d || !s) break; useBuffer(s);
-        enc.copyBufferToBuffer(s.gpu, u64(a[4], a[5]), d.gpu, u64(a[1], a[2]), Math.ceil(n / 4) * 4); if (d.heap === 3) d.readback = true; break;
-      }
-      case GPU.L_COPY_TEXTURE: {
-        endPass(); flushClears();
-        const dl = location(a.subarray(0, 10)), sl = location(a.subarray(13, 23)), box = a[23] ? a.subarray(24, 30) : null;
-        const d = res.get(dl.id), s = res.get(sl.id); if (!d || !s) break;
-        const sub = (r, x) => ({ mipLevel: x % r.mips, layer: Math.floor(x / r.mips) });
-        if (dl.type === 0 && sl.type === 1) { // buffer footprint -> texture
-          useBuffer(s); const m = sub(d, dl.sub), bl = blockOf(d.format);
-          const wdt = box ? box[3] - box[0] : sl.width, hgt = box ? box[4] - box[1] : sl.height, dep = box ? box[5] - box[2] : sl.depth;
-          const off = sl.offset + (box ? box[1] / bl * sl.pitch + box[0] / bl * (d.format.startsWith('bc') ? (d.format.startsWith('bc1') || d.format.startsWith('bc4') ? 8 : 16) : 4) : 0);
-          enc.copyBufferToTexture({ buffer: s.gpu, offset: off, bytesPerRow: sl.pitch, rowsPerImage: Math.ceil(sl.height / bl) }, { texture: d.gpu, mipLevel: m.mipLevel, origin: { x: a[10], y: a[11], z: d.dim === 3 ? a[12] : m.layer } }, { width: wdt, height: hgt, depthOrArrayLayers: dep });
-        } else if (dl.type === 1 && sl.type === 0) { // texture -> buffer footprint
-          const m = sub(s, sl.sub);
-          enc.copyTextureToBuffer({ texture: s.gpu, mipLevel: m.mipLevel, origin: { x: box ? box[0] : 0, y: box ? box[1] : 0, z: s.dim === 3 ? (box ? box[2] : 0) : m.layer } }, { buffer: d.gpu, offset: dl.offset, bytesPerRow: dl.pitch, rowsPerImage: Math.ceil(dl.height / blockOf(s.format)) }, { width: box ? box[3] - box[0] : dl.width, height: box ? box[4] - box[1] : dl.height, depthOrArrayLayers: box ? box[5] - box[2] : dl.depth });
-          if (d.heap === 3) d.readback = true;
-        } else if (dl.type === 0 && sl.type === 0) {
-          const ms = sub(s, sl.sub), md = sub(d, dl.sub);
-          const wd = Math.max(1, s.width >> ms.mipLevel), ht = Math.max(1, s.height >> ms.mipLevel);
-          enc.copyTextureToTexture({ texture: s.gpu, mipLevel: ms.mipLevel, origin: { x: box ? box[0] : 0, y: box ? box[1] : 0, z: box ? box[2] : ms.layer } }, { texture: d.gpu, mipLevel: md.mipLevel, origin: { x: a[10], y: a[11], z: d.dim === 3 ? a[12] : md.layer } }, { width: box ? box[3] - box[0] : wd, height: box ? box[4] - box[1] : ht, depthOrArrayLayers: 1 });
+      case GPU.L_QUERY_BEGIN: if (a[1] <= 1) st.active.add(`${a[0]}/${a[2]}`); break;
+      case GPU.L_QUERY_END: st.active.delete(`${a[0]}/${a[2]}`); break;
+      default: if (!work) break;
+        switch (op) {
+        case GPU.L_CLEAR_RTV: { const c = rtView(a); if (!c) break; if (pass && passKey.split('|')[0].split(',').includes(c.key)) endPass(); const f = new Float32Array(a.buffer, a.byteOffset + 32, 4); clears.set(c.key, { r: f[0], g: f[1], b: f[2], a: f[3] }); break; }
+        case GPU.L_CLEAR_DSV: { const d = dsView(a); if (!d) break; if (pass && passKey.endsWith(d.key)) endPass(); const cl = clears.get(d.key) || {}; if (a[8] & 1) cl.depth = new Float32Array(a.buffer, a.byteOffset + 36, 1)[0]; if (a[8] & 2) cl.stencil = a[10]; clears.set(d.key, cl); break; }
+        case GPU.L_DRAW: await draw(false, a); break;
+        case GPU.L_DRAW_INDEXED: await draw(true, [a[0], a[1], a[2], a[3] | 0, a[4]]); break;
+        case GPU.L_DRAW_INDEXED_X: { const format = a[2] === 57 ? 'uint16' : 'uint32', size = a[3] * (format === 'uint16' ? 2 : 4), va = u64(a[0], a[1]); await draw(true, [a[3], 1, 0, 0, 0], { va, size, format, at: bufferAt(va, size) }); break; }
+        case GPU.L_COPY_BUFFER: {
+          endPass(); flushClears();
+          const d = res.get(a[0]), s = res.get(a[3]), n = u64(a[6], a[7]), so = u64(a[4], a[5]), dof = u64(a[1], a[2]); if (!d || !s) break;
+          useBuffer(s, so, n); wrote(d, dof, n);
+          enc.copyBufferToBuffer(s.gpu, so, d.gpu, dof, Math.ceil(n / 4) * 4); break;
         }
-        break;
-      }
-      case GPU.L_COPY_RESOURCE: {
-        endPass(); flushClears();
-        const d = res.get(a[0]), s = res.get(a[1]); if (!d || !s) break;
-        if (d.dim === 0) { useBuffer(s); enc.copyBufferToBuffer(s.gpu, 0, d.gpu, 0, Math.min(s.gpu.size, d.gpu.size)); if (d.heap === 3) d.readback = true; }
-        else for (let m = 0; m < Math.min(s.mips, d.mips); m++) enc.copyTextureToTexture({ texture: s.gpu, mipLevel: m }, { texture: d.gpu, mipLevel: m }, { width: Math.max(1, s.width >> m), height: Math.max(1, s.height >> m), depthOrArrayLayers: s.dim === 3 ? Math.max(1, s.depth >> m) : s.depth });
-        break;
-      }
-      default: break;
+        case GPU.L_COPY_TEXTURE: {
+          endPass(); flushClears();
+          const dl = location(a.subarray(0, 10)), sl = location(a.subarray(13, 23)), box = a[23] ? a.subarray(24, 30) : null;
+          const d = res.get(dl.id), s = res.get(sl.id); if (!d || !s) break;
+          const sub = (r, x) => ({ mipLevel: x % r.mips, layer: Math.floor(x / r.mips) });
+          if (dl.type === 0 && sl.type === 1) { // buffer footprint -> texture
+            const m = sub(d, dl.sub), bl = blockOf(d.format);
+            const wdt = box ? box[3] - box[0] : sl.width, hgt = box ? box[4] - box[1] : sl.height, dep = box ? box[5] - box[2] : sl.depth;
+            const off = sl.offset + (box ? box[1] / bl * sl.pitch + box[0] / bl * (d.format.startsWith('bc') ? (d.format.startsWith('bc1') || d.format.startsWith('bc4') ? 8 : 16) : 4) : 0);
+            useBuffer(s, off, sl.pitch * Math.ceil(hgt / bl) * dep);
+            enc.copyBufferToTexture({ buffer: s.gpu, offset: off, bytesPerRow: sl.pitch, rowsPerImage: Math.ceil(sl.height / bl) }, { texture: d.gpu, mipLevel: m.mipLevel, origin: { x: a[10], y: a[11], z: d.dim === 3 ? a[12] : m.layer } }, { width: wdt, height: hgt, depthOrArrayLayers: dep });
+          } else if (dl.type === 1 && sl.type === 0) { // texture -> buffer footprint
+            syncTitleTexture(s);
+            const m = sub(s, sl.sub), hgt = box ? box[4] - box[1] : dl.height, dep = box ? box[5] - box[2] : dl.depth;
+            enc.copyTextureToBuffer({ texture: s.gpu, mipLevel: m.mipLevel, origin: { x: box ? box[0] : 0, y: box ? box[1] : 0, z: s.dim === 3 ? (box ? box[2] : 0) : m.layer } }, { buffer: d.gpu, offset: dl.offset, bytesPerRow: dl.pitch, rowsPerImage: Math.ceil(dl.height / blockOf(s.format)) }, { width: box ? box[3] - box[0] : dl.width, height: hgt, depthOrArrayLayers: dep });
+            wrote(d, dl.offset, dl.pitch * Math.ceil(hgt / blockOf(s.format)) * dep);
+          } else if (dl.type === 0 && sl.type === 0) {
+            syncTitleTexture(s);
+            const ms = sub(s, sl.sub), md = sub(d, dl.sub);
+            const wd = Math.max(1, s.width >> ms.mipLevel), ht = Math.max(1, s.height >> ms.mipLevel);
+            enc.copyTextureToTexture({ texture: s.gpu, mipLevel: ms.mipLevel, origin: { x: box ? box[0] : 0, y: box ? box[1] : 0, z: box ? box[2] : ms.layer } }, { texture: d.gpu, mipLevel: md.mipLevel, origin: { x: a[10], y: a[11], z: d.dim === 3 ? a[12] : md.layer } }, { width: box ? box[3] - box[0] : wd, height: box ? box[4] - box[1] : ht, depthOrArrayLayers: 1 });
+          }
+          break;
+        }
+        case GPU.L_COPY_RESOURCE: {
+          endPass(); flushClears();
+          const d = res.get(a[0]), s = res.get(a[1]); if (!d || !s) break;
+          if (d.dim === 0) { useBuffer(s); const n4 = Math.min(s.gpu.size, d.gpu.size); enc.copyBufferToBuffer(s.gpu, 0, d.gpu, 0, n4); wrote(d, 0, n4); }
+          else { syncTitleTexture(s); for (let m = 0; m < Math.min(s.mips, d.mips); m++) enc.copyTextureToTexture({ texture: s.gpu, mipLevel: m }, { texture: d.gpu, mipLevel: m }, { width: Math.max(1, s.width >> m), height: Math.max(1, s.height >> m), depthOrArrayLayers: s.dim === 3 ? Math.max(1, s.depth >> m) : s.depth }); }
+          break;
+        }
+        case GPU.L_QUERY_RESOLVE: resolves.push({ heap: a[0], type: a[1], first: a[2], count: a[3], dst: a[4], offset: u64(a[5], a[6]) }); break;
+        case GPU.L_MEM_WRITE: await flush(); memWrite(g, a); break;
+        case GPU.L_MEM_FILL: await flush(); memFill(g, a); break;
+        case GPU.L_MEM_COPY: await flush(); memCopy(g, a); break;
+        case GPU.L_MEM_WAIT: await flush(); await memWait(g, a, log); break;
+        default: break;
+        }
       }
     }
-    endPass(); flushClears();
-    if (uniforms.length) { const u = new Uint32Array(uniforms.length * 64); uniforms.forEach((v, k) => u.set(v.subarray(0, 64), k * 64)); device.queue.writeBuffer(st.uniformBuffer, 0, u); }
-    for (const r of dirty) upload(r);
-    device.queue.submit([enc.finish()]);
+    await flush();
     stats.executes++;
-    const uniformBuffer = st.uniformBuffer; device.queue.onSubmittedWorkDone().then(() => uniformBuffer.destroy());
-    // readback buffers the submission wrote: copied into guest memory before later fences complete
-    for (const r of res.values()) if (r.readback) { r.readback = false; pending.push(readback(r)); }
   }
-  let pending = [];
-  const readback = async (r) => {
-    await r.gpu.mapAsync(GPUMapMode.READ);
-    g.refresh(); new Uint8Array(g.buf, r.backing, r.size).set(new Uint8Array(r.gpu.getMappedRange(), 0, r.size)); r.gpu.unmap();
-  };
-
+  let pending = []; // (work a fence waits for besides the queue's; readbacks now finish inside execute)
   // ---- present: the frame into the canvas (and to onFrame, read back, when someone records) ----
   const blitModule = device.createShaderModule({ code: `
 @group(0) @binding(0) var t: texture_2d<f32>;

@@ -85,8 +85,10 @@ __declspec(dllimport) HRESULT GameInputCreate(void **gameInput);
 enum { XA_CreateSourceVoice = 5, XA_CreateMasteringVoice = 7 };
 enum { V_SetVolume = 12, V_SetOutputMatrix = 16, V_DestroyVoice = 18, SV_Start = 19, SV_Stop = 20, SV_SubmitSourceBuffer = 21, SV_FlushSourceBuffers = 22, SV_GetState = 25, SV_SetFrequencyRatio = 26 };
 typedef struct { uint16_t wFormatTag, nChannels; uint32_t nSamplesPerSec, nAvgBytesPerSec; uint16_t nBlockAlign, wBitsPerSample, cbSize; } WAVEFORMATEX;
+#pragma pack(push, 1) // XAudio2's structures are packed
 typedef struct { uint32_t Flags, AudioBytes; const uint8_t *pAudioData; uint32_t PlayBegin, PlayLength, LoopBegin, LoopLength, LoopCount; void *pContext; } XAUDIO2_BUFFER;
 typedef struct { void *pCurrentBufferContext; uint32_t BuffersQueued; uint64_t SamplesPlayed; } XAUDIO2_VOICE_STATE;
+#pragma pack(pop)
 __declspec(dllimport) HRESULT XAudio2Create(void **xaudio2, uint32_t flags, uint32_t processor);
 
 // ---- XGameRuntime ----

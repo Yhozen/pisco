@@ -66,10 +66,11 @@ if (argv.includes('--refresh')) {
     data.titles[name] = [...new Set(names.filter((n, i) => !targets[i]))].sort(); // imports between the title's own images are not the runtime's
   }
   const xclSrc = path.join(process.env.XCL || path.join(root, '../xcl'), 'tests/testtitle/src'); // an XCL checkout
-  const run = path.join(root, 'out/regress-xcl.run.log');
-  if (fs.existsSync(xclSrc) && fs.existsSync(run)) {
+  // the Chrome run (tests/gfx/xcl.sh: the GPU checks read pixels back from WebGPU), else the Node one
+  const run = ['out/regress-xcl.chrome.log', 'out/regress-xcl.run.log'].map((f) => path.join(root, f)).find((f) => fs.existsSync(f));
+  if (fs.existsSync(xclSrc) && run) {
     const checks = [];
-    for (const f of ['main.rs']) for (const m of fs.readFileSync(path.join(xclSrc, f), 'latin1').matchAll(/check\("([^"]*)"/g)) checks.push(m[1].replace(/\\\\/g, "\\"));
+    for (const f of ['main.rs']) for (const m of fs.readFileSync(path.join(xclSrc, f), 'utf8').matchAll(/check\("([^"]*)"/g)) checks.push(m[1].replace(/\\\\/g, "\\"));
     const log = fs.readFileSync(run, 'utf8').split('\n');
     data.xcl = checks.map((t) => ({ check: t, pass: log.some((l) => l === `[PASS] ${t}`) }));
   }
@@ -98,10 +99,16 @@ for (const m of layout.matchAll(/\{"(\w+)", "(\w+)", (\d+), (\w+)_methods/g)) {
   d3d.push({ name: m[2], items: methods.map((x, i) => ({ name: x, done: done[i] })) });
 }
 // the console's own methods we know of (XCL's findings), by slot
-const consoleMethods = [['Device #44 CreatePlacedResourceX'], ['Device #48 CreateCommandQueueX'], ['Device #52 SetDebugFlagsX'], ['Device #60 CreateGraphicsPipelineStateX'], ['Device #73 CreateCommandListX'],
-  ['Device #74 page pool'], ['Device #75 page pool'], ['Device #78 SetFrameIntervalX', 'Device_SetFrameIntervalX'], ['Device #79 ScheduleFrameEventX', 'Device_ScheduleFrameEventX'], ['Device #80 WaitFrameEventX', 'Device_WaitFrameEventX'],
+const consoleMethods = [['Device #44 CreatePlacedResourceX', 'Device_CreatePlacedResourceX'], ['Device #48 CreateCommandQueueX', 'Device_CreateCommandQueueX'], ['Device #52 SetDebugFlagsX', 'Device_SetDebugFlagsX'],
+  ['Device #55 CreateDerivedPipelineStateX', 'Device_CreateDerivedPipelineStateX'], ['Device #56 SerializePipelineStateX', 'Device_SerializePipelineStateX'], ['Device #60 CreateGraphicsPipelineStateX', 'Device_CreateGraphicsPipelineStateX'],
+  ['Device #73 CreateCommandListX', 'Device_CreateCommandListX'], ['Device #74 RegisterPagePoolX', 'Device_RegisterPagePoolX'], ['Device #75 UnregisterPagePoolX', 'Device_UnregisterPagePoolX'],
+  ['Device #78 SetFrameIntervalX', 'Device_SetFrameIntervalX'], ['Device #79 ScheduleFrameEventX', 'Device_ScheduleFrameEventX'], ['Device #80 WaitFrameEventX', 'Device_WaitFrameEventX'],
   ['Device #81 GetFrameStatisticsX', 'Device_GetFrameStatisticsX'], ['Device #86 CreatePipelineState'], ['Queue #23 SignalX', 'CommandQueue_SignalX'], ['Queue #30 PresentX', 'CommandQueue_PresentX'],
-  ['List #60 CopyMemoryToMemoryX'], ['List #93 KickoffX'], ['List #94 RSSetDepthBiasX']];
+  ['List #60 CopyMemoryToMemoryX', 'CommandList_CopyMemoryToMemoryX'], ['List #61 FillMemoryWith32BitValueX', 'CommandList_FillMemoryWith32BitValueX'], ['List #69 Write32BitValueBottomOfPipeX', 'CommandList_Write32BitValueBottomOfPipeX'],
+  ['List #70 Write64BitValueBottomOfPipeX', 'CommandList_Write64BitValueBottomOfPipeX'], ['List #71 Wait32BitValueX', 'CommandList_Wait32BitValueX'], ['List #72 Wait64BitValueX', 'CommandList_Wait64BitValueX'],
+  ['List #81 DrawIndexedX', 'CommandList_DrawIndexedX'], ['List #89 Write64BitValueTopOfPipeX', 'CommandList_Write64BitValueTopOfPipeX'], ['List #93 KickoffX', 'CommandList_KickoffX'],
+  ['List #94 RSSetDepthBiasX', 'CommandList_RSSetDepthBiasX'], ['List #146 UAV barrier', 'CommandList_UavBarrierX'], ['List #148 AllocateUploadMemory', 'CommandList_AllocateUploadMemoryX'],
+  ['DMA list (copy queue)', 'Device_CreateCommandListX']];
 d3d.push({ name: 'D3D12.X console methods', items: consoleMethods.map(([n, f]) => ({ name: n, done: !!f && impls.get(`d3d12.dll!${f}`) === true })) });
 const union = new Map();
 for (const list of Object.values(data.titles)) for (const n of list) union.set(n, resolves(n));

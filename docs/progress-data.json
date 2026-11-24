@@ -1023,12 +1023,12 @@
    "pass": true
   },
   {
-   "check": "kernelx: XMemVirtualAlloc â graphics memory type in UMA, others from Windows",
-   "pass": false
+   "check": "kernelx: XMemVirtualAlloc – graphics memory type in UMA, others from Windows",
+   "pass": true
   },
   {
    "check": "xmem: working-set statistics, physical pages mapped and freed",
-   "pass": false
+   "pass": true
   },
   {
    "check": "xmem: physical pages mapped into reserved address space keep their contents",
@@ -1036,7 +1036,7 @@
   },
   {
    "check": "kernelx: graphics memory lives in the GPU-visible 4 GiB-aligned region (UMA)",
-   "pass": false
+   "pass": true
   },
   {
    "check": "user32: a top-level window made either way (CreateWindowExW / A) is the hidden 1920x1080 console screen",
@@ -1124,79 +1124,79 @@
   },
   {
    "check": "D3D12.X: queue + fence signal on the GPU",
-   "pass": false
+   "pass": true
   },
   {
    "check": "D3D12.X: shaders captured; console shader gets a fallback PSO",
-   "pass": false
+   "pass": true
   },
   {
    "check": "D3D12.X: retail-format console shader (XDAT/XBCH/FSSM) captured + fallback PSO",
-   "pass": false
+   "pass": true
   },
   {
    "check": "D3D12.X: triangle rendered on the real GPU and read back (console + derived pipeline)",
-   "pass": false
+   "pass": true
   },
   {
    "check": "D3D12.X: frame clock + PresentX of the title's back buffer",
-   "pass": false
+   "pass": true
   },
   {
    "check": "D3D12.X: console device methods (placed title memory, DMA queue + list, page pools)",
-   "pass": false
+   "pass": true
   },
   {
    "check": "D3D12.X: console command list memory methods (writes, timestamp, fill, copy, KickoffX, Wait32/64)",
-   "pass": false
+   "pass": true
   },
   {
    "check": "D3D12.X: sparse VRAM buffer heaps (placed aliasing, persistent Map coherence, readback)",
-   "pass": false
+   "pass": true
   },
   {
    "check": "D3D12.X: coherent window headroom (CUSTOM+WRITE_BACK & oversized READBACK in sparse VRAM)",
-   "pass": false
+   "pass": true
   },
   {
    "check": "D3D12.X: async ring-buffered sparse uploads (80 MiB across 20 submits + reused-tile zeroing)",
-   "pass": false
+   "pass": true
   },
   {
    "check": "D3D12.X: descriptor heaps still in window 0 after an 8 GiB+ graphics reservation",
-   "pass": false
+   "pass": true
   },
   {
    "check": "D3D12.X: committed textures beyond the coherent room are created; a readback buffer still gets coherent memory",
-   "pass": false
+   "pass": true
   },
   {
    "check": "D3D12.X: dynamic depth bias via RSSetDepthBiasX (#94)",
-   "pass": false
+   "pass": true
   },
   {
    "check": "D3D12.X: raytracing surface (OPTIONS5, AS SRV descriptor, #146/#148 BVH list slots)",
-   "pass": false
+   "pass": true
   },
   {
    "check": "DirectStorage (xcrdapi): a file read into memory, status + D3D12 fence",
-   "pass": false
+   "pass": true
   },
   {
    "check": "D3D12.X: a texture in title memory (XG layout, #44) follows CPU writes",
-   "pass": false
+   "pass": true
   },
   {
    "check": "D3D12.X: a texture in a streaming pool gets its texels once pages are mapped in",
-   "pass": false
+   "pass": true
   },
   {
    "check": "MFPlat: MFResetDXGIDeviceManagerX resets IMFDXGIDeviceManager with the d3d12_xs device",
-   "pass": false
+   "pass": true
   },
   {
    "check": "XAudio2: console flags/device, XMA2 & Opus voices decoded, PCM passes, callbacks",
-   "pass": false
+   "pass": true
   }
  ],
  "ladder": [
@@ -1217,8 +1217,8 @@
   },
   {
    "step": "XCL's graphics checks",
-   "note": "19 D3D12.X / audio / storage checks",
-   "state": "todo"
+   "note": "50/50 of XCL's console checks in Chrome (WebGPU)",
+   "state": "done"
   },
   {
    "step": "Minecraft",

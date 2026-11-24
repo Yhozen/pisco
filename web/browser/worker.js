@@ -14,7 +14,9 @@ onmessage = (e) => {
   } else run(e.data);
 };
 function run(d) {
-  const { module, memory, dir, tids, tid, args, env, start, pool, store = [] } = d;
+  const { module, memory, dir, tids, tid, args, env, start, pool, store = [], t0 = 0 } = d;
+  // one monotonic clock for every thread: each worker's performance.now() counts from its own start
+  const clock = () => performance.timeOrigin + performance.now() - t0;
   const u8 = () => new Uint8Array(memory.buffer), dv = () => new DataView(memory.buffer);
   const dec = new TextDecoder(), enc = new TextEncoder();
   const text = (p, n) => dec.decode(new Uint8Array(memory.buffer, p, n).slice());
@@ -38,7 +40,7 @@ function run(d) {
     fd_fdstat_set_flags: () => 0, fd_filestat_get: () => 8,
     fd_prestat_get: () => 8, fd_prestat_dir_name: () => 8, path_open: () => 44, path_filestat_get: () => 44,
     proc_exit: (code) => exit(code),
-    clock_time_get: (id, prec, out) => { const ns = id === 0 ? BigInt(Date.now()) * 1000000n : BigInt(Math.round(performance.now() * 1e6)); dv().setBigUint64(out, ns, true); return 0; },
+    clock_time_get: (id, prec, out) => { const ns = id === 0 ? BigInt(Date.now()) * 1000000n : BigInt(Math.round(clock() * 1e6)); dv().setBigUint64(out, ns, true); return 0; },
     clock_res_get: (id, out) => { dv().setBigUint64(out, 1000n, true); return 0; },
     random_get: (p, n) => { const t = new Uint8Array(n); crypto.getRandomValues(t); u8().set(t, p); return 0; },
     sched_yield: () => 0,
@@ -56,7 +58,7 @@ function run(d) {
   };
   const host = {
     fault: (kind, a) => { bus.postMessage({ out: `series-web: ${kinds[kind]}${kind === 5 ? '' : ` at 0x${BigInt.asUintN(64, a).toString(16)}`}\n` }); exit(120); },
-    now_us: () => performance.now() * 1000,
+    now_us: () => clock() * 1000,
     read_file: (name, nlen, off, len, dst) => {
       const f = file(text(name, nlen)); if (!f) return 0;
       const o = Number(off), src = f.subarray(o, o + Number(len)); u8().set(src, Number(dst)); return src.length;

@@ -24,10 +24,11 @@ if (isMainThread) {
     const { startNull } = await import('./gpu/null.js');
     startNull(memory, e.data, { dir, log: (s) => fs.writeSync(2, `series-web: ${s}\n`) });
   };
-  new Worker(new URL(import.meta.url), { workerData: { module, memory, dir, tids, tid: 0, saves, store, args, env: Object.fromEntries(Object.entries(process.env).filter(([k]) => k.startsWith('SW_'))) },
+  new Worker(new URL(import.meta.url), { workerData: { t0: performance.timeOrigin, module, memory, dir, tids, tid: 0, saves, store, args, env: Object.fromEntries(Object.entries(process.env).filter(([k]) => k.startsWith('SW_'))) },
     resourceLimits: { stackSizeMb: STACK_MB } }).on('error', (e) => { console.error(e); process.exit(121); });
 } else {
-  const { module, memory, dir, tids, tid, args, env, saves, store } = workerData;
+  const { module, memory, dir, tids, tid, args, env, saves, store, t0 } = workerData;
+  const clock = () => performance.timeOrigin + performance.now() - t0; // one monotonic clock for every thread
   const kinds = ['trap', 'instruction not lifted', 'import not implemented', 'indirect call to unknown code', 'image does not fit', 'fatal'];
   const u8 = () => new Uint8Array(memory.buffer);
   const dv = () => new DataView(memory.buffer);
@@ -59,7 +60,7 @@ if (isMainThread) {
     fd_fdstat_set_flags: () => 0, fd_filestat_get: () => 8,
     fd_prestat_get: () => 8, fd_prestat_dir_name: () => 8, path_open: () => 44, path_filestat_get: () => 44,
     proc_exit: (code) => exit(code),
-    clock_time_get: (id, prec, out) => { const ns = id === 0 ? BigInt(Date.now()) * 1000000n : BigInt(Math.round(performance.now() * 1e6)); dv().setBigUint64(out, ns, true); return 0; },
+    clock_time_get: (id, prec, out) => { const ns = id === 0 ? BigInt(Date.now()) * 1000000n : BigInt(Math.round(clock() * 1e6)); dv().setBigUint64(out, ns, true); return 0; },
     clock_res_get: (id, out) => { dv().setBigUint64(out, 1000n, true); return 0; },
     random_get: (p, n) => { crypto.getRandomValues(new Uint8Array(memory.buffer, p, n).subarray(0)); return 0; },
     sched_yield: () => 0,
@@ -88,7 +89,7 @@ if (isMainThread) {
   };
   const host = {
     fault: (kind, a) => { console.error(`series-web: ${kinds[kind]}${kind === 5 ? '' : ` at 0x${BigInt.asUintN(64, a).toString(16)}`}`); exit(120); },
-    now_us: () => performance.now() * 1000,
+    now_us: () => clock() * 1000,
     read_file: (name, nlen, off, len, dst) => {
       const fd = open(text(name, nlen)); if (fd < 0) { if (process.env.SW_DEBUG_READ) console.error(`read_file ${text(name, nlen)}: not found`); return 0; }
       const got = fs.readSync(fd, new Uint8Array(memory.buffer, Number(dst), Number(len)), 0, Number(len), Number(off));
@@ -113,7 +114,7 @@ if (isMainThread) {
   };
   const spawn = (arg) => {
     const t = Atomics.add(tids, 0, 1);
-    new Worker(new URL(import.meta.url), { workerData: { module, memory, dir, tids, tid: t, args, env, saves, store, start: arg }, resourceLimits: { stackSizeMb: STACK_MB } })
+    new Worker(new URL(import.meta.url), { workerData: { t0, module, memory, dir, tids, tid: t, args, env, saves, store, start: arg }, resourceLimits: { stackSizeMb: STACK_MB } })
       .on('error', (e) => { console.error(e); exit(122); });
     return t;
   };

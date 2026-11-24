@@ -2,11 +2,14 @@
 // memory that the host plays (an AudioWorklet in the browser; Node has no output and the ring just turns).
 // The mixer runs on wall-clock time a little ahead of now, so the title's voices advance in real time even
 // with no listener. PCM (8-bit unsigned, 16-bit, float) at any rate, any channel count, through each voice's
-// output matrix; submix voices pass through. XMA2 / ADPCM / WMA are not decoded (the voice stays silent).
+// output matrix; submix voices pass through. XMA1 / XMA2 and Opus (the console's tag 0x704F, packets each behind
+// a 16-bit length) are decoded to PCM16 when a buffer is submitted (rt/audio_codec.c, FFmpeg's decoders);
+// ADPCM / WMA are not (the voice stays silent). XAudio2's structures are packed (pack(1)).
 // Voice callbacks (OnBufferStart, OnBufferEnd, OnStreamEnd, OnVoiceProcessingPassStart) run on the mixer thread.
 #include <math.h>
 #include <time.h>
 #include "rt.h"
+#include "audio_codec.h"
 
 HOST("audio_open") void host_audio_open(u32 ring);
 u64 rt_spawn_native(void (*fn)(Cpu *, void *), void *arg);
@@ -16,11 +19,12 @@ u64 rt_spawn_native(void (*fn)(Cpu *, void *), void *arg);
 #define RING_FRAMES 16384
 #define LEAD 2400 // frames mixed ahead of the clock (50 ms)
 
-typedef struct { u32 flags, bytes; u64 data; u32 begin, length, loop_begin, loop_length, loop_count; u64 context; } Buf;
+typedef struct { u32 flags, bytes; u64 data; u32 begin, length, loop_begin, loop_length, loop_count; u64 context; void *decoded; } Buf;
 #define QMAX 64
 typedef struct Voice {
   u64 vtbl; u32 magic, kind; // 0 source, 1 submix, 2 mastering
-  u32 channels, rate, bits, is_float, block, supported;
+  u32 channels, rate, bits, is_float, block, supported, codec;
+  AudioDec *dec;
   float volume, ratio, matrix[16]; int matrix_set;
   u64 callback;
   Buf q[QMAX]; u32 qhead, qn;
@@ -73,6 +77,7 @@ static void mix(Cpu *c, float *out, u32 n) {
         // the buffer is done: loop or retire
         if (b->loop_count && b->loop_length) { v->pos -= b->loop_length; if (b->loop_count != 255) b->loop_count--; i--; continue; }
         u64 ctx = b->context; u32 eos = b->flags & 0x40;
+        free(b->decoded); b->decoded = 0;
         v->qhead = (v->qhead + 1) % QMAX; v->qn--; v->pos = 0; v->started_buf = 0;
         if (v->callback) { callback(c, v, 4, ctx); if (eos) callback(c, v, 2, 0); }
         i--; continue;
@@ -162,6 +167,12 @@ IMP(xaudio2_9, Engine_CreateSourceVoice) { // (&voice, format, flags, max ratio,
   if (tag == 0xFFFE && M16(f + 16) >= 22) tag = (u16)M32(f + 24); // WAVEFORMATEXTENSIBLE: the subformat
   v->is_float = tag == 3;
   v->supported = (tag == 1 || tag == 3) && v->channels && v->channels <= 8 && v->block;
+  if (tag == 0x165 || tag == 0x166 || tag == 0x704F) { // compressed: decoded to PCM16 at submit
+    u16 extra = M16(f + 16);
+    v->dec = adec_open(tag, v->channels, v->rate, extra ? (void *)GP(f + 18) : 0, extra);
+    if (v->dec) { v->codec = tag; v->channels = (u32)adec_channels(v->dec); v->bits = 16; v->block = 2 * v->channels; v->supported = v->channels && v->channels <= 8; }
+    else rt_log("xaudio2: no decoder for format 0x%x (%u ch, %u Hz)%s", tag, v->channels, v->rate, adec_channels(0) ? "" : ": this build has no FFmpeg (tools/build-ffmpeg-audio.sh)");
+  }
   if (!v->supported) rt_log("xaudio2: source format 0x%x (%u ch, %u Hz) is not decoded; the voice is silent", tag, v->channels, v->rate);
   v->callback = ARG(5);
   M64(ARG(1)) = (uptr)v; RET(S_OK);
@@ -208,6 +219,14 @@ IMP(xaudio2_9, Voice_DestroyVoice) {
 }
 IMP(xaudio2_9, Source_Start) { Voice *v = voice(ARG(0)); if (v) v->started = 1; RET(S_OK); }
 IMP(xaudio2_9, Source_Stop) { Voice *v = voice(ARG(0)); if (v) v->started = 0; RET(S_OK); }
+// one packet into the decoded buffer (and whatever the decoder still holds); the frame count after it
+static u32 take(Voice *v, const void *pkt, int len, s16 **pcm, u32 *cap, u32 n) {
+  for (int got = adec_decode(v->dec, pkt, len, *pcm + (u64)n * v->channels, (int)(*cap - n)); got > 0; got = adec_decode(v->dec, 0, 0, *pcm + (u64)n * v->channels, (int)(*cap - n))) {
+    n += (u32)got;
+    if (n == *cap) { *cap *= 2; *pcm = realloc(*pcm, 2ull * *cap * v->channels); }
+  }
+  return n;
+}
 IMP(xaudio2_9, Source_SubmitSourceBuffer) { // (XAUDIO2_BUFFER*, XAUDIO2_BUFFER_WMA*)
   Voice *v = voice(ARG(0)); u64 b = ARG(1);
   if (!v || !b) { RET(E_INVALIDARG); return; }
@@ -215,7 +234,14 @@ IMP(xaudio2_9, Source_SubmitSourceBuffer) { // (XAUDIO2_BUFFER*, XAUDIO2_BUFFER_
   if (v->qn >= QMAX) { pthread_mutex_unlock(&mix_lock); RET(0x88960001u); return; } // XAUDIO2_E_INVALID_CALL
   Buf *q = &v->q[(v->qhead + v->qn) % QMAX];
   q->flags = M32(b); q->bytes = M32(b + 4); q->data = M64(b + 8); q->begin = M32(b + 16); q->length = M32(b + 20);
-  q->loop_begin = M32(b + 24); q->loop_length = M32(b + 28); q->loop_count = M32(b + 32); q->context = M64(b + 40);
+  q->loop_begin = M32(b + 24); q->loop_length = M32(b + 28); q->loop_count = M32(b + 32); q->context = M64(b + 36); q->decoded = 0;
+  if (v->dec) { // the whole buffer decoded now: XMA as 2048-byte packets, Opus as [u16 length][packet]...
+    u32 cap = 48000, n = 0; s16 *pcm = malloc(2ull * cap * v->channels);
+    const u8 *src = (const u8 *)GP(q->data);
+    if (v->codec == 0x704F) for (u32 at = 0; at + 2 <= q->bytes;) { u16 len = (u16)(src[at] | src[at + 1] << 8); if (!len || at + 2 + len > q->bytes) break; n = take(v, src + at + 2, len, &pcm, &cap, n); at += 2 + len; }
+    else { for (u32 at = 0; at + 2048 <= q->bytes; at += 2048) n = take(v, src + at, 2048, &pcm, &cap, n); adec_finish(v->dec); n = take(v, 0, 0, &pcm, &cap, n); }
+    q->decoded = pcm; q->data = (uptr)pcm; q->bytes = n * v->block;
+  }
   v->qn++;
   pthread_mutex_unlock(&mix_lock);
   RET(S_OK);
@@ -226,7 +252,7 @@ IMP(xaudio2_9, Source_ExitLoop) { Voice *v = voice(ARG(0)); if (v && v->qn) v->q
 IMP(xaudio2_9, Source_GetState) { // (XAUDIO2_VOICE_STATE*, flags)
   Voice *v = voice(ARG(0)); u64 s = ARG(1); if (!s) return;
   pthread_mutex_lock(&mix_lock);
-  M64(s) = v && v->qn ? v->q[v->qhead].context : 0; M32(s + 8) = v ? v->qn : 0; M64(s + 16) = v ? v->played : 0;
+  M64(s) = v && v->qn ? v->q[v->qhead].context : 0; M32(s + 8) = v ? v->qn : 0; M64(s + 12) = v ? v->played : 0; // packed
   pthread_mutex_unlock(&mix_lock);
 }
 IMP(xaudio2_9, Source_SetFrequencyRatio) { Voice *v = voice(ARG(0)); if (v) v->ratio = X[1].ps[0]; RET(S_OK); }

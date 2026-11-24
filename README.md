@@ -24,8 +24,10 @@ runtime (rt/, C on wasi-libc, linked into the same module) ◄──────
   seh.c       x64 exception handling over the images' .pdata / .xdata: RaiseException, RtlUnwindEx, vectored handlers
   vfs.c       the title's file system: console drives, the title's folder read-only, an in-memory overlay
   files.c     kernel32 / ntdll file functions over vfs.c
-  gdk.c       the console's libraries, offline: kernelx, XMem, XGameRuntime (task queues, XAsync, XUser, saves,
-              PLS, package), the console screen (user32 / DWM), GameInput's object
+  gdk.c       the console's libraries, offline: kernelx, XMem (with the GPU-visible region), XGameRuntime (task
+              queues, XAsync, XUser, saves, PLS, package), the console screen (user32 / DWM), GameInput
+  d3d12.c     D3D12 / D3D12.X front end (+ XG, D3DCompile from precompiled shaders); dxgi.c (DXGI, MFPlat);
+              dstorage.c (DirectStorage); xaudio2.c + audio_codec.c (XAudio2, XMA2 / Opus via FFmpeg)
 Imports nothing implements become stubs that log their first call and return 0 (E_NOTIMPL for the console's
 HRESULT APIs), as in XCL; SW_STRICT=1 stops at them instead.
 host (web/)   WASI calls, one worker per guest thread over one shared memory
@@ -76,7 +78,7 @@ and published by `.github/workflows/progress.yml`.
 | `fixtures/threads` (Rust, no_std) | 4 threads, `lock xadd`, critical sections, events, semaphores, TLS, ExitThread, timeouts | 9/9 | 9/9 |
 | `fixtures/cxx` (C++, llvm-mingw, libc++ + libunwind) | throw through frames with destructors, `catch (...)`, `std::exception`, rethrow, throw in catch, in a thread | 7/7 | 7/7 |
 | `fixtures/dll` (C++, llvm-mingw: an exe and the DLL it ships) | static and dynamic imports, DllMain on process and thread attach, `thread_local` in the DLL, an exception crossing from the DLL | 7/7 | – |
-| **XCL's console test title** (`tests/testtitle` + its game DLL, Rust std, built for `x86_64-pc-windows-gnullvm`) | XCL's own checks of a console title: TLS, panics, kernelx, XMem, the console screen, GameInput, modules, game DLL, the VFS (console drives, overlay, deletes, listings, T:), XGameRuntime, XTaskQueue, XUser, saves, PLS | **28/50**: every CPU-side check but the 3 that need memory above 4 GiB (XCL's layout); the 19 D3D12.X / DirectStorage / MF / XAudio2 checks are not started | 28/50 |
+| **XCL's console test title** (`tests/testtitle` + its game DLL, Rust std, built for `x86_64-pc-windows-gnullvm`) | XCL's own checks of a console title: TLS, panics, kernelx, XMem, the console screen, GameInput, modules, game DLL, the VFS, XGameRuntime, XUser, saves, PLS; D3D12.X (UMA memory, the console device and list methods, DMA queue, derived pipelines, depth bias, queries, textures in title memory), DirectStorage, MFPlat, XAudio2 with XMA2 and Opus | 46/50 (the 4 checks that read pixels need WebGPU) | **50/50** (`tests/gfx/xcl.sh`) |
 | **Stockfish 19, official Windows x64 build** (MinGW, 103 MB) | `bench`: 2.9 M instructions lifted, worker threads, NNUE (109 MB) in shared memory | **2,497,913 nodes = the published signature**, 105,700 nodes/s | **2,497,913 nodes**, 110,821 nodes/s, 22.5 s |
 | **Doom as a console title** (`fixtures/doom`: doomgeneric + Freedoom on D3D12.X, GameInput, XAudio2, XGameSave; llvm-mingw) | D3D12.X → WebGPU, `PresentX` and the frame clock, sound, keyboard / gamepad, saves that survive a reload | `-timedemo` frames equal native on every deterministic frame (null GPU back end) | frames **read back from WebGPU** equal native's; ~35 fps on SwiftShader; video: `fixtures/doom/video.sh` |
 

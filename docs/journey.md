@@ -172,6 +172,54 @@ rung, Doom, because it needs the whole shared core anyway; SimpleTriangle and Si
   attract demo, a new game from scripted keys, the automap, a save, a page reload (a new title process), the
   save loaded back. About 35 frames per second on the CPU-only renderer.
 
+### 3.10 XCL's console checks, all 50 (2026-11-24)
+The ladder's fourth rung: XCL's own console test title (`tests/testtitle` of github.com/ivall/xcl, its D3D12.X,
+DirectStorage, Media Foundation and XAudio2 checks). Before: 28 of 50. Now **50 of 50 in headless Chrome**
+(WebGPU on SwiftShader, every graphics check reading pixels back from the GPU) and 46 of 50 in Node (the 4
+checks that read rendered pixels need the WebGPU back end). `tests/gfx/xcl.sh` runs it.
+- **The GPU-visible region**: graphics memory (XMemAlloc / XMemVirtualAlloc with a graphics memory type,
+  descriptor heaps, buffers) is ordinary linear memory whose address carries a tag above 4 GiB
+  (`rt/gdk.c`). wasm32 keeps only an address's low 32 bits, so the title sees the console's region (16 GiB
+  up, XCL's four windows) and every access lands in the block. Blocks come first fit from arenas, so
+  neighbours are adjacent and merge when freed, as the checks expect.
+- **UMA**: on the console device every buffer is guest memory and its GPU address is its CPU address;
+  heaps have memory, buffers placed in them alias it, `CreatePlacedResourceX` makes a resource of the title's
+  own memory. The back end treats guest memory as the truth: a segment of work uploads the ranges it reads
+  and reads back the ranges it writes before anything later runs. Segments end at the console list's memory
+  operations (`Write32/64BitValue…X`, `FillMemoryWith32BitValueX`, `CopyMemoryToMemoryX`, `Wait32/64BitValueX`),
+  which then run on guest memory in order (`web/gpu/memops.js`, shared with the Node back end).
+- **The rest of the console device and list**: `CreateCommandQueueX`, `CreateCommandListX` (the DMA list's
+  short vtable), `CreateGraphicsPipelineStateX`, `CreateDerivedPipelineStateX` (patch parts as XCL found them),
+  page pools, `GetFrameStatisticsX`, `KickoffX` (the words recorded so far are submitted; later they are
+  replayed as state only), `RSSetDepthBiasX` (a pipeline variant; XCL's rule that all-zero turns it off),
+  `DrawIndexedX` from title memory, occlusion queries (one WebGPU query per draw, summed per D3D12 query:
+  WebGPU cannot nest them), `AllocateUploadMemory`, the AS descriptor format; unmodelled console slots log and
+  return 0, as in XCL.
+- **New libraries**: `d3d12_xs!D3D12CreateDevice` and `D3D12SerializeRootSignature`, IDXGIDevice1 and its
+  adapter (`rt/dxgi.c`), MFPlat's device manager and `MFResetDXGIDeviceManagerX`, DirectStorage
+  (`rt/dstorage.c`: file and memory sources, physical-page destinations, status arrays, fences, cancellation
+  by tag), XG's texture computer, and `D3DCompile` served from shaders compiled ahead of time:
+  `tools/hlsl-prep.mjs` takes the sources a run logs, compiles them with `dxc` and translates them.
+- **Textures in title memory** follow CPU writes by hashing their bytes before work uses them (wasm has no
+  write protection).
+- **XMA2 and Opus**: FFmpeg's decoders (7.1.5, LGPL, built for wasm by `tools/build-ffmpeg-audio.sh`, wrapped
+  by `rt/audio_codec.c`) decode a buffer to PCM16 when it is submitted. The wasm build's output is
+  bit-identical to a native `ffmpeg` on XCL's packets (6,080 and 960 samples).
+- **Bugs found on the way**: XAudio2's structures are packed (a buffer's context is at +36, `SamplesPlayed`
+  at +12; Doom's own header had the same mistake); each worker's `performance.now()` counts from its own
+  start, so times compared across threads were wrong (one clock for all threads now); `CopyTextureRegion`
+  without a box left the box flag unwritten; the allocation size of a 2D array counted one slice.
+- **What passing does not mean** (kept honest):
+  - Raytracing: only the surface the check looks at (no raytracing tier, the AS descriptor, the two list
+    slots). WebGPU has no raytracing.
+  - XG's layout is ours (subresources one after another), not the console's tiling: textures a title lays out
+    through XG at run time are right, textures tiled ahead of time by Microsoft's tools would not be.
+  - A graphics reservation over 1 GiB gets address space only (wasm32 has 4 GiB in all); committing in it fails.
+  - A pipeline with a console (RDNA2) shader is created but its draws are skipped: no RDNA2 → WGSL yet.
+  - `D3DCompile` knows only sources prepared ahead of time; a new one fails and is logged.
+  - A `Wait…X` holds the whole ring (every queue) while it waits; destroyed buffers keep their memory;
+    DirectStorage runs on `Submit`, without zlib or BCPack; WebGPU's constant depth bias is an integer.
+
 ## 4. Roadblocks
 
 ### Resolved
@@ -195,11 +243,11 @@ rung, Doom, because it needs the whole shared core anyway; SimpleTriangle and Si
 ### Open
 | # | Roadblock | Why it matters | Plan |
 |---|---|---|---|
-| O1 | **Graphics beyond Doom's** | D3D12 / D3D12.X → WebGPU works for what Doom uses (one textured pass, copies, fences, `PresentX`); vertex/index buffers, constant buffers, depth, many descriptors, compute and DXGI swap chains are written but untested | SimpleTriangleDesktop then SimplePBR (the ladder's steps 1–2), then XCL's 19 graphics checks |
+| O1 | **Graphics beyond Doom's and XCL's checks** | D3D12.X → WebGPU works for Doom and XCL's checks (depth, index buffers, derived pipelines, queries, UMA memory, copies); vertex / constant buffers with real data, many descriptors, compute and DXGI swap chains are written but untested | SimpleTriangleDesktop then SimplePBR (the ladder's steps 1–2) |
 | O2 | **Shader translation** RDNA2 → WGSL | the console ships GPU machine code, not portable shaders | the census tells which stages and instructions Minecraft needs; XCL's HLSL emitter is the reference; mesh/NGG programs may need compute + indirect draws |
 | O3 | **WebGPU limits** | no mesh shaders, no bindless heaps (XCL saw Minecraft use eight heaps of 73,727 descriptors), no 64-bit integers, no shared memory | per-draw bindings traced from each shader (VIctory's approach), compute emulation where needed; decided after the shader census |
 | O4 | MSVC C++ exceptions | Minecraft is an MSVC title; `__CxxFrameHandler3/4` are not implemented | an MSVC-ABI test title already builds (`fixtures/msvc`); implement if the title throws in normal play |
-| O5 | Audio codecs | PCM XAudio2 voices, gamepad / keyboard input and saves in OPFS work (Doom); XMA2 and Opus are not decoded, GameInput has no device callbacks yet | XMA2 / Opus decoders when a title needs them |
+| O5 | Audio codecs | PCM, XMA2 and Opus voices decode (FFmpeg); XMA buffers are decoded whole at submit, each buffer on its own; GameInput has no device callbacks yet | stream XMA across buffers when a title needs it |
 | O6 | Speed | 1.3–6× native on micro-benchmarks; a game needs headroom | lazy flags, registers across calls, AVX2 paths, wasm64 only if needed |
 | O7 | **The Minecraft files** | every Minecraft-specific answer (imports, memory, shaders, whether it needs `msvcp140` from its package) waits on them | run `tools/census.sh` first (`docs/first-run.md`) |
 | O8 | macOS app | if Minecraft needs wasm64, WKWebView (Safari's engine, memory64 behind a flag) cannot run it | ship Chromium in the app instead of the system web view |
@@ -233,7 +281,7 @@ rung, Doom, because it needs the whole shared core anyway; SimpleTriangle and Si
 | Stockfish lift | 15,931 functions, 2.94 M instructions after AVX-only functions are left out, 363 jump tables, 0 unlifted |
 | Stockfish compile | 16 parts in ~8 minutes on 4 cores (`-O2`); a relink takes seconds |
 | Micro-benchmark, lifted vs native | 1.3–6× slower; wasm64 0–45 % slower than wasm32 |
-| XCL console title | 28 / 50 checks (all CPU-side ones but 3 layout-specific), Node and Chrome |
+| XCL console title | 50 / 50 checks in Chrome (WebGPU), 46 / 50 in Node (no pixels there) |
 | Our test titles | hello 7/7, threads 9/9, C++ exceptions 7/7, DLL 7/7, benchmark checksums 5/5 |
 | Doom (console title) | 871 functions, 37 jump tables, 0 unlifted; 7,156-frame timedemo matches native on all 7,123 frames native draws deterministically, in Node and read back from WebGPU in Chrome; ~35 fps in headless Chrome on SwiftShader |
 | Runtime imports implemented | 464 functions (before graphics) plus the D3D12 / D3D12.X objects, XAudio2 and GameInput readings across kernel32, ntdll, msvcrt, ucrtbase, kernelx, XMem, XGameRuntime, user32, DWM, GameInput, oleaut32, advapi32 |

@@ -89,6 +89,7 @@ static ImportFn find_import(const char *full) {
 // usually return (E_NOTIMPL for the console's HRESULT APIs, 0 otherwise), as XCL does. SW_STRICT=1 stops instead.
 static int strict = -1;
 static u32 stub_value(const char *full) {
+  if (strstr(full, "X::#")) return 0; // a D3D12.X extension slot no one models: 0, as XCL answers them
   static const char *hresult[] = {"xgameruntime.dll!", "d3d12_xs.dll!", "d3d12.dll!", "dxgi.dll!", "xaudio2_9.dll!", "d3d12_x.dll!", "xg_xs.dll!", "xg_x.dll!", "acphal.dll!", "xapu.dll!", "chad.dll!", "xcrdapi.dll!", "gameinput.dll!", "mfplat.dll!", "d3dcompiler_47.dll!", "xaudio2_9.dll!"};
   for (unsigned i = 0; i < sizeof hresult / sizeof hresult[0]; i++) if (!strncmp(full, hresult[i], strlen(hresult[i]))) return 0x80004001u;
   return 0;
@@ -120,6 +121,16 @@ u64 rt_stub_import(const char *full) {
   import_fn[i] = 0; import_name_of[i] = strdup(full);
   pthread_mutex_unlock(&mem_lock);
   return import_base + 8ull * i;
+}
+u64 rt_com_vtable(const char *dll, const char *prefix, const char *const *names, unsigned n) {
+  u64 *vt = calloc(n, 8);
+  for (unsigned i = 0; i < n; i++) {
+    char m[160]; snprintf(m, sizeof m, "%s%s", prefix, names[i] ? names[i] : "");
+    u64 a = names[i] ? rt_dynamic_import(dll, m) : 0;
+    if (!a) { char full[200]; snprintf(full, sizeof full, "%s.dll!%s#%u", dll, prefix, i); if (names[i]) snprintf(full, sizeof full, "%s.dll!%s", dll, m); a = rt_stub_import(full); }
+    vt[i] = a;
+  }
+  return (uptr)vt;
 }
 const char *rt_import_name(u64 a) {
   if (a < import_base || a >= import_base + 8ull * import_total) return 0;

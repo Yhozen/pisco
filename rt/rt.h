@@ -47,6 +47,12 @@ extern int rt_trace;
 // ---- memory ----
 u64 rt_valloc(u64 size, u64 align); // zeroed guest memory, never freed (VirtualAlloc, stacks, TEBs)
 void rt_vfree(u64 addr);
+// the console's GPU-visible region (gdk.c): zeroed blocks whose addresses carry a tag above 4 GiB (window 0..3)
+u64 rt_gfx_alloc(u64 size, u64 align, u32 window);
+int rt_gfx_free(u64 addr);   // 1 when addr starts a block (or an address-space-only reservation)
+u8 *rt_phys_page(u64 num);   // XMem physical page `num`: where its bytes are now
+// a vtable of `n` methods named "<prefix><names[i]>" in `dll`'s imports (named stubs for the missing ones)
+u64 rt_com_vtable(const char *dll, const char *prefix, const char *const *names, unsigned n);
 
 // ---- threads ----
 typedef struct Thread {

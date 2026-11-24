@@ -20,9 +20,13 @@ grep -ho 'IMP([a-z0-9_]*, *[A-Za-z0-9_]*)' "$root"/rt/*.c | sort -u | sed -E 's/
 CF="$TARGET -mllvm -wasm-enable-sjlj ${OPT:--O2} -fno-strict-aliasing -I$root/rt -Wno-everything"
 # lifted code: freestanding, no libc
 for f in "$out"/title*.c; do [ "$f.o" -nt "$f" ] && [ "$f.o" -nt "$root/rt/cpu.h" ] || echo "$f"; done | xargs -r -P "$JOBS" -I{} sh -c '"$0"/clang $1 -ffreestanding -c "{}" -o "{}.o"' "$W" "$CF"
-for f in "$root"/rt/*.c; do b=$(basename "$f" .c); "$W/clang" $CF -c "$f" -o "$out/rt_$b.o" & done
+# XMA2 / Opus decoding: FFmpeg's decoders when tools/build-ffmpeg-audio.sh has built them (else silent voices)
+FF="$root/out/ffmpeg"; AUDIO_LIBS=""
+if [ -f "$FF/lib/libavcodec.a" ]; then AUDIO_LIBS="$FF/lib/libavcodec.a $FF/lib/libswresample.a $FF/lib/libavutil.a -lm"; fi
+for f in "$root"/rt/*.c; do b=$(basename "$f" .c); X=""; [ "$b" = audio_codec ] && [ -n "$AUDIO_LIBS" ] && X="-DSW_AUDIO_CODECS -I$FF/include"
+  "$W/clang" $CF $X -c "$f" -o "$out/rt_$b.o" & done
 "$W/clang" $CF -c "$out/imports.gen.c" -o "$out/imports.gen.o"
 wait
-"$W/clang" $TARGET -pthread "$out"/title*.c.o "$out"/rt_*.o "$out/imports.gen.o" -o "$out/title.wasm" -mllvm -wasm-enable-sjlj -lsetjmp \
+"$W/clang" $TARGET -pthread "$out"/title*.c.o "$out"/rt_*.o "$out/imports.gen.o" $AUDIO_LIBS -o "$out/title.wasm" -mllvm -wasm-enable-sjlj -lsetjmp \
   -Wl,--import-memory,--shared-memory,--initial-memory=67108864,--max-memory=4294967296,--export=wasi_thread_start,--stack-first,-z,stack-size=8388608 \
   -Wl,--export=__heap_base

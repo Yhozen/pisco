@@ -211,6 +211,7 @@ IMP(kernel32, VirtualAlloc) {
 }
 IMP(kernel32, VirtualFree) {
   u64 addr = ARG(0); u32 type = (u32)ARG(2);
+  if ((type & 0x8000) && rt_gfx_free(addr)) { RET(1); return; } // graphics memory (gdk.c)
   if (type & 0x8000) { // MEM_RELEASE
     pthread_mutex_lock(&region_lock);
     for (Region **pr = &regions; *pr; pr = &(*pr)->next) if ((*pr)->base == addr) { Region *r = *pr; *pr = r->next; free(r); rt_vfree(addr); break; }
@@ -287,6 +288,8 @@ static const struct { const char *name; u64 h; } system_modules[] = {
   {"kernel32", 0x7FF00000ull}, {"kernelbase", 0x7FF10000ull}, {"ntdll", 0x7FF20000ull}, {"kernelx", 0x7FF30000ull},
   {"xgameruntime", 0x7FF40000ull}, {"ucrtbase", 0x7FF50000ull}, {"msvcrt", 0x7FF60000ull},
   {"user32", 0x7FF70000ull}, {"advapi32", 0x7FF80000ull}, {"gameinput", 0x7FF90000ull}, {"xmem", 0x7FFA0000ull},
+  {"d3d12_xs", 0x7FFB0000ull}, {"d3d12", 0x7FFC0000ull}, {"dxgi", 0x7FFD0000ull}, {"xg_xs", 0x7FFE0000ull}, {"xcrdapi", 0x7FFF0000ull},
+  {"mfplat", 0x7FE00000ull}, {"d3dcompiler_47", 0x7FE10000ull}, {"xaudio2_9", 0x7FE20000ull},
   // API sets and console variants: the DLL behind them
   {"ntuser", 0x7FF70000ull}, {"minuser", 0x7FF70000ull}, {"advapi32legacy", 0x7FF80000ull}, {"api-ms-win-core", 0x7FF00000ull},
 };

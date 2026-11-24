@@ -23,7 +23,10 @@
 // ---- ring records ----
 #define GPU_R_WRAP 0
 // id, dimension (0 buffer, 2 tex2d, 3 tex3d, 1 tex1d), format, width lo, width hi, height, depth or array size,
-// mip levels, sample count, flags, heap type, guest backing (0: none), gpu va lo, gpu va hi
+// mip levels, sample count, flags, heap type, guest backing (0: none), gpu va lo, gpu va hi.
+// A buffer with backing: guest memory holds its bytes (the GPU's copy is uploaded before work reads it and
+// read back after work writes it). A texture with backing: its texels sit in guest memory in the title
+// layout (subresources one after another, as GetCopyableFootprints places them) and the GPU follows them.
 #define GPU_R_RESOURCE 1
 // id
 #define GPU_R_DESTROY 2
@@ -67,6 +70,27 @@
 #define GPU_L_STENCIL_REF 20
 #define GPU_L_DISPATCH 21
 #define GPU_L_BARRIER 22
+// D3D12.X: memory as the GPU sees it is guest memory (UMA). These run in order with the list's other work,
+// once the work before them is done. Addresses are guest addresses (lo, hi).
+// address lo hi, value lo hi, bytes (4 or 8), 1: write a GPU timestamp instead of the value
+#define GPU_L_MEM_WRITE 23
+// address lo hi, bytes lo hi, 32-bit value
+#define GPU_L_MEM_FILL 24
+// destination lo hi, source lo hi, bytes lo hi
+#define GPU_L_MEM_COPY 25
+// address lo hi, comparison (D3D12_COMPARISON_FUNC), reference lo hi, mask lo hi, bytes (4 or 8): later work waits for it
+#define GPU_L_MEM_WAIT 26
+// index address lo hi, DXGI format, index count: DrawIndexedX, indices straight from memory
+#define GPU_L_DRAW_INDEXED_X 27
+// depth bias, clamp, slope (float bits): RSSetDepthBiasX; all zero turns the override off
+#define GPU_L_DEPTH_BIAS 28
+// query heap id, query type, index
+#define GPU_L_QUERY_BEGIN 29
+#define GPU_L_QUERY_END 30
+// query heap id, query type, first, count, destination resource id, offset lo hi
+#define GPU_L_QUERY_RESOLVE 31
+// the next n words were run before (KickoffX): only their state counts now. n
+#define GPU_L_REPLAY 32
 
 // ---- descriptors: 32-byte records the front end writes into descriptor heaps in guest memory ----
 #define GPU_DESC_BYTES 32

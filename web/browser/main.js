@@ -153,7 +153,7 @@ else {
   if (q.get('pace') === 'off') env.SW_PACE = 'off';
   let store = [];
   try { store = await openStore(new URL(q.get('exe'), location.href).pathname); if (store.length) console.log(`storage: ${store.length} file(s) from earlier sessions`); } catch (e) { log(`storage: ${e.message} (saves will not survive a reload)`); }
-  boot = { module, memory, dir, tids, args, env, store };
+  boot = { module, memory, dir, tids, args, env, store, t0: performance.timeOrigin };
   for (let i = 0; i < POOL; i++) startPooled(i);
   const w = new Worker('worker.js'); workers.push(w);
   w.postMessage({ ...boot, tid: 0, pool: { ctl, slot: -1 } });
