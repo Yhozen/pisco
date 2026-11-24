@@ -109,20 +109,75 @@ DLL as shipped is not liftable; a recipe has to unpack it or leave it out.
 
 ```sh
 RECIPE=recipes/narbacular-drop/title.toml SPLIT=16 OPT=-O1 tools/build-title.sh "<folder>/Narbacular Drop.exe" out/nd
-SW_STRICT=1 SW_TRACE=2 node web/run-node.mjs out/nd/title.wasm "<folder>/Narbacular Drop.exe" > out/nd.run.log
+SW_STRICT=1 SW_TRACE=2 SW_SESSION_STEPS='wait 0' node web/run-node.mjs out/nd/title.wasm "<folder>/Narbacular Drop.exe" > out/nd.run.log
 python3 tools/oracle-wine/trace-diff.py recipes/narbacular-drop/traces/start.txt out/nd.run.log --until Direct3DCreate9
 ```
+
+(`SW_SESSION_STEPS='wait 0'` is a session of one empty step: it ends the run when the first frame has been
+presented. Since M3 the game no longer stops at Direct3D.)
 
 The game's own start-up code runs: its C runtime makes its heap, reads the environment and builds its character
 tables; the game reads all of `File.Ore`, looks for its three folders, registers `MyWndClass`, creates a 640x480
 window, sizes it to a 640x480 client area, centres and shows it, then calls `Direct3DCreate9(32)`. Up to that
 call its 274 calls are, with repeats folded, the same 81 steps as under Wine (434 calls there: the counts
-differ where the environment does). Direct3D 9 is not implemented yet, so the game shows its message box
-("Minimum Direct3D initialization failed...") and exits with code 0.
+differ where the environment does). At M2 Direct3D 9 was not implemented, so the game showed its message box
+("Minimum Direct3D initialization failed...") and exited with code 0.
 
 One difference had to be removed first: Windows' loader (and Wine's) sets the stack-protection cookie named in
 the image's load configuration; without that the C runtime made its own from the clock, the thread id and the
 performance counter, five calls Wine never showed.
+
+## The session without a screen (M3)
+
+```sh
+S=recipes/narbacular-drop/sessions/menu-to-level.json
+SW_STRICT=1 SW_CLOCK=16667 SW_D3D9_STATS=1 SW_D3D9_FRAMES=1 SW_SESSION=$S node web/run-node.mjs out/nd/title.wasm "<folder>/Narbacular Drop.exe" > out/nd.session.log
+python3 tools/oracle-wine/d3d9-compare.py out/oracle/narbacular-drop/d3d9/wine.log out/nd.session.log
+```
+
+The game creates its Direct3D 9 device (640x480 windowed, `X8R8G8B8`, a `D24X8` depth buffer, flags `0x50`),
+its DirectInput keyboard and mouse and FMOD (whose `FSOUND_Init` fails, as on the oracle's machine), loads its
+data and runs its main loop; the session player moves the mouse onto *Play Game* and clicks nine times; the run
+ends with exit code 0 in the first level after 6,256 frames (104 s of the game's time, 4 s of ours). Direct3D 9
+is a null device: nothing is drawn. `tests/run.sh nd` checks the eleven checkpoints against
+`recipes/narbacular-drop/traces/menu-to-level.txt` and that a second run gives the same log.
+
+Against Wine's trace of the same session (11,857 frames there: it renders in real time, our clock is virtual):
+
+| | Wine | here |
+|---|---|---|
+| Direct3D 9 methods called | 75 | 70 of them, and no other |
+| Methods with the same number of calls | | 39 (everything that is not per frame: 343 `CreateTexture`, 256 `UpdateSurface`, 102 `CheckDeviceFormat`, 67 `CreateVertexDeclaration`, 31 state blocks recorded, ...) |
+| Kinds of frame (the calls one frame makes) | 79 | 72; 27 are the same and cover 11,168 of Wine's 11,857 frames |
+| A menu frame | 165-172 draws, 19-20 indexed | the same |
+| A level frame | 3 scenes, 4 target changes, 129-136 draws, 18-74 indexed | the same, with 9 indexed draws fewer (6 while two texts are up): 1,144 of our 1,199 level frames are a frame Wine has minus exactly those draws |
+| Argument values (states, formats, pools, usages, flags, primitive types) | | 140 arguments took the same set of values; 2 did not |
+| Win32 calls (`+relay`) | `CompareStringA` 97,897, `HeapReAlloc` 146,820, `IsBadWritePtr` 852, `TextOutA` 256, `ExtTextOutW` 39, `RegOpenKeyA` 19 | the same counts |
+
+The differences, all of them:
+
+- **Text.** D3DX's font renders each glyph with `ExtTextOutW` into a DIB section and copies it into a texture
+  (39 glyphs, on both sides). Our gdi32 draws nothing yet, so every glyph's bitmap is empty and D3DX's sprite
+  has nothing to draw: under Wine a level frame has 9 more `DrawIndexedPrimitive` (three texts in each of the
+  three scenes), with `GetLevelDesc` on the glyph texture (5,703 calls, the one method we never see) and a
+  vertex buffer `Lock` with `NOOVERWRITE` (5,700, the one flag value we never see). With a filled box in place of
+  each glyph the calls appear here too (8.4 `GetLevelDesc` a level frame; Wine: 8.3): real glyphs come with M4.
+  The other level frames differ from Wine's by one or two particle vertex buffers or one light, as frames of
+  different lengths do.
+- **Uniscribe.** Wine has `usp10.dll`, so D3DX lays text out with `ScriptShape` / `ScriptPlace` there and with
+  `GetCharacterPlacementA` here (12,838 calls), as the census decided.
+- **Reference counting and `QueryInterface`.** Wine's trace shows its own along with the title's
+  (`GetDirect3D` and `CreateTexture` query interfaces inside Wine; `GetSurfaceLevel` and `GetRenderTarget` call
+  `AddRef` inside Wine): our counts are the title's calls only. `surface_LockRect` likewise: 297 of Wine's 338
+  are `texture_2d_LockRect` passing through.
+- **The CPU.** The recipe's virtual CPU has no MMX; the oracle's has (one more `IsProcessorFeaturePresent` here).
+
+Where Direct3D's behaviour had to be known and the trace does not show it, the oracle was asked:
+`tools/oracle-wine/d3d9probe.c` prints the adapter's identity and modes, `CheckDeviceFormat` for 51 formats in
+44 uses, a new device's every state, and three dozen corner cases (who holds which reference, locking twice,
+lights that were never set, what a recording does to the device). Its output and `d3d9caps.txt` become
+`rt/win32/d3d9_oracle.gen.h`. One answer mattered at once: `D32` is not a depth format there, so the game
+takes `D24X8`.
 
 ## What this decides
 

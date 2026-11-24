@@ -37,6 +37,12 @@ session describes what a player does, not how a host does it.
 | `{"key": "w", "ms": n}` or `{"key": "w", "down": true\|false}` | a key by X keysym name, or `space`, `enter`, `esc`, `up`, ... |
 | `{"shot": "name"}` | save `<name>.png` (the title's client area) and `<name>.full.png` (the screen) |
 
+In our own runtime the same file drives the title through `SW_SESSION=<session.json>` (the Node host; the
+steps reach the runtime's session player, `rt/win32/input.c`). Time there is the title's clock: with
+`SW_CLOCK=16667` it is virtual and moves by that many microseconds a presented frame, so `wait` counts frames and
+a run is the same every time. `focus` does nothing (the title's window always has the focus), and `shot` writes a
+line `checkpoint <name> frame <n>` with the Direct3D 9 calls made since the checkpoint before.
+
 ## Traces
 
 `TRACE` sets Wine's debug channels for `start`; `summarize.py` turns the log into names and counts.
@@ -71,6 +77,30 @@ them out of our side too.
 
 `oracle.sh run <title> <program.exe>` runs a console program to its end and prints its output: how the
 expected output of `fixtures/x87` is made.
+
+## Direct3D 9: asking the oracle, and comparing with it
+
+A trace shows what a title asked, not what it was told. `d3d9caps.c` (the device's capabilities) and
+`d3d9probe.c` (the adapter and its modes, `CheckDeviceFormat` for the usual formats and uses, every state of a new
+device, and corner cases one a line) are small Windows programs that print Direct3D's answers under Wine;
+`tools/gen-d3d9-oracle.py` turns `d3d9caps.txt` and `d3d9probe.txt` into `rt/win32/d3d9_oracle.gen.h`, which our
+Direct3D 9 answers from. A question our device cannot answer from them is a reason to add a line to the probe:
+
+```sh
+$MINGW/bin/i686-w64-mingw32-clang tools/oracle-wine/d3d9probe.c -o out/caps32/d3d9probe.exe -ld3d9 -luser32
+$O run narbacular-drop out/caps32/d3d9probe.exe | tr -d '\r' > tools/oracle-wine/d3d9probe.txt   # in a title's prefix: its virtual desktop decides the modes
+python3 tools/gen-d3d9-oracle.py > rt/win32/d3d9_oracle.gen.h
+```
+
+`d3d9-compare.py` sets a session in our runtime against Wine's `+d3d9` trace of it: the methods called, the
+values of the arguments that matter, and what one frame is made of (the two runs differ in how many frames a
+phase lasts, not in what a frame of a phase calls):
+
+```sh
+SW_STRICT=1 SW_CLOCK=16667 SW_D3D9_STATS=1 SW_D3D9_FRAMES=1 SW_SESSION=recipes/narbacular-drop/sessions/menu-to-level.json \
+  node web/run-node.mjs out/nd/title.wasm '<folder>/Narbacular Drop.exe' > out/nd.session.log
+python3 tools/oracle-wine/d3d9-compare.py out/oracle/narbacular-drop/d3d9/wine.log out/nd.session.log
+```
 
 ## What a headless run needs (found the hard way)
 

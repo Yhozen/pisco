@@ -23,6 +23,11 @@ SPDX-FileCopyrightText = "Microsoft Corporation"
 SPDX-License-Identifier = "MIT"
 
 [[annotations]]
+path = ["rt/win32/d3d9_layout.gen.h", "rt/win32/dinput8_layout.gen.h"]
+SPDX-FileCopyrightText = "Wine contributors (the d3d9.h and dinput.h of mingw-w64 are Wine's)"
+SPDX-License-Identifier = "LGPL-2.1-or-later"
+
+[[annotations]]
 path = "tests/data/llvm-amdgpu/**"
 precedence = "override"
 SPDX-FileCopyrightText = "LLVM contributors"

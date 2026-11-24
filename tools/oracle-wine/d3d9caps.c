@@ -23,7 +23,7 @@ int main(void) {
   X(MaxSimultaneousTextures); X(VertexProcessingCaps); X(MaxActiveLights); X(MaxUserClipPlanes); X(MaxVertexBlendMatrices);
   X(MaxVertexBlendMatrixIndex); F(MaxPointSize); X(MaxPrimitiveCount); X(MaxVertexIndex); X(MaxStreams); X(MaxStreamStride);
   X(VertexShaderVersion); X(MaxVertexShaderConst); X(PixelShaderVersion); F(PixelShader1xMaxValue); X(DevCaps2);
-  F(MaxNpatchTessellationLevel); X(MasterAdapterOrdinal); X(AdapterOrdinalInGroup); X(NumberOfAdaptersInGroup); X(DeclTypes);
+  F(MaxNpatchTessellationLevel); X(Reserved5); X(MasterAdapterOrdinal); X(AdapterOrdinalInGroup); X(NumberOfAdaptersInGroup); X(DeclTypes);
   X(NumSimultaneousRTs); X(StretchRectFilterCaps); X(VS20Caps.Caps); X(VS20Caps.DynamicFlowControlDepth); X(VS20Caps.NumTemps);
   X(VS20Caps.StaticFlowControlDepth); X(PS20Caps.Caps); X(PS20Caps.DynamicFlowControlDepth); X(PS20Caps.NumTemps);
   X(PS20Caps.StaticFlowControlDepth); X(PS20Caps.NumInstructionSlots); X(VertexTextureFilterCaps);

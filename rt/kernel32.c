@@ -51,6 +51,9 @@ IMP(kernel32, GetLargePageMinimum) { RET(0); }
 IMP(kernel32, SwitchToThread) { sched_yield(); RET(1); }
 IMP(kernel32, Sleep) {
   u32 ms = (u32)ARG(0);
+#if GUEST_BITS == 32
+  if (rt_clock_virtual()) { rt_clock_advance(1000ull * ms); return; } // a virtual clock (SW_CLOCK): the time passes at once
+#endif
   if (!ms) { sched_yield(); return; }
   struct timespec ts = {ms / 1000, (long)(ms % 1000) * 1000000};
   nanosleep(&ts, 0);
@@ -263,11 +266,33 @@ IMP(kernel32, MapViewOfFile) { Object *o = rt_handle_get(ARG(0)); RET(o && o->ty
 IMP(kernel32, UnmapViewOfFile) { RET(1); }
 
 // ---- time ----
+// The title's clock (rt.h): the host's, or with SW_CLOCK=<microseconds a frame> a virtual one that starts at a
+// fixed date (2005-01-01 12:00 UTC) and moves only when the title presents a frame or sleeps.
+static u64 clock_step, clock_virtual; static int clock_mode; // 0 not asked yet, 1 the host's, 2 virtual
+static void clock_init(void) { const char *e = getenv("SW_CLOCK"); clock_step = e ? strtoull(e, 0, 10) : 0; clock_mode = clock_step ? 2 : 1; }
+int rt_clock_virtual(void) { if (!clock_mode) clock_init(); return clock_mode == 2; }
+u64 rt_now_us(void) {
+  if (rt_clock_virtual()) return 1104580800000000ull + __atomic_load_n(&clock_virtual, __ATOMIC_SEQ_CST);
+  struct timespec t; clock_gettime(CLOCK_REALTIME, &t); return (u64)t.tv_sec * 1000000 + (u64)t.tv_nsec / 1000;
+}
+void rt_clock_advance(u64 us) { if (rt_clock_virtual()) __atomic_add_fetch(&clock_virtual, us, __ATOMIC_SEQ_CST); }
+void rt_clock_advance_frame(void) { rt_clock_advance(clock_step); }
+// What the system has been up for: it started a minute before the first time anyone asked
+u64 rt_uptime_us(void) { static u64 boot; u64 now = rt_now_us(); if (!boot) boot = now - 60000000; return now - boot; }
+#if GUEST_BITS == 32
+// 32-bit titles: every clock is the title's clock
+IMP(kernel32, QueryPerformanceCounter) { M64(ARG(0)) = rt_uptime_us(); RET(1); }
+IMP(kernel32, QueryPerformanceFrequency) { M64(ARG(0)) = 1000000; RET(1); }
+IMP(kernel32, GetTickCount) { RET((u32)(rt_uptime_us() / 1000)); }
+IMP(kernel32, GetTickCount64) { RET64(rt_uptime_us() / 1000); }
+static u64 filetime_now(void) { return rt_now_us() * 10 + 116444736000000000ull; }
+#else
 static u64 filetime_now(void) { struct timespec t; clock_gettime(CLOCK_REALTIME, &t); return (u64)t.tv_sec * 10000000 + (u64)t.tv_nsec / 100 + 116444736000000000ull; }
 IMP(kernel32, QueryPerformanceCounter) { M64(ARG(0)) = (u64)host_now_us(); RET(1); }
 IMP(kernel32, QueryPerformanceFrequency) { M64(ARG(0)) = 1000000; RET(1); }
 IMP(kernel32, GetTickCount) { RET((u32)(host_now_us() / 1000)); }
 IMP(kernel32, GetTickCount64) { RET((u64)(host_now_us() / 1000)); }
+#endif
 IMP(kernel32, GetSystemTimeAsFileTime) { M64(ARG(0)) = filetime_now(); }
 IMP(kernel32, GetSystemTimePreciseAsFileTime) { M64(ARG(0)) = filetime_now(); }
 IMP(kernel32, GetSystemTimeAdjustment) { M32(ARG(0)) = 156250; M32(ARG(1)) = 156250; M32(ARG(2)) = 1; RET(1); }
@@ -295,13 +320,24 @@ static const struct { const char *name; u64 h; } system_modules[] = {
   {"user32", 0x7FF70000ull}, {"advapi32", 0x7FF80000ull}, {"gameinput", 0x7FF90000ull}, {"xmem", 0x7FFA0000ull},
   {"d3d12_xs", 0x7FFB0000ull}, {"d3d12", 0x7FFC0000ull}, {"dxgi", 0x7FFD0000ull}, {"xg_xs", 0x7FFE0000ull}, {"xcrdapi", 0x7FFF0000ull},
   {"mfplat", 0x7FE00000ull}, {"d3dcompiler_47", 0x7FE10000ull}, {"xaudio2_9", 0x7FE20000ull},
+#if GUEST_BITS == 32
+  // the desktop's DLLs a title looks functions up in (rt/win32/)
+  {"gdi32", 0x7FD00000ull}, {"d3d9", 0x7FD10000ull}, {"dinput8", 0x7FD20000ull}, {"winmm", 0x7FD30000ull},
+#endif
   // API sets and console variants: the DLL behind them
   {"ntuser", 0x7FF70000ull}, {"minuser", 0x7FF70000ull}, {"advapi32legacy", 0x7FF80000ull}, {"api-ms-win-core", 0x7FF00000ull},
 };
 static u64 module_handle(const char *n) {
   const ModuleDef *m = rt_module_named(n);
   if (m) return m->base;
+#if GUEST_BITS == 32
+  // a desktop title names a DLL exactly: "d3d9d.dll" (Direct3D's debug build, which D3DX looks for) is not "d3d9.dll"
+  const char *base = strrchr(n, '\\'); base = base ? base + 1 : n;
+  size_t len = strlen(base); if (len > 4 && !strcasecmp(base + len - 4, ".dll")) len -= 4;
+  for (unsigned i = 0; i < sizeof system_modules / sizeof system_modules[0]; i++) if (strlen(system_modules[i].name) == len && !strncasecmp(base, system_modules[i].name, len)) return system_modules[i].h;
+#else
   for (unsigned i = 0; i < sizeof system_modules / sizeof system_modules[0]; i++) if (strcasestr(n, system_modules[i].name)) return system_modules[i].h;
+#endif
   return 0;
 }
 static const char *system_name(u64 h) {

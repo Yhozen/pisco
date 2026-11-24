@@ -286,6 +286,30 @@ making the same calls as under Wine.
   in place the trace matched Wine's for 41 steps, then differed in one place (R23); after that fix, all 81
   steps up to `Direct3DCreate9`, in strict mode.
 
+### 3.14 The main loop without a screen: a null Direct3D 9, input, a clock (2026-11-24)
+Milestone M3. The game plays the reference session from its menu into its first level in Node, in strict mode,
+with nothing drawn: 6,256 frames in four seconds, the same log on every run.
+- **Asking the oracle instead of guessing** (`tools/oracle-wine/d3d9probe.c`): a small Windows program run under
+  Wine prints what Direct3D answers where a trace only shows the question: the adapter and its modes,
+  `CheckDeviceFormat` for 51 formats in 44 uses, every state of a new device, and corner cases one at a time
+  (references, double locks, lights never set, recording). `tools/gen-d3d9-oracle.py` turns its output and the
+  capabilities into a header: no number of the device was typed. It corrected guesses before they were made:
+  the oracle has no `D32` depth buffers, a default-pool texture cannot be locked, an enabled light reads back as 128.
+- **The null device** (`rt/win32/d3d9*.c`): objects in guest memory with the title's references and the device's
+  own uses counted apart (a buffer released while bound lives until it is unbound), textures and buffers with
+  real bytes, state blocks as lists of entries (recording goes to the block, not to the device), draws checked
+  against what is bound. Statistics under Wine's own method names, a frame at a time if asked.
+- **A clock the title cannot outrun** (`rt_now_us`, `SW_CLOCK`): virtual time moves when a frame is presented or
+  the title sleeps, so loading takes no time and a run does not depend on the machine.
+- **Input and the session player** (`rt/win32/input.c`, `dinput8.c`): one input state with its events; the
+  game reads the keyboard as a state and the mouse only as buffered events, so `GetDeviceData` had to be real.
+  The session script that drives Wine's X server drives this state (`SW_SESSION`).
+- **Comparing by frame, not by total** (`tools/oracle-wine/d3d9-compare.py`): the two runs have different frame
+  counts, so the unit is "the calls one frame makes". 27 kinds of frame are identical on both sides and cover
+  94 % of Wine's frames; the level's frames differ by exactly the text D3DX draws under Wine (R26).
+- **Result**: the first strict run after the layer was written went from the menu to the tutorial; three stops
+  followed (R25 and R27 below, and a format question the probe had not asked).
+
 ## 4. Roadblocks
 
 ### Resolved
@@ -315,6 +339,10 @@ making the same calls as under Wine.
 | R22 | 64-bit division in a 32-bit program with no C runtime | the compiler calls Visual C++'s helpers (`__aulldiv`, ...: arguments on the stack, removed by the callee) | thunks in the fixture around a shift-and-subtract division |
 | R23 | Five calls Wine never showed | the game's C runtime made a stack-protection cookie from the clock, the process and thread ids, the tick count and the performance counter | Windows' loader sets the cookie named in the image's load configuration directory, and so does Wine; now ours does too (a fixed value) |
 | R24 | Wine's trace lacks some calls altogether | thread and process ids, the last error, locks, interlocked operations and the performance counter never appear in a relay trace | the comparison leaves those out of our side too; the list is in `trace-diff.py`, from a whole session's trace |
+| R25 | D3DX's font could not be created; the game then called through a null pointer | on Windows 2000 and later D3DX requires gdi32's `GetCharABCWidthsI`, `GetCharWidthI` and `GetFontUnicodeRanges`, found with `GetProcAddress`; Uniscribe is the optional part | the three functions; `usp10.dll` stays absent |
+| R26 | A level frame had 9 indexed draws fewer than under Wine | D3DX copies each glyph from a GDI bitmap into a texture and draws nothing for a glyph whose bitmap is empty; our GDI draws no text yet | left as it is, measured (a box per glyph brings the calls back); real glyphs come with the pixels |
+| R27 | D3DX "loaded" Direct3D's debug DLL | module names were matched as substrings, so `d3d9d.dll` was `d3d9.dll` | desktop titles' DLL names are matched exactly |
+| R28 | The start-up test would have traced the main loop for five minutes | since M3 the game no longer stops at Direct3D | a session of one empty step (`SW_SESSION_STEPS='wait 0'`) ends the run at the first frame |
 
 ### Open
 | # | Roadblock | Why it matters | Plan |
@@ -364,6 +392,7 @@ making the same calls as under Wine.
 | Our test titles | hello 7/7, threads 9/9, C++ exceptions 7/7, DLL 7/7, benchmark checksums 5/5 |
 | 32-bit test titles | hello (i686) 7/7; `fixtures/x87` 27 lines equal Wine's output; both in Node and Chrome |
 | Narbacular Drop, started | 274 calls from the entry point to `Direct3DCreate9`: the same 81 folded steps as under Wine |
+| Narbacular Drop, menu to level | 6,256 frames (104 s of its time) in 4.2 s in Node; 7.2 M Direct3D 9 calls, 70 methods; 27 kinds of frame identical to Wine's, covering 94 % of Wine's 11,857 frames |
 | Narbacular Drop, lifted | 3,955 functions, 349,540 instructions, 88 jump tables, 96.2 % of `.text`; 8,279 MMX / 3DNow instructions not lifted; 3 indirect jumps unresolved (C++ exception code) |
 | Doom (console title) | 871 functions, 37 jump tables, 0 unlifted; 7,156-frame timedemo matches native on all 7,123 frames native draws deterministically, in Node and read back from WebGPU in Chrome; ~35 fps in headless Chrome on SwiftShader |
 | Runtime imports implemented | 464 functions (before graphics) plus the D3D12 / D3D12.X objects, XAudio2 and GameInput readings across kernel32, ntdll, msvcrt, ucrtbase, kernelx, XMem, XGameRuntime, user32, DWM, GameInput, oleaut32, advapi32 |
@@ -383,7 +412,9 @@ making the same calls as under Wine.
 | `fixtures/` | our own test titles (sources; built binaries are ignored) |
 | `tools/oracle-wine/` | the Wine oracle: prefix, run, session player, trace summaries |
 | `tools/setup-toolchain.sh`, `tests/run.sh` | the toolchains outside the repository; every test title, one line per check |
-| `rt/win32/` | the Windows desktop layer: start-up kernel32, user32, registry, GDI, Direct3D 9 (a placeholder so far) |
+| `rt/win32/` | the Windows desktop layer: start-up kernel32, user32, registry, GDI, Direct3D 9 (a null device: `d3d9*.c`), DirectInput 8, the input state and session player, FMOD 3 (silent), `com.c` for COM objects |
+| `tools/gen-com-layout.py`, `tools/gen-d3d9-oracle.py` | generated headers: COM vtables from the mingw-w64 headers; the oracle's Direct3D 9 answers |
+| `web/session.mjs` | a session script as the text the runtime's player reads |
 | `tools/stdcall-sizes.sh`, `tools/recipe-gen.py` | 32-bit builds: what each import removes from the stack; what the recipe says, for the runtime |
 | `fixtures/x87/` | the 32-bit x87 title and what it prints under Wine |
 | `recipes/<title>/` | per-title files: the recipe, session scripts, Wine's recorded call sequences |

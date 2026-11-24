@@ -53,7 +53,11 @@ void rt_cpuid(Cpu *c) {
   }
   R[RAX] = a; R[RBX] = b; R[RCX] = cx; R[RDX] = d;
 }
+#if GUEST_BITS == 32
+u64 rt_rdtsc(void) { return rt_uptime_us() * 3000; } // a 3 GHz counter on the title's clock
+#else
 u64 rt_rdtsc(void) { return (u64)(host_now_us() * 3000.0); }
+#endif
 
 // ---- files ----
 int rt_file_write(int fd, const void *p, u32 n) { u32 done = 0; while (done < n) { ssize_t k = write(fd, (const char *)p + done, n - done); if (k <= 0) return done ? (int)done : -1; done += (u32)k; } return (int)done; }
@@ -168,7 +172,8 @@ static u64 atexit_fns[256]; static int atexit_n;
 static pthread_mutex_t exit_lock = PTHREAD_MUTEX_INITIALIZER;
 static int exiting;
 HOST("exit") __attribute__((noreturn)) void host_exit(u32 code);
-void rt_exit_process(u32 code) { host_exit(code); }
+void (*rt_exit_hook)(void);
+void rt_exit_process(u32 code) { void (*hook)(void) = rt_exit_hook; rt_exit_hook = 0; if (hook) hook(); host_exit(code); }
 static void run_atexit(Cpu *c) {
   pthread_mutex_lock(&exit_lock);
   if (exiting) { pthread_mutex_unlock(&exit_lock); return; }

@@ -56,6 +56,7 @@ PixelShaderVersion                   0xffff0300
 PixelShader1xMaxValue                3.40282e+38
 DevCaps2                             0x00000051
 MaxNpatchTessellationLevel           0
+Reserved5                            0x00000000
 MasterAdapterOrdinal                 0x00000000
 AdapterOrdinalInGroup                0x00000000
 NumberOfAdaptersInGroup              0x00000001

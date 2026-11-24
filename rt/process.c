@@ -110,6 +110,11 @@ static ImportFn find_import(const char *full) {
   }
   if (!strncmp(full, "ext-ms-win-rtcore-ntuser", 24) || !strncmp(full, "ext-ms-win-ntuser", 17) || !strncmp(full, "minuser", 7)) { snprintf(alt, sizeof alt, "user32.dll!%s", name); if ((f = find_exact(alt))) return f; }
   if (!strncmp(full, "advapi32legacy.dll!", 19) || !strncmp(full, "api-ms-win-security", 19)) { snprintf(alt, sizeof alt, "advapi32.dll!%s", name); if ((f = find_exact(alt))) return f; }
+#if GUEST_BITS == 32
+  // a DLL that exports its stdcall functions under their decorated names (fmod.dll: `_FSOUND_Init@12`)
+  const char *at = strrchr(name, '@');
+  if (name[0] == '_' && at && at[1] >= '0' && at[1] <= '9') { snprintf(alt, sizeof alt, "%.*s!%.*s", (int)(bang - full), full, (int)(at - name - 1), name + 1); if ((f = find_exact(alt))) return f; }
+#endif
   return 0;
 }
 // An import nothing implements: a stub that logs its first call and returns what the DLL's functions
@@ -128,10 +133,11 @@ static void canon(char *out, const char *dll, const char *name) {
   if (n < 4 || strcmp(out + n - 4, ".dll")) strcat(out, ".dll");
   strcat(out, "!"); strncat(out, name, 120);
 }
+static int dynamic_quiet;
 u64 rt_dynamic_import(const char *dll, const char *name) {
   char full[200]; canon(full, dll, name);
   ImportFn fn = find_import(full);
-  if (!fn) { if (rt_trace) rt_log("GetProcAddress: %s not implemented", full); return 0; }
+  if (!fn) { if (rt_trace && !dynamic_quiet) rt_log("GetProcAddress: %s not implemented", full); return 0; }
   pthread_mutex_lock(&mem_lock);
   for (unsigned i = 0; i < import_total; i++) if (import_fn[i] == fn) { pthread_mutex_unlock(&mem_lock); return import_base + 8ull * i; }
   unsigned i = import_total++;
@@ -148,6 +154,12 @@ u64 rt_stub_import(const char *full) {
   import_fn[i] = 0; import_name_of[i] = strdup(full); import_pop[i] = (short)stdcall_bytes(full);
   pthread_mutex_unlock(&mem_lock);
   return import_base + 8ull * i;
+}
+// The same for whoever builds a vtable and gives a missing method a named stub: nothing to report (rt/win32/com.c)
+u64 rt_method_import(const char *dll, const char *name) { dynamic_quiet = 1; u64 a = rt_dynamic_import(dll, name); dynamic_quiet = 0; return a; }
+// A COM method's argument bytes are known to whoever builds its vtable, not to an import library (rt/win32/com.c)
+void rt_import_set_pop(u64 addr, int bytes) {
+  if (addr >= import_base && addr < import_base + 8ull * import_total) import_pop[(addr - import_base) / 8] = (short)bytes;
 }
 u64 rt_com_vtable(const char *dll, const char *prefix, const char *const *names, unsigned n) {
   void *vt = calloc(n, PTR_SIZE);

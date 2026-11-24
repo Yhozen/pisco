@@ -1,0 +1,16 @@
+# The menu-to-level session (../sessions/menu-to-level.json) in our runtime, on the virtual clock (SW_CLOCK=16667)
+# with the null Direct3D 9 device: each checkpoint with the frame it falls on and the Direct3D 9 methods and calls
+# made since the checkpoint before. Names and counts only. tests/run.sh nd compares a run with it (ND_RECORD=1
+# records it again); tools/oracle-wine/d3d9-compare.py sets a run against Wine's trace of the same session.
+checkpoint menu frame 2491: 61 methods, 4107482 calls
+checkpoint menu-play frame 2575: 22 methods, 213668 calls
+checkpoint intro frame 2884: 41 methods, 33393 calls
+checkpoint intro-2 frame 3193: 13 methods, 7428 calls
+checkpoint intro-3 frame 3502: 13 methods, 7435 calls
+checkpoint controls frame 3811: 11 methods, 7062 calls
+checkpoint tutorial frame 4120: 11 methods, 7062 calls
+checkpoint tutorial-2 frame 4429: 11 methods, 7062 calls
+checkpoint tutorial-3 frame 4738: 11 methods, 7062 calls
+checkpoint tutorial-4 frame 5047: 11 methods, 7059 calls
+checkpoint level frame 6256: 69 methods, 2806114 calls
+session done: 34 steps, 6256 frames

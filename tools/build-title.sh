@@ -37,7 +37,8 @@ grep -ho 'IMP([a-z0-9_]*, *[A-Za-z0-9_]*)' $RT_FILES | sort -u | sed -E 's/IMP\(
   echo 'typedef struct { const char *name; int bytes; } StdcallDef;'
   echo 'const StdcallDef rt_stdcall_table[] = {'
   if [ "$GUEST_BITS" = 32 ]; then
-    { awk '{print $1".dll!"$2}' "$out/imports.txt"; grep -ho '"[^"]*![^"]*",' "$out"/title*.c | tr -d '",'; } | "$root/tools/stdcall-sizes.sh" | awk '{print "  {\""$1"\", "$2"},"}'
+    # first the runtime functions no import library describes (rt/win32/stdcall.txt), then what the libraries say
+    { grep -v -e '^#' -e '^ *$' "$root/rt/win32/stdcall.txt"; { awk '{print $1".dll!"$2}' "$out/imports.txt"; grep -ho '"[^"]*![^"]*",' "$out"/title*.c | tr -d '",'; } | "$root/tools/stdcall-sizes.sh"; } | awk '{print "  {\""$1"\", "$2"},"}'
   fi
   echo '  {0, 0}};'
   echo "const unsigned rt_stdcall_table_count = sizeof rt_stdcall_table / sizeof rt_stdcall_table[0] - 1;"

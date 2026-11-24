@@ -2,9 +2,9 @@
 // user32 for Windows desktop titles: window classes, one top-level window (the host shows its client area),
 // and the messages Windows sends a window as it is created, sized, shown and closed, delivered by calling the
 // title's own window procedure. Input never arrives as messages here yet: the first title reads DirectInput.
-#include "../rt.h"
+#include "win32.h"
 
-enum { WM_CREATE = 1, WM_DESTROY = 2, WM_MOVE = 3, WM_SIZE = 5, WM_ACTIVATE = 6, WM_SETFOCUS = 7, WM_CLOSE = 0x10, WM_QUIT = 0x12,
+enum { WM_CREATE = 1, WM_DESTROY = 2, WM_MOVE = 3, WM_SIZE = 5, WM_ACTIVATE = 6, WM_SETFOCUS = 7, WM_PAINT = 0xF, WM_CLOSE = 0x10, WM_QUIT = 0x12,
        WM_ERASEBKGND = 0x14, WM_SHOWWINDOW = 0x18, WM_ACTIVATEAPP = 0x1C, WM_GETMINMAXINFO = 0x24, WM_WINDOWPOSCHANGING = 0x46,
        WM_WINDOWPOSCHANGED = 0x47, WM_NCCREATE = 0x81, WM_NCDESTROY = 0x82, WM_NCCALCSIZE = 0x83, WM_NCACTIVATE = 0x86 };
 enum { SCREEN_W = 1024, SCREEN_H = 768 };   // the desktop: what the oracle's has
@@ -16,6 +16,7 @@ typedef struct Window {
   u32 hwnd, proc, style, exstyle, instance, parent, userdata;
   s32 x, y, w, h;          // the whole window, in screen coordinates
   int visible, alive, has_frame;
+  int needs_paint;         // its client area has not been painted since it was shown: WM_PAINT is due until someone validates it
   char title[128]; WndClass *cls;
 } Window;
 static WndClass classes[32]; static unsigned class_count;
@@ -33,6 +34,7 @@ static void client_size(const Window *w, s32 *cw, s32 *ch) {
   *cw = w->w - (w->has_frame ? 2 * FRAME : 0); *ch = w->h - (w->has_frame ? 2 * FRAME + CAPTION : 0);
   if (*cw < 0) *cw = 0; if (*ch < 0) *ch = 0;
 }
+int win32_client_size(u32 hwnd, s32 *cw, s32 *ch) { Window *w = window_of(hwnd); if (!w) return 0; client_size(w, cw, ch); return 1; }
 static void put_rect(u64 p, s32 l, s32 t, s32 r, s32 b) { M32(p) = (u32)l; M32(p + 4) = (u32)t; M32(p + 8) = (u32)r; M32(p + 12) = (u32)b; }
 
 IMP(user32, LoadIconA) { RET(0x00020000u + ((u32)ARG(1) & 0xFFFF)); }
@@ -85,6 +87,7 @@ IMP(user32, DefWindowProcA) {
   u32 msg = (u32)ARG(1); Window *w = window_of(ARG(0));
   switch (msg) {
   case WM_NCCREATE: case WM_ERASEBKGND: case WM_NCACTIVATE: RET(1); return;
+  case WM_PAINT: if (w) w->needs_paint = 0; RET(0); return;   // BeginPaint and EndPaint: the client area is valid again
   case WM_CLOSE: if (w) destroy(c, w); RET(0); return;
   default: RET(0); return;
   }
@@ -124,7 +127,7 @@ static void moved_or_sized(Cpu *c, Window *w, s32 x, s32 y, s32 cx, s32 cy, u32 
 static void show(Cpu *c, Window *w, int visible) {
   if (w->visible == visible) return;
   send(c, w, WM_SHOWWINDOW, (u64)visible, 0);
-  w->visible = visible;
+  w->visible = visible; w->needs_paint = visible;
   if (visible) { // it becomes the active window with the keyboard focus
     send(c, w, WM_ACTIVATEAPP, 1, 0); send(c, w, WM_NCACTIVATE, 1, 0); send(c, w, WM_ACTIVATE, 1, 0); send(c, w, WM_SETFOCUS, 0, 0);
     s32 cw, ch; client_size(w, &cw, &ch);
@@ -147,13 +150,25 @@ IMP(user32, ShowWindow) { // SW_HIDE is 0; every other command shows
 IMP(user32, UpdateWindow) { RET(1); }
 IMP(user32, DestroyWindow) { Window *w = window_of(ARG(0)); if (w) destroy(c, w); RET(w != 0); }
 IMP(user32, PostQuitMessage) { quit_posted = 1; quit_code = (u32)ARG(0); }
-// The message queue holds nothing but WM_QUIT so far. MSG: hwnd, message, wParam, lParam, time, pt.x, pt.y
+// The message queue holds WM_QUIT once it is posted, and WM_PAINT for a window that was shown and not painted
+// since: that one stays due until the window is validated (DefWindowProcA does it), as on Windows. Input does
+// not arrive as messages yet. PeekMessageA(MSG *, window, first, last, flags). MSG: hwnd, message, wParam, lParam, time, pt.x, pt.y
+static int wanted(Cpu *c, u32 msg) { u32 lo = (u32)ARG(2), hi = (u32)ARG(3); return (!lo && !hi) || (msg >= lo && msg <= hi); }
 IMP(user32, PeekMessageA) {
-  if (!quit_posted) { RET(0); return; }
-  u64 m = ARG(0); memset((void *)GP(m), 0, 28); M32(m + 4) = WM_QUIT; M32(m + 8) = quit_code;
-  if ((u32)ARG(4) & 1) quit_posted = 0; // PM_REMOVE
-  RET(1);
+  u64 m = ARG(0);
+  if (quit_posted && wanted(c, WM_QUIT)) {
+    memset((void *)GP(m), 0, 28); M32(m + 4) = WM_QUIT; M32(m + 8) = quit_code;
+    if ((u32)ARG(4) & 1) quit_posted = 0; // PM_REMOVE
+    RET(1); return;
+  }
+  if (wanted(c, WM_PAINT)) for (unsigned i = 0; i < window_count; i++) {
+    Window *w = &windows[i];
+    if (!w->alive || !w->visible || !w->needs_paint || (ARG(1) && (u32)ARG(1) != w->hwnd)) continue;
+    memset((void *)GP(m), 0, 28); M32(m) = w->hwnd; M32(m + 4) = WM_PAINT; M32(m + 16) = (u32)(rt_uptime_us() / 1000);
+    RET(1); return;
+  }
+  RET(0);
 }
 IMP(user32, TranslateMessage) { RET(0); }
 IMP(user32, DispatchMessageA) { u64 m = ARG(0); Window *w = window_of(M32(m)); RET(w ? send(c, w, M32(m + 4), M32(m + 8), M32(m + 12)) : 0); }
-IMP(user32, FillRect) { RET(1); }
+IMP(user32, FillRect) { RET(ARG(1) ? gdi_fill_rect((u32)ARG(0), (const s32 *)GP(ARG(1)), (u32)ARG(2)) : 0); } // (dc, RECT *, brush)

@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // Runs a lifted title under Node: node run-node.mjs title.wasm <the title's .exe> [title arguments...]
+// Environment: SW_* variables reach the runtime (SW_TRACE, SW_STRICT, SW_CLOCK, ...); SW_SAVES and SW_SESSION are the host's.
 // The main thread only supervises: the title's threads (its main thread too) run in workers, so an exit
 // from any of them ends the process even while others are blocked.
 import fs from 'node:fs';
 import path from 'node:path';
 import { Worker, isMainThread, workerData } from 'node:worker_threads';
+import { sessionSteps } from './session.mjs';
 
 const EXIT = new BroadcastChannel('series-web-exit');
 const GPU_OPEN = new BroadcastChannel('series-web-gpu'); // a title thread opened the GPU ring: the supervisor runs the null back end
@@ -21,11 +23,14 @@ if (isMainThread) {
   const walk = (d, rel) => { let es = []; try { es = fs.readdirSync(d, { withFileTypes: true }); } catch {} for (const e of es) { const p = path.join(d, e.name), r = rel ? `${rel}/${e.name}` : e.name; if (e.isDirectory()) walk(p, r); else store.push({ name: `pls/${r}`, data: fs.readFileSync(p) }); } };
   if (saves) walk(saves, '');
   EXIT.onmessage = (e) => { process.exit(e.data); };
+  // SW_SESSION=<session.json>: the runtime's session player gets its steps (rt/win32/input.c)
+  const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => k.startsWith('SW_')));
+  if (process.env.SW_SESSION) env.SW_SESSION_STEPS = sessionSteps(JSON.parse(fs.readFileSync(process.env.SW_SESSION, 'utf8')));
   GPU_OPEN.onmessage = async (e) => {
     const { startNull } = await import('./gpu/null.js');
     startNull(memory, e.data, { dir, log: (s) => fs.writeSync(2, `series-web: ${s}\n`) });
   };
-  new Worker(new URL(import.meta.url), { workerData: { t0: performance.timeOrigin, module, memory, dir, tids, tid: 0, saves, store, args, env: Object.fromEntries(Object.entries(process.env).filter(([k]) => k.startsWith('SW_'))) },
+  new Worker(new URL(import.meta.url), { workerData: { t0: performance.timeOrigin, module, memory, dir, tids, tid: 0, saves, store, args, env },
     resourceLimits: { stackSizeMb: STACK_MB } }).on('error', (e) => { console.error(e); process.exit(121); });
 } else {
   const { module, memory, dir, tids, tid, args, env, saves, store, t0 } = workerData;
