@@ -8,6 +8,9 @@
 #   win32    the 32-bit titles in Node: hello, and the x87 title against what it printed under Wine
 #            (fixtures/x87/expected.txt; tools/oracle-wine/oracle.sh run makes it again)
 #   chrome   hello, threads and cxx again in headless Chrome (WebGPU on SwiftShader), and the 32-bit titles
+#   nd       Narbacular Drop, when the installed game is there (ND: its folder; default: the oracle's prefix):
+#            built with its recipe and run in strict mode until it asks for Direct3D 9; its calls must be the
+#            ones it makes under Wine (recipes/narbacular-drop/traces/start.txt)
 #   doom     tests/gfx/doom.sh: Doom as a console title in Node and Chrome (minutes)
 #   xcl      tests/gfx/xcl.sh: XCL's console test title in Chrome, when it has been built into out/xcltitle-game
 #   audio    tests/audio/run.sh: the XMA2 / Opus decoders (builds FFmpeg's the first time)
@@ -70,12 +73,20 @@ chrome() {
   fi
   return $ok
 }
+nd() {
+  RECIPE=recipes/narbacular-drop/title.toml SPLIT=16 OPT=-O1 tools/build-title.sh "$ND/Narbacular Drop.exe" out/nd > out/nd.build.log 2>&1 || { echo "build failed (out/nd.build.log)"; return 1; }
+  SW_STRICT=1 SW_TRACE=2 timeout 300 node web/run-node.mjs out/nd/title.wasm "$ND/Narbacular Drop.exe" > out/nd.run.log 2>&1
+  grep -q 'Direct3DCreate9' out/nd.run.log || { echo "did not reach Direct3DCreate9:"; tail -3 out/nd.run.log; return 1; }
+  python3 -I tools/oracle-wine/trace-diff.py recipes/narbacular-drop/traces/start.txt out/nd.run.log --until Direct3DCreate9
+}
+ND=${ND:-$HOME/.series-web/oracle/prefix-narbacular-drop/drive_c/Program Files (x86)/Narbacular Drop}
 for s in ${*:-build node bench win32}; do case $s in
   build)  step build build ;;
   node)   LINES_SHOWN=8 step node tests/regress.sh ;;
   bench)  step bench bench ;;
   win32)  LINES_SHOWN=2 step win32 win32 ;;
   chrome) LINES_SHOWN=5 step chrome chrome ;;
+  nd)     if [ -f "$ND/Narbacular Drop.exe" ]; then step nd nd; else echo "skip  nd: the game is not installed (ND=$ND)"; fi ;;
   doom)   LINES_SHOWN=4 step doom tests/gfx/doom.sh ;;
   audio)  step audio tests/audio/run.sh ;;
   xcl)    if [ -f out/xcltitle-game/xcl_testtitle.exe ]; then LINES_SHOWN=3 step xcl tests/gfx/xcl.sh; else echo "skip  xcl: out/xcltitle-game/xcl_testtitle.exe is not built"; fi ;;

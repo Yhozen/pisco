@@ -38,8 +38,11 @@ void rt_cpuid(Cpu *c) {
   case 0: a = 0xD; b = 0x756E6547; d = 0x49656E69; cx = 0x6C65746E; break; // GenuineIntel
   case 1:
     a = 0x000906EA; b = (8u << 16) | (8u << 8);
-    cx = (1u << 0) | (1u << 1) | (1u << 9) | (1u << 13) | (1u << 19) | (1u << 20) | (1u << 23); // SSE3 PCLMUL SSSE3 CX16 SSE4.1 SSE4.2 POPCNT
-    d = (1u << 0) | (1u << 4) | (1u << 8) | (1u << 15) | (1u << 23) | (1u << 24) | (1u << 25) | (1u << 26); // FPU TSC CX8 CMOV MMX FXSR SSE SSE2
+    { unsigned f = rt_cpu_features; // the title's recipe may leave features out (an old title must not pick MMX paths)
+      cx = (f & CPU_SSE3 ? 1u << 0 : 0) | (f & CPU_PCLMUL ? 1u << 1 : 0) | (f & CPU_SSSE3 ? 1u << 9 : 0) | (f & CPU_CX16 ? 1u << 13 : 0)
+         | (f & CPU_SSE41 ? 1u << 19 : 0) | (f & CPU_SSE42 ? 1u << 20 : 0) | (f & CPU_POPCNT ? 1u << 23 : 0);
+      d = (f & CPU_FPU ? 1u << 0 : 0) | (f & CPU_TSC ? 1u << 4 : 0) | (f & CPU_CX8 ? 1u << 8 : 0) | (f & CPU_CMOV ? 1u << 15 : 0)
+        | (f & CPU_MMX ? 1u << 23 : 0) | (f & CPU_FXSR ? 1u << 24 : 0) | (f & CPU_SSE ? 1u << 25 : 0) | (f & CPU_SSE2 ? 1u << 26 : 0); }
     break;
   case 0x80000000: a = 0x80000004; break;
   case 0x80000001: cx = 1u << 0; d = (1u << 11) | (1u << 20) | (1u << 29); break; // LAHF; SYSCALL NX LM

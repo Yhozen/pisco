@@ -265,6 +265,27 @@ Milestone M1. The lifter now reads PE32 and lifts 32-bit x86; the runtime builds
 - **The game lifts**: 349,540 instructions, 96 % of `.text`, all 88 jump tables; what is left out is MMX and
   3DNow only ([narbacular-drop.md](narbacular-drop.md)).
 
+### 3.13 The game starts: a Win32 process for a 32-bit guest (2026-11-24)
+Milestone M2. Narbacular Drop's own code now runs from its entry point to the moment it asks for Direct3D 9,
+making the same calls as under Wine.
+- **A profile for Windows desktop titles**: `tools/build-title.sh` links the core of `rt/` plus `rt/win32/`
+  and leaves the console's libraries out (`PROFILE`; 32-bit titles get `win32` by default). Nothing was moved:
+  the console profile is the list of files it always was.
+- **`rt/win32/`**: the start-up side of kernel32 (Windows XP's version numbers, start-up information, an
+  environment, `GetStringTypeW` / `LCMapStringW` / `CompareStringA` over code page 1252), user32 (window
+  classes, one top-level window, and the messages Windows sends while a window is created, sized and shown,
+  delivered by calling the game's window procedure), an empty registry, GDI object handles.
+- **The recipe starts to matter**: `recipes/narbacular-drop/title.toml` tells the build the virtual CPU's
+  features (a Pentium without MMX, so D3DX stays on its x87 code), and that the shipped `fmod.dll` is the
+  runtime's to answer (`lifter --builtin`).
+- **Comparing with Wine call by call** (`tools/oracle-wine/trace-diff.py`): both traces become the sequence
+  of function names with repeats folded, and the first difference is shown with the calls around it. Wine's
+  side is recorded once into a small file (`recipes/narbacular-drop/traces/start.txt`: names and counts), so
+  the check needs neither Wine nor its 800 MB log.
+- **Result**: the first run stopped at the C runtime's own "R6028 - unable to initialize heap"; with the layer
+  in place the trace matched Wine's for 41 steps, then differed in one place (R23); after that fix, all 81
+  steps up to `Direct3DCreate9`, in strict mode.
+
 ## 4. Roadblocks
 
 ### Resolved
@@ -292,6 +313,8 @@ Milestone M1. The lifter now reads PE32 and lifts 32-bit x86; the runtime builds
 | R20 | `fxch st(i)` exchanged st(0) with itself | the emitter read the first operand, which is always st(0) | the last operand; found when the 32-bit x87 work compared against Wine (no 64-bit test title used it) |
 | R21 | The 32-bit `hello` crashed under Wine itself | Rust's `raw-dylib` imports stdcall functions under their decorated names (`_WriteFile@20`) on x86; kernel32 exports plain names | `import_name_type = "undecorated"`, and Wine's crash debugger turned off so a crash ends the run instead of waiting |
 | R22 | 64-bit division in a 32-bit program with no C runtime | the compiler calls Visual C++'s helpers (`__aulldiv`, ...: arguments on the stack, removed by the callee) | thunks in the fixture around a shift-and-subtract division |
+| R23 | Five calls Wine never showed | the game's C runtime made a stack-protection cookie from the clock, the process and thread ids, the tick count and the performance counter | Windows' loader sets the cookie named in the image's load configuration directory, and so does Wine; now ours does too (a fixed value) |
+| R24 | Wine's trace lacks some calls altogether | thread and process ids, the last error, locks, interlocked operations and the performance counter never appear in a relay trace | the comparison leaves those out of our side too; the list is in `trace-diff.py`, from a whole session's trace |
 
 ### Open
 | # | Roadblock | Why it matters | Plan |
@@ -340,6 +363,7 @@ Milestone M1. The lifter now reads PE32 and lifts 32-bit x86; the runtime builds
 | XCL console title | 50 / 50 checks in Chrome (WebGPU), 46 / 50 in Node (no pixels there) |
 | Our test titles | hello 7/7, threads 9/9, C++ exceptions 7/7, DLL 7/7, benchmark checksums 5/5 |
 | 32-bit test titles | hello (i686) 7/7; `fixtures/x87` 27 lines equal Wine's output; both in Node and Chrome |
+| Narbacular Drop, started | 274 calls from the entry point to `Direct3DCreate9`: the same 81 folded steps as under Wine |
 | Narbacular Drop, lifted | 3,955 functions, 349,540 instructions, 88 jump tables, 96.2 % of `.text`; 8,279 MMX / 3DNow instructions not lifted; 3 indirect jumps unresolved (C++ exception code) |
 | Doom (console title) | 871 functions, 37 jump tables, 0 unlifted; 7,156-frame timedemo matches native on all 7,123 frames native draws deterministically, in Node and read back from WebGPU in Chrome; ~35 fps in headless Chrome on SwiftShader |
 | Runtime imports implemented | 464 functions (before graphics) plus the D3D12 / D3D12.X objects, XAudio2 and GameInput readings across kernel32, ntdll, msvcrt, ucrtbase, kernelx, XMem, XGameRuntime, user32, DWM, GameInput, oleaut32, advapi32 |
@@ -359,6 +383,9 @@ Milestone M1. The lifter now reads PE32 and lifts 32-bit x86; the runtime builds
 | `fixtures/` | our own test titles (sources; built binaries are ignored) |
 | `tools/oracle-wine/` | the Wine oracle: prefix, run, session player, trace summaries |
 | `tools/setup-toolchain.sh`, `tests/run.sh` | the toolchains outside the repository; every test title, one line per check |
-| `recipes/<title>/` | per-title files: session scripts now, the recipe later |
+| `rt/win32/` | the Windows desktop layer: start-up kernel32, user32, registry, GDI, Direct3D 9 (a placeholder so far) |
+| `tools/stdcall-sizes.sh`, `tools/recipe-gen.py` | 32-bit builds: what each import removes from the stack; what the recipe says, for the runtime |
+| `fixtures/x87/` | the 32-bit x87 title and what it prints under Wine |
+| `recipes/<title>/` | per-title files: the recipe, session scripts, Wine's recorded call sequences |
 | `docs/` | this log, status, first-run runbook, memory measurements, the Narbacular Drop census |
 

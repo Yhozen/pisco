@@ -183,7 +183,7 @@ void rt_call(Cpu *c, u64 t) {
       R[RSP] += pop;
       return;
     }
-    if (rt_trace > 1) rt_log("[%u] %s", THREAD(c)->id, import_name_of[i]);
+    if (rt_trace > 1) rt_log("[%u] %s ret=%08llx", THREAD(c)->id, import_name_of[i], (u64)MP(R[RSP])); // as Wine's relay trace names the caller
     import_fn[i](c);
     R[RSP] += pop;
     return;
@@ -417,6 +417,22 @@ u64 rt_module_export(const ModuleDef *m, const char *name) {
   return b + M32(b + funcs + 4ull * idx);
 }
 
+// Windows' loader fills in the stack-protection cookie an image names in its load configuration directory, so
+// the image's own start-up code finds it set and does not make one from the clock, the thread id and the
+// performance counter. We do the same, with a fixed value: runs stay the same from one to the next.
+static void set_security_cookie(const ModuleDef *m) {
+  u8 h[1024];
+  if (host_read_file(m->name, (u32)strlen(m->name), 0, sizeof h, (u64)(uptr)h) != sizeof h) return;
+  u32 pe; memcpy(&pe, h + 0x3C, 4);
+  if (pe > sizeof h - 0x100 || memcmp(h + pe, "PE\0\0", 4)) return;
+  u16 magic; memcpy(&magic, h + pe + 24, 2);
+  if (magic != 0x10B) return; // PE32 only
+  u32 rva, size; memcpy(&rva, h + pe + 24 + 96 + 8 * 10, 4); memcpy(&size, h + pe + 24 + 96 + 8 * 10 + 4, 4);
+  if (!rva || size < 64) return;
+  u32 cookie = M32(m->base + rva + 60); // IMAGE_LOAD_CONFIG_DIRECTORY32.SecurityCookie: the variable's address
+  if (cookie >= m->base && cookie < m->base + m->size) M32(cookie) = 0x5EC0C1E5u;
+}
+
 static void load_modules(void) {
   for (unsigned k = 0; k < rt_module_count; k++) {
     const ModuleDef *m = &rt_modules[k];
@@ -425,6 +441,9 @@ static void load_modules(void) {
       if (n && host_read_file(m->name, (u32)strlen(m->name), m->sections[i].off, n, va) != n) rt_fatal("cannot read section %u of %s", i, m->name);
     }
     for (unsigned i = 0; i < m->reloc_count; i++) MP(m->relocs[i]) += m->base - m->file_base;
+#if GUEST_BITS == 32
+    set_security_cookie(m);
+#endif
     if (m->tls_dir) M32(MP(m->tls_dir + 2 * PTR_SIZE)) = k; // the module's TLS index
   }
   unsigned missing = 0;

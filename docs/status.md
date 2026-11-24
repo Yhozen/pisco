@@ -38,8 +38,8 @@ Wine at run time). Wine is the oracle it is compared with. What the game needs, 
 |---|---|---|---|
 | M0 | Groundwork: toolchain script, licence map, the Wine oracle, the census | fixtures and Doom pass again; the oracle replays the session from a fresh prefix; the census answers the open questions | **done** (2026-11-24) |
 | M1 | 32-bit lifter and CPU | all 91 indirect jumps of the game resolved, only MMX / SSE / 3DNow left unlifted; `hello32` and an x87 title print what they print under Wine | **done** (2026-11-24): `hello` as a 32-bit program passes 7/7 and `fixtures/x87` prints the 27 lines it prints under Wine, in Node and in headless Chrome. On the game: 349,540 instructions lifted, all 88 jump tables recovered, 8,279 MMX / 3DNow instructions left out. 3 indirect jumps stay unresolved: they are not tables but the C++ exception machinery's jumps (see below) |
-| M2 | Win32 process for a 32-bit guest | the game reaches `Direct3DCreate9` under `SW_STRICT=1` with the same import sequence as under Wine | next |
-| M3 | Headless main loop (null GPU, DirectInput, silent FMOD, virtual clock, session player) | the session reaches the level in Node; Direct3D method counts equal Wine's | |
+| M2 | Win32 process for a 32-bit guest | the game reaches `Direct3DCreate9` under `SW_STRICT=1` with the same import sequence as under Wine | **done** (2026-11-24): the game runs its C runtime's start-up, reads `File.Ore`, registers its class, creates and shows its window, and calls `Direct3DCreate9` from the same address as under Wine. Its calls up to there are Wine's: 81 steps, repeats folded (`tests/run.sh nd`). Our Direct3D 9 then declines; the game shows its own message box and exits cleanly |
+| M3 | Headless main loop (null GPU, DirectInput, silent FMOD, virtual clock, session player) | the session reaches the level in Node; Direct3D method counts equal Wine's | next |
 | M4 | Pixels: Direct3D 9 on WebGPU | checkpoint screenshots match Wine's in headless Chrome | |
 | M5 | Input, sound, persistence | a scripted session places portals; music in the captured video; files survive a reload | |
 | M6 | Recipes and images | `sw build` + `sw run` from a clean checkout; identical digests on a second build | |
@@ -50,7 +50,14 @@ first level; gdi32 text is needed (memory DCs, DIB sections, a real font); Unisc
 to GDI). The runtime's stack sits where the game's fixed image must load (`0x400000`), so the 32-bit profile
 needs its own memory layout.
 
-What 32-bit titles have now (M1): the lifter reads PE32 and lifts 32-bit code (`title.env` tells the build the
+What Windows desktop titles have now (M2): a build profile of their own (`PROFILE=win32`: the core of `rt/`
+plus `rt/win32/`, without the console's libraries); `rt/win32/` with the start-up side of kernel32 (version,
+environment, code page 1252 tables), user32 (classes, one window, the messages of creating, sizing and showing
+it, sent to the title's window procedure), an empty registry, GDI objects, and a Direct3D 9 that only reports;
+the loader sets an image's security cookie, as Windows does; a recipe (`recipes/<title>/title.toml`) gives the
+build the virtual CPU's features, registry values and the shipped DLLs the runtime answers for.
+
+What 32-bit titles have since M1: the lifter reads PE32 and lifts 32-bit code (`title.env` tells the build the
 width); the runtime is built per guest width (`-DGUEST_BITS=32`: arguments on the stack, stdcall clean-up from
 `tools/stdcall-sizes.sh`, the TEB on `fs`, 4-byte loader writes); a low image gets a gap between the runtime's
 stack and its data ([memory.md](memory.md)). Not yet for 32-bit guests: exception dispatch (the three

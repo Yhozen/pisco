@@ -1,0 +1,23 @@
+# The recipe for Narbacular Drop (2005, DigiPen). So far the build reads [cpu] and [registry]
+# (RECIPE=recipes/narbacular-drop/title.toml tools/build-title.sh ...); the rest is what the image builder will use.
+name = "narbacular-drop"
+from = "base/win32-x86:1"
+
+[source]
+# the user's own installer: never stored in the repository
+file = "narbacular_drop_setup.exe"
+sha256 = "0966948f956c5e9362d465e749a70dbfd2be1baadd7104e67b257d73248d7121"
+extract = "innosetup"
+
+[run]
+exe = 'C:\Program Files\Narbacular Drop\Narbacular Drop.exe'
+display = "640x480"
+
+[cpu]
+# A Pentium without MMX: D3DX links hand-written MMX, 3DNow and SSE paths the lifter does not take; without
+# these features it runs its plain x87 code.
+features = ["fpu", "tsc", "cx8"]
+
+[dll]
+# the shipped fmod.dll is UPX-packed; the runtime's own FMOD answers instead
+"fmod.dll" = "builtin"

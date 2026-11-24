@@ -105,6 +105,25 @@ When `fmod.dll` beside it is the unpacked one, it lifts too (78,137 instructions
 its code): running the game's own FMOD is a real alternative to implementing its 33 functions. The packed
 DLL as shipped is not liftable; a recipe has to unpack it or leave it out.
 
+## Where it gets to in our runtime (M2)
+
+```sh
+RECIPE=recipes/narbacular-drop/title.toml SPLIT=16 OPT=-O1 tools/build-title.sh "<folder>/Narbacular Drop.exe" out/nd
+SW_STRICT=1 SW_TRACE=2 node web/run-node.mjs out/nd/title.wasm "<folder>/Narbacular Drop.exe" > out/nd.run.log
+python3 tools/oracle-wine/trace-diff.py recipes/narbacular-drop/traces/start.txt out/nd.run.log --until Direct3DCreate9
+```
+
+The game's own start-up code runs: its C runtime makes its heap, reads the environment and builds its character
+tables; the game reads all of `File.Ore`, looks for its three folders, registers `MyWndClass`, creates a 640x480
+window, sizes it to a 640x480 client area, centres and shows it, then calls `Direct3DCreate9(32)`. Up to that
+call its 274 calls are, with repeats folded, the same 81 steps as under Wine (434 calls there: the counts
+differ where the environment does). Direct3D 9 is not implemented yet, so the game shows its message box
+("Minimum Direct3D initialization failed...") and exits with code 0.
+
+One difference had to be removed first: Windows' loader (and Wine's) sets the stack-protection cookie named in
+the image's load configuration; without that the C runtime made its own from the clock, the thread id and the
+performance counter, five calls Wine never showed.
+
 ## What this decides
 
 | Question | Answer |

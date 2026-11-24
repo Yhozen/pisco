@@ -63,7 +63,11 @@ IMP(kernel32, GetSystemInfo) {
   M32(p + 36) = 8664; M32(p + 40) = 65536; M16(p + 44) = 6;
 }
 // PF_* numbers: 3 MMX, 6 XMMI, 10 XMMI64, 13 SSE3, 36 SSSE3, 37 SSE4_1, 38 SSE4_2, 39 AVX
-IMP(kernel32, IsProcessorFeaturePresent) { u32 f = (u32)ARG(0); RET(f == 3 || f == 6 || f == 10 || f == 13 || f == 36 || f == 37 || f == 38 || f == 8 || f == 12); }
+IMP(kernel32, IsProcessorFeaturePresent) { // PF_*: 2 CMPXCHG8B, 3 MMX, 6 SSE, 8 RDTSC, 10 SSE2, 12 NX, 13 SSE3, 14 CMPXCHG16B, 36 SSSE3, 37 SSE4.1, 38 SSE4.2
+  u32 f = (u32)ARG(0); unsigned have = rt_cpu_features;
+  RET(f == 2 ? !!(have & CPU_CX8) : f == 3 ? !!(have & CPU_MMX) : f == 6 ? !!(have & CPU_SSE) : f == 8 ? !!(have & CPU_TSC) : f == 10 ? !!(have & CPU_SSE2) : f == 12 ? 1
+    : f == 13 ? !!(have & CPU_SSE3) : f == 14 ? !!(have & CPU_CX16) : f == 36 ? !!(have & CPU_SSSE3) : f == 37 ? !!(have & CPU_SSE41) : f == 38 ? !!(have & CPU_SSE42) : 0);
+}
 
 // ---- errors ----
 IMP(kernel32, GetLastError) { RET(M32(THREAD(c)->teb + TEB_LAST_ERROR)); }
@@ -363,7 +367,7 @@ IMP(kernel32, GetProcAddress) {
 // ---- strings and code pages ----
 IMP(kernel32, GetCommandLineA) { static u64 p; if (!p) { p = (uptr)strdup(rt_command_line); } RET(p); }
 IMP(kernel32, GetCommandLineW) { static u64 p; if (!p) p = (uptr)rt_widen_guest(rt_command_line); RET(p); }
-IMP(kernel32, GetACP) { RET(65001); }
+IMP(kernel32, GetACP) { RET(GUEST_BITS == 32 ? 1252 : 65001); } // an old 32-bit title's C runtime builds its tables from a single-byte code page
 IMP(kernel32, GetOEMCP) { RET(437); }
 IMP(kernel32, GetCPInfo) { u64 p = ARG(1); memset((void *)GP(p), 0, 20); M32(p) = 1; M8(p + 4) = '?'; RET(1); }
 IMP(kernel32, SetConsoleCP) { RET(1); }
@@ -373,6 +377,12 @@ IMP(kernel32, GetConsoleMode) { RET(0); }
 IMP(kernel32, MultiByteToWideChar) {
   const u8 *s = (const u8 *)GP(ARG(2)); s32 n = (s32)ARG(3); wchar16 *out = GWSTR(ARG(4)); s32 cap = (s32)ARG(5);
   if (n < 0) n = (s32)strlen((const char *)s) + 1;
+#if GUEST_BITS == 32
+  if ((u32)ARG(0) != 65001) { // a single-byte code page (1252, read as Latin-1): one character a byte
+    if (cap) { if (n > cap) { SET_LAST_ERROR(122); RET(0); return; } for (s32 i = 0; i < n; i++) out[i] = s[i]; }
+    RET(n); return;
+  }
+#endif
   s32 o = 0;
   for (s32 i = 0; i < n;) {
     u32 cp = s[i++];
@@ -385,6 +395,12 @@ IMP(kernel32, MultiByteToWideChar) {
 IMP(kernel32, WideCharToMultiByte) {
   const wchar16 *s = GWSTR(ARG(2)); s32 n = (s32)ARG(3); u8 *out = (u8 *)GP(ARG(4)); s32 cap = (s32)ARG(5);
   if (n < 0) n = (s32)rt_wcslen(s) + 1;
+#if GUEST_BITS == 32
+  if ((u32)ARG(0) != 65001) { // a single-byte code page: one byte a character, '?' for what it lacks
+    if (cap) { if (n > cap) { SET_LAST_ERROR(122); RET(0); return; } for (s32 i = 0; i < n; i++) out[i] = s[i] < 0x100 ? (u8)s[i] : '?'; }
+    RET(n); return;
+  }
+#endif
   s32 o = 0;
   for (s32 i = 0; i < n; i++) {
     u32 cp = s[i];

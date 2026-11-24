@@ -1798,12 +1798,14 @@ fn main() {
 fn lift() {
     let args: Vec<String> = std::env::args().collect();
     if args.len() < 3 {
-        eprintln!("usage: lifter <image.exe> <out.c> [--split N] [--base hex] [--entry hex]...");
+        eprintln!("usage: lifter <image.exe> <out.c> [--split N] [--base hex] [--entry hex]... [--builtin name.dll]...");
         std::process::exit(2);
     }
     let exe = std::path::Path::new(&args[1]);
     let dir = exe.parent().unwrap_or(std::path::Path::new("."));
     let listing: Vec<String> = std::fs::read_dir(dir).map(|d| d.filter_map(|e| e.ok()).map(|e| e.file_name().to_string_lossy().into_owned()).collect()).unwrap_or_default();
+    // --builtin name.dll: a DLL the title ships that is not lifted (the runtime answers for it: a recipe's choice)
+    let builtin: Vec<&String> = args.iter().enumerate().filter(|(_, a)| *a == "--builtin").filter_map(|(i, _)| args.get(i + 1)).collect();
     let mut mods: Vec<(String, Image)> = Vec::new();
     let mut queue = vec![exe.file_name().unwrap().to_string_lossy().into_owned()];
     while let Some(name) = queue.pop() {
@@ -1812,6 +1814,7 @@ fn lift() {
         let img = Image::load(&data).unwrap_or_else(|e| panic!("{name}: {e}"));
         for (_, imp) in &img.imports {
             let dll = imp.split('!').next().unwrap();
+            if builtin.iter().any(|b| b.eq_ignore_ascii_case(dll)) { continue; }
             if let Some(file) = listing.iter().find(|f| f.eq_ignore_ascii_case(dll)) {
                 queue.push(file.clone()); // a DLL the title ships: lifted with it
             }

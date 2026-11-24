@@ -54,6 +54,24 @@ python3 tools/oracle-wine/summarize.py out/oracle/narbacular-drop/relay/wine.log
 | `+d3d9` | every Direct3D 9 method with its arguments | about 0.5 GB for two minutes of play |
 | `+seh` | exceptions raised | |
 
+## Comparing a run of ours with Wine's
+
+```sh
+# once, from a +relay log: Wine's calls from the title's image, repeats folded (names and counts only)
+python3 tools/oracle-wine/trace-diff.py out/oracle/narbacular-drop/relay/wine.log --image 400000-57bfff \
+  --until Direct3DCreate9 --record recipes/narbacular-drop/traces/start.txt
+# then, any time: our run (SW_TRACE=2) against the recording; it shows the first place the two differ
+python3 tools/oracle-wine/trace-diff.py recipes/narbacular-drop/traces/start.txt out/nd.run.log --until Direct3DCreate9
+```
+
+Repeats of one function are folded because how often it is called in a row depends on the machine (the
+environment's size, the locale); which function comes next should not. Some calls never appear in Wine's
+trace at all (thread and process ids, locks, interlocked operations, the performance counter); the tool leaves
+them out of our side too.
+
+`oracle.sh run <title> <program.exe>` runs a console program to its end and prints its output: how the
+expected output of `fixtures/x87` is made.
+
 ## What a headless run needs (found the hard way)
 
 - **The X focus.** With no window manager nothing gives Wine's window the input focus, and without it Wine
@@ -64,5 +82,6 @@ python3 tools/oracle-wine/summarize.py out/oracle/narbacular-drop/relay/wine.log
 - **No Mono / Gecko** (`WINEDLLOVERRIDES`): their install prompts wait for a click nobody can give.
 - **A prefix whose first boot was interrupted is broken** (32-bit programs fail to load `kernel32`); `prefix`
   recreates one that has no `system.reg`.
+- **No crash debugger** (`winedbg.exe=d`): a crashing program otherwise waits in Wine's debugger for input.
 - **No sound device here**: FMOD's `FSOUND_Init` fails, so a title loads no sounds. A sound census needs a
   PulseAudio-compatible server first.
