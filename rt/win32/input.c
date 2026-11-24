@@ -9,7 +9,8 @@
 //   key <name> <ms> | keydown <name> | keyup <name> | shot <name>
 // A step starts when the one before it ends; `ms` 0 means the oracle's player's own default (150 ms for a click,
 // 120 ms for a key, 30 ms for every 12 pixels of a move). `shot` writes "checkpoint <name> frame <n>" with the
-// Direct3D calls made since the checkpoint before: where the oracle saves a screenshot.
+// Direct3D calls made since the checkpoint before, and marks the frame just presented for the host to save
+// (d3d9_gpu_shot): where the oracle saves a screenshot.
 #include "win32.h"
 #include "d3d9.h"
 
@@ -106,7 +107,7 @@ void session_frame(u32 frame) {
       case S_BUTTON: input_mouse_button((u32)s->a, s->b); break;
       case S_KEY: case S_KEYDOWN: input_key((u32)s->a, 1); break;
       case S_KEYUP: input_key((u32)s->a, 0); break;
-      case S_SHOT: { char title[80]; snprintf(title, sizeof title, "checkpoint %s frame %u", s->name, frame); d3d9_stats_print(title, 1); break; }
+      case S_SHOT: { char title[80]; snprintf(title, sizeof title, "checkpoint %s frame %u", s->name, frame); d3d9_stats_print(title, 1); d3d9_gpu_shot(s->name); break; }
       }
     }
     u64 passed = now - step_start; if (passed > s->us) passed = s->us;

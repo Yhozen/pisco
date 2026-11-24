@@ -22,13 +22,15 @@ if (isMainThread) {
   const saves = process.env.SW_SAVES ? path.resolve(process.env.SW_SAVES) : null, store = [];
   const walk = (d, rel) => { let es = []; try { es = fs.readdirSync(d, { withFileTypes: true }); } catch {} for (const e of es) { const p = path.join(d, e.name), r = rel ? `${rel}/${e.name}` : e.name; if (e.isDirectory()) walk(p, r); else store.push({ name: `pls/${r}`, data: fs.readFileSync(p) }); } };
   if (saves) walk(saves, '');
-  EXIT.onmessage = (e) => { process.exit(e.data); };
+  // the null GPU back end's account of the explicit records (Direct3D 9): a run in which any was inconsistent fails
+  let gpu = null; const say = (s) => fs.writeSync(2, `series-web: ${s}\n`);
+  EXIT.onmessage = (e) => { const s = gpu?.summary(); if (s) say(s); process.exit(e.data || (gpu?.errors ? 119 : 0)); };
   // SW_SESSION=<session.json>: the runtime's session player gets its steps (rt/win32/input.c)
   const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => k.startsWith('SW_')));
   if (process.env.SW_SESSION) env.SW_SESSION_STEPS = sessionSteps(JSON.parse(fs.readFileSync(process.env.SW_SESSION, 'utf8')));
   GPU_OPEN.onmessage = async (e) => {
     const { startNull } = await import('./gpu/null.js');
-    startNull(memory, e.data, { dir, log: (s) => fs.writeSync(2, `series-web: ${s}\n`) });
+    gpu = startNull(memory, e.data, { dir, log: say });
   };
   new Worker(new URL(import.meta.url), { workerData: { t0: performance.timeOrigin, module, memory, dir, tids, tid: 0, saves, store, args, env },
     resourceLimits: { stackSizeMb: STACK_MB } }).on('error', (e) => { console.error(e); process.exit(121); });

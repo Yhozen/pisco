@@ -310,6 +310,38 @@ with nothing drawn: 6,256 frames in four seconds, the same log on every run.
 - **Result**: the first strict run after the layer was written went from the menu to the tutorial; three stops
   followed (R25 and R27 below, and a format question the probe had not asked).
 
+### 3.15 Pixels: fixed-function Direct3D 9 on WebGPU (2026-11-24)
+Milestone M4, the first part. In headless Chrome the game's frames appear, and the scripted session ends with a
+PNG of each of its 11 checkpoints that matches Wine's screenshot of it
+([narbacular-drop.md](narbacular-drop.md) has the table).
+- **A second front end on the same ring.** Direct3D 9 does not pretend to be Direct3D 12: it writes eight explicit
+  records in WebGPU's own terms (`rt/d3d12_cmd.h`: shader as WGSL text, sampler, pipeline with its vertex and bind
+  layouts, buffer write, texture write, pass, viewport, draw) and shares resources, present and marks with the
+  D3D12 records. The ring's writer moved to `rt/gpu_ring.c`, which both profiles link; `web/gpu/explicit.js` runs
+  the records inside `backend.js`, `web/gpu/records.js` reads them for both back ends.
+- **Shaders written by the runtime** (`rt/win32/d3d9_ffp.c`): Direct3D 9's fixed-function pipeline as a pure C
+  function from a state key to WGSL, one for the vertex stage (pretransformed or transformed, 1 to 4 blended world
+  matrices, lighting by up to 8 lights, material sources, fog, texture coordinates, points as quads) and one for
+  the fragment stage (one texture stage, alpha test by `discard`, fog). Built natively too, where naga validates
+  446 keys' worth (`tests/gfx/d3d9-ffp.sh`).
+- **Draws from state** (`rt/win32/d3d9_gpu.c`): keys, pipeline, a uniform block, texture and sampler, buffers,
+  made or found at each draw; fans drawn as indexed lists, point lists as instanced quads; buffers and textures
+  written when their `dirty` counters have moved, with the lock's promise (`DISCARD`, `NOOVERWRITE`) carried along
+  so that the back end knows whether a write may overtake the draws recorded before it. Direct3D 9's conventions
+  that are not WebGPU's are each settled in one place and listed at the top of that file.
+- **Order on WebGPU**: queue writes happen at once, passes only when submitted. The back end keeps one encoder a
+  frame and, for a write to something recorded draws still read, either submits first (an ordered write), hands
+  the buffer new storage (a discard), or just writes (an append). The game never needs any of it (it makes a new
+  vertex buffer for every batch of particles); a run with every buffer rewritten before every draw, both ways,
+  showed the two paths give the same frames.
+- **The hosts**: the page takes the runtime's settings as the Node host does (`SW_CLOCK`, the session's steps),
+  and saves the frame presented at each `shot` through the server; the null back end in Node checks every
+  explicit record for what WebGPU would refuse, and a run with an inconsistent record fails.
+- **Comparing pictures** (`tools/oracle-wine/shot-compare.py`): mean difference per channel, share of pixels over
+  a threshold, difference pictures; standard library only.
+- **Result**: the first frame drawn in Chrome was the menu as Wine draws it; nothing had to be corrected after
+  it. What took thought was the last level or two of difference on the still screens (R29).
+
 ## 4. Roadblocks
 
 ### Resolved
@@ -343,6 +375,8 @@ with nothing drawn: 6,256 frames in four seconds, the same log on every run.
 | R26 | A level frame had 9 indexed draws fewer than under Wine | D3DX copies each glyph from a GDI bitmap into a texture and draws nothing for a glyph whose bitmap is empty; our GDI draws no text yet | left as it is, measured (a box per glyph brings the calls back); real glyphs come with the pixels |
 | R27 | D3DX "loaded" Direct3D's debug DLL | module names were matched as substrings, so `d3d9d.dll` was `d3d9.dll` | desktop titles' DLL names are matched exactly |
 | R28 | The start-up test would have traced the main loop for five minutes | since M3 the game no longer stops at Direct3D | a session of one empty step (`SW_SESSION_STEPS='wait 0'`) ends the run at the first frame |
+| R29 | Still screens differed from Wine's by one to nine levels of 255, red and blue more than green | Wine's CPU has MMX and SSE and D3DX decodes and resamples pictures with them; the recipe's CPU has neither, and D3DX's plain code rounds differently | an oracle run with D3DX's processor-specific code turned off (three registry values it reads): the still screens then agree to one level, the rasterisers' rounding |
+| R30 | Is a difference in a moving scene an error? | the oracle's clock is real, ours virtual: a menu with flickering lights and a level with a walking creature are shot at other moments | measured what two runs of Wine differ by (more than ours differs from either), and took a series of shots to find the creature where the oracle has it |
 
 ### Open
 | # | Roadblock | Why it matters | Plan |
@@ -393,6 +427,7 @@ with nothing drawn: 6,256 frames in four seconds, the same log on every run.
 | 32-bit test titles | hello (i686) 7/7; `fixtures/x87` 27 lines equal Wine's output; both in Node and Chrome |
 | Narbacular Drop, started | 274 calls from the entry point to `Direct3DCreate9`: the same 81 folded steps as under Wine |
 | Narbacular Drop, menu to level | 6,256 frames (104 s of its time) in 4.2 s in Node; 7.2 M Direct3D 9 calls, 70 methods; 27 kinds of frame identical to Wine's, covering 94 % of Wine's 11,857 frames |
+| Narbacular Drop, drawn | in headless Chrome on SwiftShader: 529,685 draws in 8,650 passes over 6,256 frames, 31 vertex and 8 fragment shaders, 33 pipelines; about 4 minutes (menu 18 to 25 frames a second, still screens 60 to 75, level 13); still screens within 1 level of Wine's (with D3DX's plain code), menu and level within what two runs of Wine differ by |
 | Narbacular Drop, lifted | 3,955 functions, 349,540 instructions, 88 jump tables, 96.2 % of `.text`; 8,279 MMX / 3DNow instructions not lifted; 3 indirect jumps unresolved (C++ exception code) |
 | Doom (console title) | 871 functions, 37 jump tables, 0 unlifted; 7,156-frame timedemo matches native on all 7,123 frames native draws deterministically, in Node and read back from WebGPU in Chrome; ~35 fps in headless Chrome on SwiftShader |
 | Runtime imports implemented | 464 functions (before graphics) plus the D3D12 / D3D12.X objects, XAudio2 and GameInput readings across kernel32, ntdll, msvcrt, ucrtbase, kernelx, XMem, XGameRuntime, user32, DWM, GameInput, oleaut32, advapi32 |
@@ -404,15 +439,16 @@ with nothing drawn: 6,256 frames in four seconds, the same log on every run.
 | `crates/lifter` | the static recompiler (x86-64 PE → C), and its census output |
 | `crates/shaders` | console shader containers, RDNA2 decoder, `shader-census` |
 | `rt/` | the runtime: process, kernel32, files, VFS, msvcrt, ucrt, seh, gdk, `d3d12.c` (D3D12 / D3D12.X front end), `xaudio2.c` |
-| `web/gpu/` | the GPU back ends: `backend.js` (WebGPU), `null.js` (Node), `ring.js`, `cmd.gen.js` (from `rt/d3d12_cmd.h`) |
+| `web/gpu/` | the GPU back ends: `backend.js` (WebGPU) with `explicit.js` (the explicit records: Direct3D 9), `null.js` (Node), `ring.js`, `records.js`, `cmd.gen.js` (from `rt/d3d12_cmd.h`) |
+| `rt/gpu_ring.c` | the ring's writer, shared by the D3D12 and Direct3D 9 front ends |
 | `tools/shader-prep.mjs`, `tools/dxil-wgsl/` | DXIL shaders in a title → `shaders/<digest>.wgsl` (dxil-spirv + naga) |
 | `fixtures/doom/` | Doom as a console title: platform file, header, build script, reference build, scripted sessions, video script |
 | `web/run-node.mjs`, `web/browser/` | the hosts: Node, and the page + worker for browsers |
 | `tools/build-title.sh`, `tools/census.sh`, `tools/run-chrome.mjs`, `tools/serve.mjs` | build, census, headless Chrome (WebGPU on SwiftShader, recording, reloads), a server with cross-origin isolation that also records video |
 | `fixtures/` | our own test titles (sources; built binaries are ignored) |
-| `tools/oracle-wine/` | the Wine oracle: prefix, run, session player, trace summaries |
+| `tools/oracle-wine/` | the Wine oracle: prefix, run, session player, trace summaries, `shot-compare.py` (our screenshots against its) |
 | `tools/setup-toolchain.sh`, `tests/run.sh` | the toolchains outside the repository; every test title, one line per check |
-| `rt/win32/` | the Windows desktop layer: start-up kernel32, user32, registry, GDI, Direct3D 9 (a null device: `d3d9*.c`), DirectInput 8, the input state and session player, FMOD 3 (silent), `com.c` for COM objects |
+| `rt/win32/` | the Windows desktop layer: start-up kernel32, user32, registry, GDI, Direct3D 9 (`d3d9*.c`: the device and its state; `d3d9_ffp.c`: the fixed-function pipeline as WGSL; `d3d9_gpu.c`: clears, draws and presents as GPU ring records), DirectInput 8, the input state and session player, FMOD 3 (silent), `com.c` for COM objects |
 | `tools/gen-com-layout.py`, `tools/gen-d3d9-oracle.py` | generated headers: COM vtables from the mingw-w64 headers; the oracle's Direct3D 9 answers |
 | `web/session.mjs` | a session script as the text the runtime's player reads |
 | `tools/stdcall-sizes.sh`, `tools/recipe-gen.py` | 32-bit builds: what each import removes from the stack; what the recipe says, for the runtime |

@@ -352,7 +352,7 @@ static u32 buffer_lock(Cpu *c, Buffer9 *b) {
   u32 offset = (u32)ARG(1), size = (u32)ARG(2); u64 out = ARG(3);
   if (!out) return D3DERR_INVALIDCALL;
   if (offset > b->size || size > b->size - offset) { M32(out) = 0; return D3DERR_INVALIDCALL; }
-  b->locked++; if (!(ARG(4) & LOCK_READONLY)) b->dirty++;
+  b->locked++; if (!(ARG(4) & LOCK_READONLY)) { b->dirty++; d3d9_gpu_buffer_locked(b, offset, size, (u32)ARG(4)); }
   M32(out) = (u32)(uptr)(b->bits + offset); return D3D_OK;
 }
 #define BUF ((Buffer9 *)GP(ARG(0)))
@@ -446,6 +446,7 @@ IMP(d3d9, IDirect3DVertexDeclaration9_GetDeclaration) { // (D3DVERTEXELEMENT9 * 
 
 // ---- the end of an object: no reference and no use left ----
 void d3d9_destroy(Object9 *o) {
+  d3d9_gpu_release(o);
   switch (o->kind) {
   case K_SURFACE: surface_free((Surface9 *)o); return;
   case K_TEXTURE: { Texture9 *t = (Texture9 *)o; for (u32 i = 0; i < t->levels; i++) surface_free(t->surfaces[i]); free(t->surfaces); break; }

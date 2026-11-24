@@ -179,6 +179,89 @@ lights that were never set, what a recording does to the device). Its output and
 `rt/win32/d3d9_oracle.gen.h`. One answer mattered at once: `D32` is not a depth format there, so the game
 takes `D24X8`.
 
+## Pixels: Direct3D 9 on WebGPU (M4, the first part)
+
+```sh
+SW_STRICT=1 SW_CLOCK=16667 SW_SESSION=$S node tools/run-chrome.mjs out/nd/title.wasm "<folder>/Narbacular Drop.exe"   # out/nd/shots/<checkpoint>.png
+python3 tools/oracle-wine/shot-compare.py --table out/nd/shots out/oracle/narbacular-drop/d3d9                       # tests/run.sh ndgfx does both
+```
+
+In headless Chrome (WebGPU on SwiftShader: this machine has no GPU) the session plays to its end on the virtual
+clock, in strict mode, and the frame presented at each checkpoint is saved. Everything the game draws on the way
+is drawn: 529,685 draws in 8,650 passes over 6,256 frames, none left out, no WebGPU error.
+
+**How.** At each draw the device's state becomes a vertex key and a fragment key, and the runtime writes the two
+fixed-function shaders for them as WGSL (`rt/win32/d3d9_ffp.c`); with the vertex layout and the raster, depth and
+blend state they make a pipeline; matrices, lights, material and fog go into one uniform block. All of it travels
+as explicit records on the GPU ring (`rt/d3d12_cmd.h`: shader, sampler, pipeline, buffer and texture writes, pass,
+viewport, draw), beside the D3D12 records and through the same back end. Where Direct3D 9's conventions are not
+WebGPU's (the byte order of colours, pixel centres, the winding that is culled, depth bias units, fans, points,
+the alpha test) is written at the top of `rt/win32/d3d9_gpu.c`.
+
+**What the session needed**: 31 vertex shaders, 8 fragment shaders, 33 pipelines, 4 samplers.
+
+| Shaders | Keys |
+|---|---|
+| vertex, pretransformed (`XYZRHW`) | 3: with diffuse and texture coordinates, diffuse only, coordinates only |
+| vertex, world geometry and plain meshes (`XYZ\|NORMAL\|TEX1`) | 10, all with linear fog: lit by 0 to 4 point lights; the same with normalised normals for 0 to 3; one without coordinates (a mesh drawn with no texture) |
+| vertex, skinned meshes (declarations) | 16: 1 weight with 2 matrices, 3 weights with 2, 3 and 4 matrices, each lit by 0 to 3 lights |
+| vertex, particles | 2: point sprites scaled by distance, with and without a size in the vertex |
+| fragment | 8: `MODULATE` or `SELECTARG1` of texture and diffuse, alpha from the texture, from the diffuse colour or off, the alpha test `GREATER` or `GREATEREQUAL`, fog, a texture without alpha (the portals' targets), and no texture at all |
+
+**Against Wine**, the mean absolute difference of each colour channel (0 to 255) and the share of pixels where a
+channel differs by more than 16:
+
+| Checkpoint | Wine as it runs here | | Wine with D3DX's plain code | | Two runs of Wine | |
+|---|---|---|---|---|---|---|
+| | R G B | over 16 | R G B | over 16 | R G B | over 16 |
+| `menu` | 10.3 6.8 4.9 | 18.7 % | 8.9 5.8 4.3 | 15.4 % | 12.0 7.2 4.9 | 22.6 % |
+| `menu-play` | 7.2 4.7 3.5 | 9.1 % | 8.1 5.2 3.8 | 11.5 % | 8.9 6.6 4.9 | 11.9 % |
+| `intro` | 0.71 0.32 0.78 | 0 | 0.10 0.10 0.10 | 0 | 0 | 0 |
+| `intro-2` | 0.75 0.35 0.77 | 0 | 0.11 0.11 0.10 | 0 | 0 | 0 |
+| `intro-3` | 0.70 0.33 0.77 | 0 | 0.11 0.10 0.10 | 0 | 0 | 0 |
+| `controls` | 0.39 0.38 0.39 | 0 | 0.11 0.11 0.11 | 0 | 2.7 2.6 2.3 | 1.67 % |
+| `tutorial` | 0.33 0.27 0.37 | 0 | 0.07 0.07 0.07 | 0 | 0 | 0 |
+| `tutorial-2` | 0.40 0.35 0.42 | 0 | 0.09 0.09 0.09 | 0 | 0 | 0 |
+| `tutorial-3` | 0.28 0.19 0.32 | 0 | 0.04 0.04 0.04 | 0 | 0 | 0 |
+| `tutorial-4` | 0.24 0.16 0.27 | 0 | 0.04 0.04 0.04 | 0 | 0 | 0 |
+| `level` | 1.4 1.0 0.9 | 0.84 % | 1.2 1.0 0.9 | 0.52 % | 2.5 2.3 2.4 | 1.70 % |
+
+- **The eight still screens** (story, controls, tutorial: one textured quad of pretransformed vertices each) are
+  Wine's to within 9 levels at the worst pixel, and to within **one level** once Wine's D3DX runs the code ours
+  runs. (`controls` has a two-frame cartoon along its top, which one of Wine's runs caught in its other frame:
+  that is the difference between Wine's own two.) The oracle's CPU has MMX and SSE and D3DX uses them to decode and resample the pictures; the recipe's CPU
+  has neither, and D3DX's plain code rounds differently (red and blue twice as much as green: the colour
+  conversion of the JPEG files). With D3DX's processor-specific code turned off in the oracle
+  ([`tools/oracle-wine/README.md`](../tools/oracle-wine/README.md)) the largest difference left is 1, on 9 to 24 %
+  of the pixels, in both directions: the two rasterisers' rounding.
+- **The menu** is a lit corridor with flickering torches, a swinging lantern, the title, four lines of text (they
+  are textures of the game's own, not GDI's) and the game's cursor. Ours is the same picture, with the title, the
+  text and the cursor at the same pixels (the title's letters, opaque, are within one level on 94 % of the box
+  around them); the corridor, and what is blended over it, differs by its lighting at the moment of the shot. Two
+  runs of Wine differ from each other by more than ours differs from either.
+- **The level** (through a grate, three scenes a frame: two portal views into textures, then the screen) is the
+  same picture. What differs is what moves: two flames (point sprites) and a creature (a skinned mesh) that walks
+  across the room and is elsewhere at the moment of our shot; a series of shots half a second apart shows it at
+  the oracle's place a second or so earlier (the oracle's clock runs while it loads, ours does not).
+- **Absent**: what D3DX's font draws in the level (9 draws a frame under Wine, none here until GDI draws glyphs).
+  Nothing of it shows in the oracle's shot at this checkpoint either.
+
+**Speed** on SwiftShader, 4 cores: the whole session in about four minutes (237 to 264 s); the menu at 16 to 20
+frames a second (about 170 draws a frame), the still screens at 60 to 75, the level at 12 to 13 (as many draws, in
+three scenes with their clears). With the draws themselves left out the menu's frames go by at 115 a second, and
+capping the anisotropy the game asks for (16) changes nothing: the time is the software rasteriser's, draw by draw.
+
+**Checked besides**: the null back end in Node finds all of the session's records consistent (`tests/run.sh nd`);
+every shader the session made, and those of 446 other state keys, pass naga (`tests/run.sh ffp`); rewriting
+every vertex buffer before every draw, as an ordered write (about 5,800 submits more in a shorter session) or as
+a discard (about 17,500 buffers given new storage), gives the same frames bit for bit.
+
+**Not drawn**, because the session never asks: texture stages past the first, the volume texture (created, never
+bound to a draw here), specular lighting, spot and directional lights (every light is a point light), table fog,
+stencil, user clip planes, `DrawPrimitiveUP`, a `Clear` of part of a target. States the game sets that change
+nothing here: `DITHERENABLE`, `LASTPIXEL`, `CLIPPING`, `WRAP0`, the multisample and patch states, `MIPMAPLODBIAS`,
+`MAXMIPLEVEL`, `SRGBTEXTURE`, the bump-mapping stage states, `RESULTARG`.
+
 ## What this decides
 
 | Question | Answer |

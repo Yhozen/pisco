@@ -37,11 +37,12 @@ session describes what a player does, not how a host does it.
 | `{"key": "w", "ms": n}` or `{"key": "w", "down": true\|false}` | a key by X keysym name, or `space`, `enter`, `esc`, `up`, ... |
 | `{"shot": "name"}` | save `<name>.png` (the title's client area) and `<name>.full.png` (the screen) |
 
-In our own runtime the same file drives the title through `SW_SESSION=<session.json>` (the Node host; the
-steps reach the runtime's session player, `rt/win32/input.c`). Time there is the title's clock: with
-`SW_CLOCK=16667` it is virtual and moves by that many microseconds a presented frame, so `wait` counts frames and
-a run is the same every time. `focus` does nothing (the title's window always has the focus), and `shot` writes a
-line `checkpoint <name> frame <n>` with the Direct3D 9 calls made since the checkpoint before.
+In our own runtime the same file drives the title through `SW_SESSION=<session.json>` (the Node host and
+`tools/run-chrome.mjs`; the steps reach the runtime's session player, `rt/win32/input.c`). Time there is the
+title's clock: with `SW_CLOCK=16667` it is virtual and moves by that many microseconds a presented frame, so
+`wait` counts frames and a run is the same every time. `focus` does nothing (the title's window always has the
+focus), and `shot` writes a line `checkpoint <name> frame <n>` with the Direct3D 9 calls made since the checkpoint
+before. In headless Chrome the frame presented at a `shot` is also saved, as `<the wasm's folder>/shots/<name>.png`.
 
 ## Traces
 
@@ -101,6 +102,37 @@ SW_STRICT=1 SW_CLOCK=16667 SW_D3D9_STATS=1 SW_D3D9_FRAMES=1 SW_SESSION=recipes/n
   node web/run-node.mjs out/nd/title.wasm '<folder>/Narbacular Drop.exe' > out/nd.session.log
 python3 tools/oracle-wine/d3d9-compare.py out/oracle/narbacular-drop/d3d9/wine.log out/nd.session.log
 ```
+
+## Comparing screenshots
+
+`shot-compare.py` sets our PNG of a checkpoint against the oracle's: the mean absolute difference of each colour
+channel (0 to 255), the share of pixels where a channel differs by more than a threshold (16 unless told), and the
+largest difference. Only Python's standard library (PNGs are read with `zlib`).
+
+```sh
+python3 tools/oracle-wine/shot-compare.py out/nd/shots/intro.png out/oracle/narbacular-drop/d3d9/intro.png
+python3 tools/oracle-wine/shot-compare.py --table out/nd/shots out/oracle/narbacular-drop/d3d9 --diff out/nd/shots-diff   # every checkpoint; --diff: the differences as pictures
+```
+
+A still screen should be all but equal. A scene that moves (a menu with flickering torches, a level with flames and
+a creature walking) is shot at another moment of its animation: the oracle's clock is the wall's, ours is virtual.
+Two of the oracle's own shots of such a scene (two runs, or a second apart) say how much that alone is worth.
+
+**The oracle's CPU is not the title's.** Wine runs on this machine's processor, with MMX and SSE; a recipe may give
+our virtual CPU less (Narbacular Drop's has neither). D3DX decodes and resamples a title's images with
+processor-specific code, and its plain code rounds differently: under Wine every still screen then differs from
+ours by a level or two for that reason alone. For a like-for-like reference, turn that code off in the oracle
+(three values D3DX reads, in the registry's 32-bit view), play the session into a folder of its own, and take the
+values out again:
+
+```sh
+for v in DisableD3DXPSGP DisablePSGP DisableMMX; do $O reg narbacular-drop add 'HKLM\Software\Microsoft\Direct3D' /v $v /t REG_DWORD /d 1 /f /reg:32; done
+export ORACLE_RUN=$PWD/out/oracle/narbacular-drop/plain
+$O start narbacular-drop "$EXE" && $O play narbacular-drop $S; $O stop narbacular-drop; unset ORACLE_RUN
+$O reg narbacular-drop delete 'HKLM\Software\Microsoft\Direct3D' /f /reg:32
+```
+
+`tests/gfx/nd.sh` compares with that folder when it is there (the still screens then agree to one level in 255).
 
 ## What a headless run needs (found the hard way)
 

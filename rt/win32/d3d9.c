@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-// Direct3D 9 for Windows desktop titles, as a null device: the Direct3D object (the adapter and what it
-// supports), the device and its swap chain, reference counting, and the statistics. Resources are in
-// d3d9_resources.c, the device's state and draws in d3d9_state.c, state blocks in d3d9_stateblock.c.
+// Direct3D 9 for Windows desktop titles: the Direct3D object (the adapter and what it supports), the device and
+// its swap chain, reference counting, and the statistics. Resources are in d3d9_resources.c, the device's state
+// and draws in d3d9_state.c, state blocks in d3d9_stateblock.c; what reaches the GPU goes through d3d9_gpu.c.
 // The adapter is the oracle's: its identity, modes, format support and capabilities are what Wine answered on
 // the machine the reference session was recorded on (d3d9_oracle.gen.h), so a title takes the same decisions.
-// Nothing is drawn yet: Present counts a frame, moves the virtual clock and lets the session player act.
+// Present shows the back buffer (d3d9_gpu.c), counts a frame, moves the virtual clock and lets the session player act.
 #include <stdarg.h>
 #include "d3d9.h"
 #include "win32.h"
@@ -95,7 +95,7 @@ static void frame_stats(u32 frame) {
   frame_flush();
   Text swap = frame_last; frame_last = frame_text; frame_text = swap; frame_first = frame_end = frame;
 }
-static void at_exit(void) { frame_flush(); if (d3d9_stats) d3d9_stats_print("== Direct3D 9", 0); }
+static void at_exit(void) { frame_flush(); if (d3d9_stats) { d3d9_stats_print("== Direct3D 9", 0); d3d9_gpu_stats(); } d3d9_gpu_finish(); }
 
 // ---- references ----
 static void device_destroy(Device9 *d);
@@ -297,6 +297,7 @@ IMP(d3d9, IDirect3DDevice9_GetSwapChain) {
 // Present(source rectangle, destination rectangle, window, dirty region): the end of a frame
 static u32 present(Device9 *d) {
   d->frames++;
+  d3d9_gpu_present(d);
   if (frame_log) frame_stats(d->frames);
   rt_clock_advance_frame();
   session_frame(d->frames);

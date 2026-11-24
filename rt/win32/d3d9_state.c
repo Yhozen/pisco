@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-// Direct3D 9, the null device's state: render, texture stage and sampler states, transforms, lights, material,
+// Direct3D 9, the device's state: render, texture stage and sampler states, transforms, lights, material,
 // viewport, vertex format and streams, bound textures, targets; scenes, clears and draws. A draw is checked
-// against what is bound and counted; it produces no pixels. Between BeginStateBlock and EndStateBlock every
+// against what is bound and counted, then handed to d3d9_gpu.c with the state as it is. Between BeginStateBlock and EndStateBlock every
 // Set* goes to the block being recorded and leaves the device's state alone, as Direct3D does (d3d9probe.txt).
 // A new device starts in the state the oracle's starts in (d3d9_oracle.gen.h).
 #include "d3d9.h"
@@ -320,6 +320,8 @@ IMP(d3d9, IDirect3DDevice9_Clear) {
   if ((ARG(1) != 0) != (ARG(2) != 0)) { RET(D3DERR_INVALIDCALL); return; }
   if ((flags & 6) && !d->depth) { RET(D3DERR_INVALIDCALL); return; }
   if ((flags & 4) && d->depth->desc.format != 75 && d->depth->desc.format != 73 && d->depth->desc.format != 79 && d->depth->desc.format != 83) { RET(D3DERR_INVALIDCALL); return; } // only D24S8, D15S1, D24X4S4, D24FS8 have stencil bits
+  if (ARG(1)) { static int told; if (!told++) com_unsure("Direct3D 9: Clear of %u rectangles clears the whole target", (u32)ARG(1)); }
+  d3d9_gpu_clear(d, flags, (u32)ARG(4), MF32(R[RSP] + 4 + 4 * 5), (u32)ARG(6));
   RET(D3D_OK);
 }
 IMP(d3d9, IDirect3DDevice9_ValidateDevice) { STAT(device_ValidateDevice); if (ARG(1)) M32(ARG(1)) = 1; RET(D3D_OK); }
@@ -349,6 +351,7 @@ IMP(d3d9, IDirect3DDevice9_DrawPrimitive) { // (primitive type, first vertex, pr
   const Buffer9 *b = s->streams[0].buffer;
   if (b && s->streams[0].stride) { u32 have = (b->size - (s->streams[0].offset < b->size ? s->streams[0].offset : b->size)) / s->streams[0].stride; if ((u32)ARG(2) + n > have) out_of_range("vertices", (u32)ARG(2) + n, have); }
   else if (!b) out_of_range("vertices of a stream that has no buffer", n, 0);
+  d3d9_gpu_draw(d, type, 0, (u32)ARG(2), (u32)ARG(3), 0);
   RET(D3D_OK);
 }
 IMP(d3d9, IDirect3DDevice9_DrawIndexedPrimitive) { // (primitive type, base vertex, lowest index, vertex count, first index, primitive count)
@@ -363,14 +366,16 @@ IMP(d3d9, IDirect3DDevice9_DrawIndexedPrimitive) { // (primitive type, base vert
   const Buffer9 *b = s->streams[0].buffer;
   if (b && s->streams[0].stride) { have = (b->size - (s->streams[0].offset < b->size ? s->streams[0].offset : b->size)) / s->streams[0].stride; u32 need = (u32)((s32)ARG(2) + (s32)ARG(3) + (s32)ARG(4)); if (need > have) out_of_range("vertices", need, have); }
   else if (!b) out_of_range("vertices of a stream that has no buffer", n, 0);
+  d3d9_gpu_draw(d, type, (s32)ARG(2), (u32)ARG(5), (u32)ARG(6), 1);
   RET(D3D_OK);
 }
-// The vertices (and indices) come with the call. Afterwards stream 0 (and the index buffer) are unbound, as Direct3D leaves them.
+// The vertices (and indices) come with the call: counted and checked, not drawn yet (no title here has used them). Afterwards stream 0 (and the index buffer) are unbound, as Direct3D leaves them.
 IMP(d3d9, IDirect3DDevice9_DrawPrimitiveUP) { // (primitive type, primitive count, vertices, stride)
   STAT(device_DrawPrimitiveUP); Device9 *d = DEV; State9 *s = &d->state; u32 type = (u32)ARG(1);
   ARGV("device_DrawPrimitiveUP primitive_type", type);
   if ((!s->declaration && !s->fvf) || !vertices_of(type, (u32)ARG(2)) || !ARG(2) || !ARG(3) || !ARG(4)) { RET(D3DERR_INVALIDCALL); return; }
   if (d3d9_stats) draw_stats(d, "draw DrawPrimitiveUP fvf", "draw DrawPrimitiveUP vertexblend", "draw DrawPrimitiveUP lights", "draw DrawPrimitiveUP target");
+  { static int told; if (!told++) com_unsure("Direct3D 9: DrawPrimitiveUP is not drawn"); }
   bind((Object9 **)&s->streams[0].buffer, 0); s->streams[0].offset = s->streams[0].stride = 0;
   RET(D3D_OK);
 }
@@ -379,6 +384,7 @@ IMP(d3d9, IDirect3DDevice9_DrawIndexedPrimitiveUP) { // (primitive type, lowest 
   ARGV("device_DrawIndexedPrimitiveUP primitive_type", type);
   if ((!s->declaration && !s->fvf) || !vertices_of(type, (u32)ARG(4)) || !ARG(4) || !ARG(5) || !ARG(7) || !ARG(8) || (ARG(6) != FMT_INDEX16 && ARG(6) != FMT_INDEX32)) { RET(D3DERR_INVALIDCALL); return; }
   if (d3d9_stats) draw_stats(d, "draw DrawIndexedPrimitiveUP fvf", "draw DrawIndexedPrimitiveUP vertexblend", "draw DrawIndexedPrimitiveUP lights", "draw DrawIndexedPrimitiveUP target");
+  { static int told; if (!told++) com_unsure("Direct3D 9: DrawIndexedPrimitiveUP is not drawn"); }
   bind((Object9 **)&s->streams[0].buffer, 0); s->streams[0].offset = s->streams[0].stride = 0; bind((Object9 **)&s->indices, 0);
   RET(D3D_OK);
 }

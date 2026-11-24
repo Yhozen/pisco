@@ -4,7 +4,12 @@
 // (web/gpu/backend.js, on this thread), the speakers (an AudioWorklet playing the title's mixer ring), and the
 // keyboard and gamepad (written into the title's input block).
 // Options: &pace=off (no frame clock), &hash=1 (log a hash of every presented frame),
-//          &capture=1 (send presented frames and the audio to the server, which records them: tools/serve.mjs)
+//          &capture=1 (send presented frames and the audio to the server, which records them: tools/serve.mjs),
+//          &SW_<NAME>=<value>: the runtime's settings, as the Node host takes them from the environment. For
+//          Windows desktop titles: SW_CLOCK=16667 (a virtual clock: that many microseconds a presented frame) and
+//          SW_SESSION_STEPS=<steps> (a scripted session, as web/session.mjs writes one; tools/run-chrome.mjs
+//          makes it from SW_SESSION=<session.json>). At each `shot` of a session the frame presented last is
+//          sent to the server (POST /capture/shot), which saves it as a PNG.
 import { startBackend } from '../gpu/backend.js';
 const q = new URLSearchParams(location.search);
 const status = document.getElementById('status'), out = document.getElementById('out'), canvas = document.getElementById('screen');
@@ -27,6 +32,14 @@ function onFrame(f) {
   }
   // wall-clock times (they continue across a reload of the page)
   if (capture) post('/capture/frame', f.pixels, { 'x-frame': JSON.stringify({ index: f.index, time: performance.timeOrigin + f.time, width: f.width, height: f.height, format: f.format }) });
+}
+// a session's checkpoint: the frame it names, to the server; and how fast frames came since the one before
+let lastShot = { index: 0, time: performance.now() };
+async function onShot(f) {
+  const now = performance.now(), frames = f.index + 1 - lastShot.index, s = (now - lastShot.time) / 1000;
+  const reply = await fetch('/capture/shot', { method: 'POST', body: f.pixels, headers: { 'x-shot': JSON.stringify({ name: f.name, width: f.width, height: f.height, format: f.format }) } }).then((r) => r.text()).catch((e) => e.message);
+  console.log(`shot ${f.name}: frame ${f.index + 1} at ${(now / 1000).toFixed(1)} s, ${reply}; ${frames} frames since the last in ${s.toFixed(1)} s (${(frames / s).toFixed(1)} a second)`);
+  lastShot = { index: f.index + 1, time: performance.now() };
 }
 // ---- audio: the title's mixer ring (rt/xaudio2.c) -> an AudioWorklet; recordings read the same ring ----
 async function startAudio(addr) {
@@ -114,7 +127,7 @@ bus.onmessage = (e) => {
   if (m.refill !== undefined) startPooled(m.refill);
   if (m.gpu !== undefined) {
     if (!device) { log('gpu: no WebGPU device: the title cannot draw'); return; }
-    startBackend({ memory, ring: m.gpu, device, canvas, dir, log, onFrame: capture || hashFrames ? onFrame : null, keepAll: hashFrames }).then((s) => {
+    startBackend({ memory, ring: m.gpu, device, canvas, dir, log, onFrame: capture || hashFrames ? onFrame : null, keepAll: hashFrames, onShot }).then((s) => {
       window.swGpu = s;
       if (q.get('stats') === '1') setInterval(() => console.log(`gpu stats: ${JSON.stringify({ ...s, errors: s.errors.count })}`), 3000);
     });
@@ -125,6 +138,8 @@ bus.onmessage = (e) => {
   if (m.exit !== undefined) {
     status.textContent = `exit ${m.exit}`; document.title = `exit ${m.exit}`;
     if (line) console.log(line);
+    // a title drawn through the explicit records (Direct3D 9): what the back end made of them, in one line
+    if (window.swGpu?.explicit?.draws) console.log(`gpu explicit records: ${JSON.stringify(window.swGpu.explicit)}, ${window.swGpu.presents} presents, ${window.swGpu.errors.count} WebGPU errors`);
     console.log(`series-web exit ${m.exit}`);
     bus.postMessage({ stop: true });
   }

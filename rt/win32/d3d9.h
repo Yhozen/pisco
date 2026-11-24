@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-// Direct3D 9 as a null device: what d3d9.c (the Direct3D object, the device, statistics), d3d9_resources.c
-// (surfaces, textures, volumes, buffers, declarations), d3d9_state.c (the device's state, scenes, draws) and
-// d3d9_stateblock.c share. Every object exists, keeps its state and its bytes and answers as Direct3D does;
-// nothing is drawn. A 32-bit guest's structures are laid out as these C structures are (wasm32), so the
-// device's state is read and written directly.
+// Direct3D 9: what d3d9.c (the Direct3D object, the device, statistics), d3d9_resources.c (surfaces, textures,
+// volumes, buffers, declarations), d3d9_state.c (the device's state, scenes, draws), d3d9_stateblock.c and
+// d3d9_gpu.c share. Every object exists, keeps its state and its bytes and answers as Direct3D does (the null
+// device of milestone M3); d3d9_gpu.c turns clears, draws and presents into records of the GPU ring, with the
+// fixed-function shaders d3d9_ffp.c writes. A 32-bit guest's structures are laid out as these C structures are
+// (wasm32), so the device's state is read and written directly.
 #pragma once
 #include "com.h"
 #if GUEST_BITS != 32
@@ -61,17 +62,22 @@ typedef struct Surface9 {
   s32 locked; u32 lock_flags;
   u8 lockable;                 // not a render target inside a texture, not a back buffer or a target made without the option
   u32 dirty;                   // counts unlocks and copies into it: the back end's sign that the bytes changed
+  u32 gpu_id, gpu_dirty;       // d3d9_gpu.c: its texture on the GPU (a surface that is no texture's level), and the `dirty` last sent there
 } Surface9;
-typedef struct Volume9 { Object9 o; VolumeDesc9 desc; u32 level; u8 *bits; u32 row_pitch, slice_pitch, size; s32 locked; u32 dirty; } Volume9;
+typedef struct Volume9 { Object9 o; VolumeDesc9 desc; u32 level; u8 *bits; u32 row_pitch, slice_pitch, size; s32 locked; u32 dirty, gpu_dirty; } Volume9;
 typedef struct Texture9 {      // a 2D texture (K_TEXTURE: `surfaces`) or a volume texture (K_VOLUMETEXTURE: `volumes`)
   Object9 o;
   u32 format, usage, pool, width, height, depth, levels, lod, autogen_filter, priority;
   Surface9 **surfaces; Volume9 **volumes;
+  u32 gpu_id;                  // d3d9_gpu.c: the texture on the GPU, all its levels
 } Texture9;
 typedef struct Buffer9 {       // a vertex buffer or an index buffer
   Object9 o;
   u32 format, usage, pool, size, fvf, priority;
   u8 *bits; s32 locked; u32 dirty;
+  u32 gpu_id, gpu_dirty;       // d3d9_gpu.c: the buffer on the GPU, and the `dirty` last sent there
+  u32 gpu_lo, gpu_hi;          //   the bytes locked for writing since then,
+  u8 gpu_pending, gpu_mode;    //   whether any lock said which, and how they may be written (GPU_WRITE_*)
 } Buffer9;
 typedef struct Declaration9 { Object9 o; u32 count, fvf; Element9 *elements;   // `count` includes the end marker; `fvf`: the code it was made from, 0 for a title's own
                               struct Declaration9 *next_fvf; } Declaration9;
@@ -149,6 +155,18 @@ void d3d9_recorded(StateBlock9 *b, u32 klass, u32 index);   // marks an entry of
 enum { C_RS = 0, C_TSS, C_SAMP, C_TEXTURE, C_STREAM, C_STREAM_FREQ, C_TRANSFORM, C_CLIP_PLANE, C_VS_FLOAT, C_PS_FLOAT, C_VS_INT, C_PS_INT, C_VS_BOOL, C_PS_BOOL };
 void d3d9_recorded_light(StateBlock9 *b, u32 index);
 extern Light9 d3d9_default_light;   // what a light is when it is enabled without having been set (the oracle's)
+
+// ---- d3d9_gpu.c: clears, draws and presents as records of the GPU ring (rt/d3d12_cmd.h, the explicit records) ----
+void d3d9_gpu_clear(Device9 *d, u32 flags, u32 color, float z, u32 stencil);   // Clear, of the whole target
+// DrawPrimitive (indexed 0: `first` is a vertex) or DrawIndexedPrimitive (`first` is an index, `base` is added to
+// every index) of `primitives` primitives of a D3DPRIMITIVETYPE, with the device's state as it is now
+void d3d9_gpu_draw(Device9 *d, u32 type, s32 base, u32 first, u32 primitives, int indexed);
+void d3d9_gpu_present(Device9 *d);                 // the back buffer goes to the screen
+void d3d9_gpu_buffer_locked(Buffer9 *b, u32 offset, u32 size, u32 flags);   // a lock for writing: what it may change
+void d3d9_gpu_release(Object9 *o);                 // the object is going: so is what it has on the GPU
+void d3d9_gpu_shot(const char *name);              // a session's checkpoint: the host saves the frame presented last
+void d3d9_gpu_stats(void);                         // logs how many shaders, pipelines and draws there were
+void d3d9_gpu_finish(void);                        // the process ends: returns once the back end has seen everything
 
 // ---- statistics: calls per method under the names Wine's +d3d9 trace gives them. SW_D3D9_STATS=1 prints them when
 // the process ends, with the values the arguments that matter took; the session player prints the calls since

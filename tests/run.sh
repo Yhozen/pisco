@@ -13,11 +13,17 @@
 #            ones it makes under Wine (recipes/narbacular-drop/traces/start.txt). Then the menu-to-level session
 #            on the virtual clock with the null Direct3D 9 device: it must end with exit code 0 after every
 #            checkpoint, each at the frame and with the Direct3D calls recorded in traces/menu-to-level.txt,
-#            and a second run must give the same log (ND_RECORD=1 records the checkpoints again)
+#            and a second run must give the same log (ND_RECORD=1 records the checkpoints again). Its draws go
+#            through the fixed-function shaders to the null GPU back end, which must find every record consistent;
+#            the shaders it made must pass naga
+#   ffp      tests/gfx/d3d9-ffp.sh: Direct3D 9's fixed-function pipeline as WGSL (rt/win32/d3d9_ffp.c), built
+#            natively: the shaders of a representative set of state keys, validated with naga
+#   ndgfx    tests/gfx/nd.sh: Narbacular Drop's session in headless Chrome, drawn (WebGPU on SwiftShader): a PNG at
+#            every checkpoint, and the still screens close to the oracle's screenshots when those are there (minutes)
 #   doom     tests/gfx/doom.sh: Doom as a console title in Node and Chrome (minutes)
 #   xcl      tests/gfx/xcl.sh: XCL's console test title in Chrome, when it has been built into out/xcltitle-game
 #   audio    tests/audio/run.sh: the XMA2 / Opus decoders (builds FFmpeg's the first time)
-# Default: build node bench win32. Needs tools/setup-toolchain.sh to have run. Exit status 1 if a step fails.
+# Default: build node bench win32 ffp. Needs tools/setup-toolchain.sh to have run. Exit status 1 if a step fails.
 set -uo pipefail
 root=$(cd "$(dirname "$0")/.." && pwd); cd "$root"; mkdir -p out
 MINGW=${MINGW:-$HOME/tools/llvm-mingw-20261117-ucrt-ubuntu-22.04-x86_64}; CXX=$MINGW/bin/x86_64-w64-mingw32-clang++
@@ -92,18 +98,25 @@ nd() {
   diff <(grep -v '^#' $want) out/nd.session.checkpoints.txt > out/nd.session.diff || { echo "the session's checkpoints are not the recorded ones (< $want, > this run):"; head -6 out/nd.session.diff; return 1; }
   nd_session > out/nd.session.2.log 2>&1
   cmp -s out/nd.session.log out/nd.session.2.log || { echo "two runs of the session differ: out/nd.session.log, out/nd.session.2.log"; return 1; }
+  # what reached the GPU ring: counted and checked by the null back end; the shaders this run made, by naga
+  grep -q '^series-web: gpu (null back end): .* 0 of the records were inconsistent$' out/nd.session.log || { echo "the null GPU back end did not find the session's records consistent:"; grep '^series-web: gpu' out/nd.session.log | tail -3 | cut -c1-300; return 1; }
+  local shaders="naga is not installed: its shaders were not validated"
+  if command -v naga > /dev/null; then shaders=$(tests/gfx/d3d9-ffp.sh out/nd.session.log 2>&1) || { echo "the session's shaders: $shaders"; return 1; }; shaders="its $(wc -l < out/ffp/run-keys.txt) shaders pass naga"; fi
   n=$(grep -c '^checkpoint ' out/nd.session.checkpoints.txt)
   echo "session: $n checkpoints as recorded, $(sed -n 's/^session done: .*, \([0-9]*\) frames$/\1/p' out/nd.session.checkpoints.txt) frames, two runs give the same log"
+  echo "$(sed -n 's/^series-web: gpu (null back end): \(.*\); 0 of the records were inconsistent$/\1/p' out/nd.session.log), all consistent, and $shaders"
 }
 nd_session() { SW_STRICT=1 SW_CLOCK=16667 SW_D3D9_STATS=1 SW_SESSION=recipes/narbacular-drop/sessions/menu-to-level.json timeout 600 node web/run-node.mjs out/nd/title.wasm "$ND/Narbacular Drop.exe"; }
 ND=${ND:-$HOME/.series-web/oracle/prefix-narbacular-drop/drive_c/Program Files (x86)/Narbacular Drop}
-for s in ${*:-build node bench win32}; do case $s in
+for s in ${*:-build node bench win32 ffp}; do case $s in
   build)  step build build ;;
   node)   LINES_SHOWN=8 step node tests/regress.sh ;;
   bench)  step bench bench ;;
   win32)  LINES_SHOWN=2 step win32 win32 ;;
   chrome) LINES_SHOWN=5 step chrome chrome ;;
-  nd)     if [ -f "$ND/Narbacular Drop.exe" ]; then LINES_SHOWN=2 step nd nd; else echo "skip  nd: the game is not installed (ND=$ND)"; fi ;;
+  nd)     if [ -f "$ND/Narbacular Drop.exe" ]; then LINES_SHOWN=3 step nd nd; else echo "skip  nd: the game is not installed (ND=$ND)"; fi ;;
+  ffp)    if command -v naga > /dev/null; then step ffp tests/gfx/d3d9-ffp.sh; else echo "skip  ffp: naga is not installed (tools/setup-toolchain.sh naga)"; fi ;;
+  ndgfx)  if [ -f "$ND/Narbacular Drop.exe" ]; then LINES_SHOWN=16 ND=$ND step ndgfx tests/gfx/nd.sh; else echo "skip  ndgfx: the game is not installed (ND=$ND)"; fi ;;
   doom)   LINES_SHOWN=4 step doom tests/gfx/doom.sh ;;
   audio)  step audio tests/audio/run.sh ;;
   xcl)    if [ -f out/xcltitle-game/xcl_testtitle.exe ]; then LINES_SHOWN=3 step xcl tests/gfx/xcl.sh; else echo "skip  xcl: out/xcltitle-game/xcl_testtitle.exe is not built"; fi ;;

@@ -1,12 +1,15 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // A static server with the headers shared memory needs (cross-origin isolation).
-// node tools/serve.mjs <port> <dir>... [--capture <out.mp4>] — the first dir is the root; /files/<n>/ maps to the n-th
-// extra dir. With --capture, the page's presented frames (POST /capture/frame) go to ffmpeg at a fixed frame
-// rate by their timestamps (a frame is repeated or dropped so the video runs in real time), the audio
-// (POST /capture/audio, stereo float) is kept beside it, and POST /capture/end writes <out.mp4> with both.
-import http from 'node:http'; import fs from 'node:fs'; import path from 'node:path'; import { spawn } from 'node:child_process';
+// node tools/serve.mjs <port> <dir>... [--capture <out.mp4>] [--shots <dir>] — the first dir is the root;
+// /files/<n>/ maps to the n-th extra dir. With --capture, the page's presented frames (POST /capture/frame) go to
+// ffmpeg at a fixed frame rate by their timestamps (a frame is repeated or dropped so the video runs in real
+// time), the audio (POST /capture/audio, stereo float) is kept beside it, and POST /capture/end writes <out.mp4>
+// with both. With --shots, a frame the page sends under a name (POST /capture/shot: a session's checkpoint)
+// is saved as <dir>/<name>.png.
+import http from 'node:http'; import fs from 'node:fs'; import path from 'node:path'; import zlib from 'node:zlib'; import { spawn } from 'node:child_process';
 const argv = process.argv.slice(2);
 const ci = argv.indexOf('--capture'); const captureOut = ci >= 0 ? argv.splice(ci, 2)[1] : null;
+const si = argv.indexOf('--shots'); const shotsDir = si >= 0 ? argv.splice(si, 2)[1] : null;
 const [port, root, ...extra] = argv;
 const types = { '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/javascript', '.wasm': 'application/wasm', '.json': 'application/json', '.wgsl': 'text/plain' };
 const FPS = 35; // Doom's tic rate; other titles get every 35th of a second
@@ -47,6 +50,21 @@ async function captureEnd() {
   for (const f of [cap.tmp, pcm]) fs.rmSync(f, { force: true });
   return `${captureOut}: ${cap.frames} frames presented, ${cap.written} video frames at ${FPS} fps, ${(audioChunks.reduce((n, c) => n + c.data.length, 0) / 8 / rate).toFixed(1)} s of audio, ${marks.length} marks`;
 }
+// A frame as an 8-bit RGB PNG (what the oracle's screenshots are: tools/oracle-wine/play.py): alpha is left out
+function savePng(file, meta, body) {
+  const { width: w, height: h } = meta, bgra = meta.format.startsWith('bgra'), rows = Buffer.alloc(h * (1 + 3 * w));
+  for (let y = 0, o = 0; y < h; y++) { rows[o++] = 0; for (let x = 0, i = 4 * y * w; x < w; x++, i += 4) { rows[o++] = body[i + (bgra ? 2 : 0)]; rows[o++] = body[i + 1]; rows[o++] = body[i + (bgra ? 0 : 2)]; } }
+  const chunk = (type, data) => { const b = Buffer.alloc(12 + data.length); b.writeUInt32BE(data.length, 0); b.write(type, 4, 'latin1'); data.copy(b, 8); b.writeUInt32BE(zlib.crc32(b.subarray(4, 8 + data.length)), 8 + data.length); return b; };
+  const head = Buffer.alloc(13); head.writeUInt32BE(w, 0); head.writeUInt32BE(h, 4); head.set([8, 2, 0, 0, 0], 8);
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, Buffer.concat([Buffer.from('\x89PNG\r\n\x1a\n', 'latin1'), chunk('IHDR', head), chunk('IDAT', zlib.deflateSync(rows, { level: 6 })), chunk('IEND', Buffer.alloc(0))]));
+}
+function saveShot(meta, body) {
+  if (!shotsDir) return 'not saved (the server has no --shots folder)';
+  if (!/^[A-Za-z0-9_][A-Za-z0-9_.-]{0,63}$/.test(meta.name) || body.length !== 4 * meta.width * meta.height) return 'not saved (a name or a size the server does not take)';
+  const file = path.join(shotsDir, `${meta.name}.png`); savePng(file, meta, body);
+  return `saved as ${path.relative(process.cwd(), file)}`;
+}
 
 http.createServer((req, res) => {
   let p = decodeURIComponent(new URL(req.url, 'http://x').pathname), base = root;
@@ -55,7 +73,8 @@ http.createServer((req, res) => {
     const parts = []; req.on('data', (d) => parts.push(d));
     req.on('end', async () => {
       const body = Buffer.concat(parts); let reply = 'ok';
-      if (!captureOut) reply = 'not recording';
+      if (p === '/capture/shot') reply = saveShot(JSON.parse(req.headers['x-shot']), body);
+      else if (!captureOut) reply = 'not recording';
       else if (p === '/capture/frame') captureFrame(JSON.parse(req.headers['x-frame']), body);
       else if (p === '/capture/audio') audioChunks.push({ ...JSON.parse(req.headers['x-audio']), data: body });
       else if (p === '/capture/mark') marks.push(JSON.parse(body.toString()));

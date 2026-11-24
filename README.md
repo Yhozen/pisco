@@ -6,9 +6,9 @@ Minecraft; until those files are here it is tested on titles we build ourselves 
 (Stockfish 19's official Windows build).
 
 A second kind of title is under way: ordinary 32-bit Windows PC games, with Narbacular Drop (2005) first.
-It plays a scripted session from its menu into its first level in Node, on a Direct3D 9 that keeps every
-object and state and draws nothing yet; pixels, sound and the browser are the milestones ahead
-([status](docs/status.md)).
+It plays a scripted session from its menu into its first level, in Node and in headless Chrome, where its
+fixed-function Direct3D 9 is drawn with WebGPU and its screens match Wine's; text, sound and input from the
+page are the milestones ahead ([status](docs/status.md)).
 
 Licence: GPL-2.0-or-later for our own code; code from other projects keeps its own licence (the shader tools
 from [XCL](https://github.com/ivall/xcl) are GPL-2.0-only). See [LICENSING.md](LICENSING.md).
@@ -35,6 +35,9 @@ runtime (rt/, C on wasi-libc, linked into the same module) ◄──────
               queues, XAsync, XUser, saves, PLS, package), the console screen (user32 / DWM), GameInput
   d3d12.c     D3D12 / D3D12.X front end (+ XG, D3DCompile from precompiled shaders); dxgi.c (DXGI, MFPlat);
               dstorage.c (DirectStorage); xaudio2.c + audio_codec.c (XAudio2, XMA2 / Opus via FFmpeg)
+  gpu_ring.c  the ring of records a GPU back end reads (web/gpu/): what D3D12 and Direct3D 9 both write to
+  win32/      Windows desktop titles: user32, gdi32, the registry, DirectInput 8, FMOD 3, and Direct3D 9
+              (d3d9*.c: the device; d3d9_ffp.c: its fixed-function pipeline as WGSL; d3d9_gpu.c: its draws)
 Imports nothing implements become stubs that log their first call and return 0 (E_NOTIMPL for the console's
 HRESULT APIs), as in XCL; SW_STRICT=1 stops at them instead.
 host (web/)   WASI calls, one worker per guest thread over one shared memory
@@ -75,8 +78,9 @@ node tools/run-chrome.mjs out/hello/title.wasm <the .exe>          # the same in
 
 `SW_TRACE=1` logs missing imports and exception dispatch; `SW_TRACE=2` every import call. For Windows
 desktop titles: `SW_CLOCK=16667` makes time virtual (it moves by that many microseconds when a frame is
-presented), `SW_SESSION=<session.json>` plays a scripted session of mouse and keyboard input,
-`SW_D3D9_STATS=1` and `SW_D3D9_FRAMES=1` print what the title asked Direct3D 9 for.
+presented), `SW_SESSION=<session.json>` plays a scripted session of mouse and keyboard input (both hosts; in
+Chrome the frame presented at each of its `shot` steps is saved as a PNG beside the wasm, in `shots/`),
+`SW_D3D9_STATS=1` and `SW_D3D9_FRAMES=1` print what the title asked Direct3D 9 for and the shaders made for it.
 
 ## State (2026-11-24)
 
@@ -95,7 +99,7 @@ and published by `.github/workflows/progress.yml`.
 | `fixtures/cxx` (C++, llvm-mingw, libc++ + libunwind) | throw through frames with destructors, `catch (...)`, `std::exception`, rethrow, throw in catch, in a thread | 7/7 | 7/7 |
 | `fixtures/dll` (C++, llvm-mingw: an exe and the DLL it ships) | static and dynamic imports, DllMain on process and thread attach, `thread_local` in the DLL, an exception crossing from the DLL | 7/7 | – |
 | `hello` again as a 32-bit program (i686), and `fixtures/x87` (C, llvm-mingw, no SSE) | the lifter's 32-bit mode and the runtime for a 32-bit guest: stdcall, the x87 with its control word (rounding, 24-bit precision), the direction flag, EFLAGS.ID, a jump table as Visual C++ writes them. Expected output: what the same programs print under Wine | 7/7; 27 of 27 lines | 7/7; 27 of 27 |
-| **Narbacular Drop** (2005; the user's own copy, built with `recipes/narbacular-drop/title.toml`) | a real 32-bit Windows game from its entry point into its first level, without a screen: its C runtime, files, window, Direct3D 9 (a null device), D3DX, DirectInput, a scripted session on a virtual clock | the same calls as under Wine up to `Direct3DCreate9` (81 steps, repeats folded); the session's 11 checkpoints over 6,256 frames, the same log on every run, each frame making the Direct3D calls it makes under Wine but the text draws (strict mode) | – |
+| **Narbacular Drop** (2005; the user's own copy, built with `recipes/narbacular-drop/title.toml`) | a real 32-bit Windows game from its entry point into its first level: its C runtime, files, window, Direct3D 9 (fixed-function, drawn through shaders the runtime writes), D3DX, DirectInput, a scripted session on a virtual clock | the same calls as under Wine up to `Direct3DCreate9` (81 steps, repeats folded); the session's 11 checkpoints over 6,256 frames, the same log on every run, each frame making the Direct3D calls it makes under Wine but the text draws (strict mode); its 529,685 draws reach the null GPU back end as consistent records | the session drawn with WebGPU, a PNG at each checkpoint: the 8 still screens within one level in 255 of Wine's (with D3DX's plain code, as here), the menu and the level within what two runs of Wine differ by; 12 to 20 frames a second on SwiftShader (`tests/run.sh ndgfx`) |
 | **XCL's console test title** (`tests/testtitle` + its game DLL, Rust std, built for `x86_64-pc-windows-gnullvm`) | XCL's own checks of a console title: TLS, panics, kernelx, XMem, the console screen, GameInput, modules, game DLL, the VFS, XGameRuntime, XUser, saves, PLS; D3D12.X (UMA memory, the console device and list methods, DMA queue, derived pipelines, depth bias, queries, textures in title memory), DirectStorage, MFPlat, XAudio2 with XMA2 and Opus | 46/50 (the 4 checks that read pixels need WebGPU) | **50/50** (`tests/gfx/xcl.sh`) |
 | **Stockfish 19, official Windows x64 build** (MinGW, 103 MB) | `bench`: 2.9 M instructions lifted, worker threads, NNUE (109 MB) in shared memory | **2,497,913 nodes = the published signature**, 105,700 nodes/s | **2,497,913 nodes**, 110,821 nodes/s, 22.5 s |
 | **Doom as a console title** (`fixtures/doom`: doomgeneric + Freedoom on D3D12.X, GameInput, XAudio2, XGameSave; llvm-mingw) | D3D12.X → WebGPU, `PresentX` and the frame clock, sound, keyboard / gamepad, saves that survive a reload | `-timedemo` frames equal native on every deterministic frame (null GPU back end) | frames **read back from WebGPU** equal native's; ~35 fps on SwiftShader; video: `fixtures/doom/video.sh` |
