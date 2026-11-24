@@ -1,0 +1,51 @@
+{
+ "updated": "2026-11-24",
+ "d3d12": [
+  199,
+  341
+ ],
+ "imports": [
+  384,
+  480
+ ],
+ "xcl": [
+  28,
+  50
+ ],
+ "ladder": [
+  1,
+  5
+ ],
+ "titles": [
+  {
+   "name": "Doom (our console title)",
+   "done": 79,
+   "total": 79,
+   "shipped": 0
+  },
+  {
+   "name": "XCL's console test title",
+   "done": 178,
+   "total": 187,
+   "shipped": 0
+  },
+  {
+   "name": "Stockfish 19 (official build)",
+   "done": 180,
+   "total": 180,
+   "shipped": 0
+  },
+  {
+   "name": "SimpleTriangleDesktop (clang-cl)",
+   "done": 107,
+   "total": 193,
+   "shipped": 64
+  },
+  {
+   "name": "SimpleTriangleDesktop (MSVC)",
+   "done": 107,
+   "total": 194,
+   "shipped": 88
+  }
+ ]
+}

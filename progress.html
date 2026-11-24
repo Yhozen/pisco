@@ -1,0 +1,14 @@
+<!doctype html>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>series-web progress</title>
+<style>body{font:16px/1.5 system-ui,sans-serif;background:#0d1117;color:#e6edf3;max-width:1020px;margin:2em auto;padding:0 1em}a{color:#58a6ff}img,object{max-width:100%}</style>
+<h1>series-web progress</h1>
+<p>What the runtime implements, measured against what real titles use. Hover the map for names. Updated 2026-11-24.
+<a href="https://github.com/Yhozen/series-web">Source</a> · <a href="./">Doom video</a> · <a href="progress.json">progress.json</a></p>
+<p><img src="badge-ladder.svg" alt="graphics ladder"> <img src="badge-d3d12.svg" alt="D3D12 methods"> <img src="badge-imports.svg" alt="imports"> <img src="badge-xcl.svg" alt="XCL checks"></p>
+<object data="progress.svg" type="image/svg+xml" width="1000">progress map</object>
+<ul>
+<li><b>D3D12 / D3D12.X methods</b>: every vtable slot of the PC interfaces (d3d12.h order) and the console methods known from XCL; green when a runtime function stands behind it.</li>
+<li><b>Runtime imports</b>: the union of what five titles import (Doom, XCL's test title, Stockfish 19, SimpleTriangleDesktop built by clang-cl and by MSVC), resolved as the runtime resolves them.</li>
+<li><b>XCL's console test title</b>: its 50 checks, from the last run.</li>
+</ul>
