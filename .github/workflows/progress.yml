@@ -1,0 +1,28 @@
+# Redraws the progress map (tools/progress.mjs) and publishes it on GitHub Pages (the gh-pages branch, beside the video).
+name: progress
+on:
+  push:
+    branches: [main]
+    paths: ['rt/**', 'docs/progress-data.json', 'tools/progress.mjs', '.github/workflows/progress.yml']
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency: { group: progress, cancel-in-progress: true }
+jobs:
+  map:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 24 }
+      - run: node tools/progress.mjs --out site
+      - uses: actions/checkout@v4
+        with: { ref: gh-pages, path: pages }
+      - name: publish when it changed
+        run: |
+          cp site/* pages/
+          cd pages
+          git add -A
+          if git diff --cached --quiet; then echo "no change"; exit 0; fi
+          git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" commit -m "progress map for ${GITHUB_SHA::7}"
+          git push

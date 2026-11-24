@@ -62,6 +62,14 @@ node tools/run-chrome.mjs out/hello/title.wasm <the .exe>          # the same in
 
 ## State (2026-11-24)
 
+[![graphics ladder](https://yhozen.github.io/series-web/badge-ladder.svg)](https://yhozen.github.io/series-web/progress.html) [![D3D12 methods](https://yhozen.github.io/series-web/badge-d3d12.svg)](https://yhozen.github.io/series-web/progress.html) [![imports](https://yhozen.github.io/series-web/badge-imports.svg)](https://yhozen.github.io/series-web/progress.html) [![XCL checks](https://yhozen.github.io/series-web/badge-xcl.svg)](https://yhozen.github.io/series-web/progress.html)
+
+[![progress map](https://yhozen.github.io/series-web/progress.svg)](https://yhozen.github.io/series-web/progress.html)
+
+Video: [Doom as an Xbox console title in the browser](https://yhozen.github.io/series-web/) (D3D12.X on WebGPU, XAudio2, GameInput, saves in OPFS).
+The map is drawn by `tools/progress.mjs` (`--refresh` re-reads the build outputs into `docs/progress-data.json`)
+and published by `.github/workflows/progress.yml`.
+
 | Title | What it checks | Node | Chrome |
 |---|---|---|---|
 | `fixtures/hello` (Rust, no_std) | recursion, switch, pointers, SSE loop, f64 | 7/7 | 7/7 |
