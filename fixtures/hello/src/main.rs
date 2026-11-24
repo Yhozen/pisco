@@ -1,10 +1,12 @@
-#![no_std]
 // SPDX-License-Identifier: GPL-2.0-or-later
+#![no_std]
 #![no_main]
 use core::panic::PanicInfo;
 #[panic_handler] fn panic(_: &PanicInfo) -> ! { unsafe { ExitProcess(99) } }
 
-#[link(name = "kernel32", kind = "raw-dylib")]
+// 32-bit: stdcall symbols are `_Name@N`, kernel32 exports plain names
+#[cfg_attr(target_arch = "x86", link(name = "kernel32", kind = "raw-dylib", import_name_type = "undecorated"))]
+#[cfg_attr(not(target_arch = "x86"), link(name = "kernel32", kind = "raw-dylib"))]
 extern "system" {
     fn GetStdHandle(n: u32) -> isize;
     fn WriteFile(h: isize, p: *const u8, n: u32, w: *mut u32, o: *mut u8) -> i32;
@@ -44,6 +46,26 @@ fn add1(x: u64) -> u64 { x + 1 } fn dbl(x: u64) -> u64 { x * 2 }
         f += check(b"VirtualAlloc memory", okm);
         ExitProcess(f)
     }
+}
+
+// As a 32-bit program: the compiler calls the Visual C++ runtime's 64-bit division helpers (arguments on the
+// stack, removed by the callee, result in EDX:EAX). No runtime is linked, so they are ours: a thunk each, around
+// a shift-and-subtract division that never divides 64-bit values itself.
+#[cfg(target_arch = "x86")] mod div64 {
+    fn udivmod(mut n: u64, d: u64) -> (u64, u64) {
+        let (mut q, mut r, mut i) = (0u64, 0u64, 0);
+        while i < 64 { r = (r << 1) | (n >> 63); n <<= 1; q <<= 1; if r >= d { r -= d; q |= 1; } i += 1; }
+        (q, r)
+    }
+    #[no_mangle] extern "C" fn sw_udiv64(a: u64, b: u64) -> u64 { udivmod(a, b).0 }
+    #[no_mangle] extern "C" fn sw_urem64(a: u64, b: u64) -> u64 { udivmod(a, b).1 }
+    #[no_mangle] extern "C" fn sw_sdiv64(a: i64, b: i64) -> i64 { let q = udivmod(a.unsigned_abs(), b.unsigned_abs()).0 as i64; if (a < 0) != (b < 0) { q.wrapping_neg() } else { q } }
+    #[no_mangle] extern "C" fn sw_srem64(a: i64, b: i64) -> i64 { let r = udivmod(a.unsigned_abs(), b.unsigned_abs()).1 as i64; if a < 0 { r.wrapping_neg() } else { r } }
+    macro_rules! thunk { ($name:literal, $f:literal) => { core::arch::global_asm!(
+        concat!(".globl ", $name), concat!($name, ":"),
+        "push dword ptr [esp+16]", "push dword ptr [esp+16]", "push dword ptr [esp+16]", "push dword ptr [esp+16]",
+        concat!("call ", $f), "add esp, 16", "ret 16"); } }
+    thunk!("__aulldiv", "_sw_udiv64"); thunk!("__aullrem", "_sw_urem64"); thunk!("__alldiv", "_sw_sdiv64"); thunk!("__allrem", "_sw_srem64");
 }
 
 #[no_mangle] pub static _fltused: i32 = 0;

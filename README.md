@@ -5,6 +5,10 @@ it ahead of time and supplying the operating system underneath it. The target is
 Minecraft; until those files are here it is tested on titles we build ourselves and on a real program
 (Stockfish 19's official Windows build).
 
+A second kind of title is under way: ordinary 32-bit Windows PC games, with Narbacular Drop (2005) first.
+The lifter and the runtime already take 32-bit programs; the Windows desktop APIs, Direct3D 9, input and
+sound are the milestones ahead ([status](docs/status.md)).
+
 Licence: GPL-2.0-or-later for our own code; code from other projects keeps its own licence (the shader tools
 from [XCL](https://github.com/ivall/xcl) are GPL-2.0-only). See [LICENSING.md](LICENSING.md).
 
@@ -42,6 +46,11 @@ host (web/)   WASI calls, one worker per guest thread over one shared memory
   It reports what it could not lift. AVX-and-later functions are left out: the virtual CPU's CPUID reports
   SSE4.2 and POPCNT only, so titles pick their SSE paths.
 - **Registers** live in a `Cpu` struct passed as `restrict`, so clang keeps them in wasm locals between calls.
+- **32-bit titles**: the same lifter in a 32-bit mode. Without an exception table, functions come from the
+  entry point and call targets, then from code addresses in data and immediates; `jmp [reg*4+table]`
+  switches are recovered; x87 keeps its control word (rounding, 24-bit precision). The runtime is built for
+  the guest's width (stdcall arguments on the stack, the TEB on `fs`). MMX and 3DNow are not lifted; a
+  32-bit title's virtual CPU will stop reporting MMX (next milestone: a CPU feature set per title).
 - **Guest memory** is linear memory: a guest address is a wasm address. Images are rebased below 4 GiB.
   wasm32 by default; see [docs/memory.md](docs/memory.md) for wasm64.
 - **Threads**: a guest thread is a pthread of the runtime, i.e. a worker. In the browser they come from a
@@ -81,6 +90,7 @@ and published by `.github/workflows/progress.yml`.
 | `fixtures/threads` (Rust, no_std) | 4 threads, `lock xadd`, critical sections, events, semaphores, TLS, ExitThread, timeouts | 9/9 | 9/9 |
 | `fixtures/cxx` (C++, llvm-mingw, libc++ + libunwind) | throw through frames with destructors, `catch (...)`, `std::exception`, rethrow, throw in catch, in a thread | 7/7 | 7/7 |
 | `fixtures/dll` (C++, llvm-mingw: an exe and the DLL it ships) | static and dynamic imports, DllMain on process and thread attach, `thread_local` in the DLL, an exception crossing from the DLL | 7/7 | – |
+| `hello` again as a 32-bit program (i686), and `fixtures/x87` (C, llvm-mingw, no SSE) | the lifter's 32-bit mode and the runtime for a 32-bit guest: stdcall, the x87 with its control word (rounding, 24-bit precision), the direction flag, EFLAGS.ID, a jump table as Visual C++ writes them. Expected output: what the same programs print under Wine | 7/7; 27 of 27 lines | 7/7; 27 of 27 |
 | **XCL's console test title** (`tests/testtitle` + its game DLL, Rust std, built for `x86_64-pc-windows-gnullvm`) | XCL's own checks of a console title: TLS, panics, kernelx, XMem, the console screen, GameInput, modules, game DLL, the VFS, XGameRuntime, XUser, saves, PLS; D3D12.X (UMA memory, the console device and list methods, DMA queue, derived pipelines, depth bias, queries, textures in title memory), DirectStorage, MFPlat, XAudio2 with XMA2 and Opus | 46/50 (the 4 checks that read pixels need WebGPU) | **50/50** (`tests/gfx/xcl.sh`) |
 | **Stockfish 19, official Windows x64 build** (MinGW, 103 MB) | `bench`: 2.9 M instructions lifted, worker threads, NNUE (109 MB) in shared memory | **2,497,913 nodes = the published signature**, 105,700 nodes/s | **2,497,913 nodes**, 110,821 nodes/s, 22.5 s |
 | **Doom as a console title** (`fixtures/doom`: doomgeneric + Freedoom on D3D12.X, GameInput, XAudio2, XGameSave; llvm-mingw) | D3D12.X → WebGPU, `PresentX` and the frame clock, sound, keyboard / gamepad, saves that survive a reload | `-timedemo` frames equal native on every deterministic frame (null GPU back end) | frames **read back from WebGPU** equal native's; ~35 fps on SwiftShader; video: `fixtures/doom/video.sh` |

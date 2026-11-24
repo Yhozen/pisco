@@ -33,6 +33,10 @@ u64 rt_valloc(u64 size, u64 align) {
   void *p = aligned_alloc(align, size); // dlmalloc takes big blocks straight from sbrk
   pthread_mutex_unlock(&mem_lock);
   if (!p) return 0;
+#if GUEST_BITS == 32
+  // a 32-bit program that is not large-address-aware expects every pointer below 2 GiB
+  if ((u64)(uptr)p + size > 0x80000000ull) { free(p); return 0; }
+#endif
   memset(p, 0, size);
   return (u64)(uptr)p;
 }
@@ -40,6 +44,15 @@ void rt_vfree(u64 a) { free((void *)GP(a)); }
 
 // ---- guest calls ----
 u64 rt_guest_call(Cpu *c, u64 fn, u64 a0, u64 a1, u64 a2, u64 a3) {
+#if GUEST_BITS == 32
+  u32 sp = (u32)R[RSP];
+  R[RSP] = (sp - 16) & ~3u;
+  M32(R[RSP]) = (u32)a0; M32(R[RSP] + 4) = (u32)a1; M32(R[RSP] + 8) = (u32)a2; M32(R[RSP] + 12) = (u32)a3;
+  PUSH32(0); // return address: nothing returns to it, the lifted callee returns to us
+  rt_call(c, (u32)fn);
+  R[RSP] = sp; // whoever was to remove the arguments
+  return (u32)R[RAX];
+#else
   u64 sp = R[RSP];
   R[RSP] = (R[RSP] - 32) & ~15ull; // shadow space, 16-byte aligned before the call
   R[RCX] = a0; R[RDX] = a1; R[8] = a2; R[9] = a3;
@@ -47,6 +60,7 @@ u64 rt_guest_call(Cpu *c, u64 fn, u64 a0, u64 a1, u64 a2, u64 a3) {
   rt_call(c, fn);
   R[RSP] = sp;
   return R[RAX];
+#endif
 }
 
 // ---- imports ----
@@ -55,6 +69,18 @@ extern const ImportDef rt_import_table[]; extern const unsigned rt_import_table_
 static ImportFn import_fn[8192];
 static const char *import_name_of[8192];
 static unsigned import_total; // the image's imports, then GetProcAddress results
+// 32-bit guests: the bytes of arguments each import removes from the stack when it returns (stdcall), 0 for
+// cdecl, -1 when nothing says (calling it stops the run: a wrong guess would corrupt the caller's stack).
+// From imports.gen.c (tools/stdcall-sizes.sh), or the name's own decoration (`_Name@12`).
+typedef struct { const char *name; int bytes; } StdcallDef;
+extern const StdcallDef rt_stdcall_table[]; extern const unsigned rt_stdcall_table_count;
+static short import_pop[8192];
+static int stdcall_bytes(const char *full) {
+  for (unsigned k = 0; k < rt_stdcall_table_count; k++) if (!strcmp(rt_stdcall_table[k].name, full)) return rt_stdcall_table[k].bytes;
+  const char *at = strrchr(full, '@');
+  if (at && at[1] >= '0' && at[1] <= '9') return atoi(at + 1);
+  return -1;
+}
 
 static ImportFn find_exact(const char *full) {
   for (unsigned k = 0; k < rt_import_table_count; k++) if (!strcmp(rt_import_table[k].name, full)) return rt_import_table[k].fn;
@@ -109,7 +135,7 @@ u64 rt_dynamic_import(const char *dll, const char *name) {
   pthread_mutex_lock(&mem_lock);
   for (unsigned i = 0; i < import_total; i++) if (import_fn[i] == fn) { pthread_mutex_unlock(&mem_lock); return import_base + 8ull * i; }
   unsigned i = import_total++;
-  import_fn[i] = fn; import_name_of[i] = strdup(full);
+  import_fn[i] = fn; import_name_of[i] = strdup(full); import_pop[i] = (short)stdcall_bytes(full);
   pthread_mutex_unlock(&mem_lock);
   return import_base + 8ull * i;
 }
@@ -119,17 +145,17 @@ u64 rt_stub_import(const char *full) {
   pthread_mutex_lock(&mem_lock);
   for (unsigned i = 0; i < import_total; i++) if (!import_fn[i] && import_name_of[i] && !strcmp(import_name_of[i], full)) { pthread_mutex_unlock(&mem_lock); return import_base + 8ull * i; }
   unsigned i = import_total++;
-  import_fn[i] = 0; import_name_of[i] = strdup(full);
+  import_fn[i] = 0; import_name_of[i] = strdup(full); import_pop[i] = (short)stdcall_bytes(full);
   pthread_mutex_unlock(&mem_lock);
   return import_base + 8ull * i;
 }
 u64 rt_com_vtable(const char *dll, const char *prefix, const char *const *names, unsigned n) {
-  u64 *vt = calloc(n, 8);
+  void *vt = calloc(n, PTR_SIZE);
   for (unsigned i = 0; i < n; i++) {
     char m[160]; snprintf(m, sizeof m, "%s%s", prefix, names[i] ? names[i] : "");
     u64 a = names[i] ? rt_dynamic_import(dll, m) : 0;
     if (!a) { char full[200]; snprintf(full, sizeof full, "%s.dll!%s#%u", dll, prefix, i); if (names[i]) snprintf(full, sizeof full, "%s.dll!%s", dll, m); a = rt_stub_import(full); }
-    vt[i] = a;
+    MP((uptr)vt + PTR_SIZE * i) = a;
   }
   return (uptr)vt;
 }
@@ -141,24 +167,31 @@ const char *rt_import_name(u64 a) {
 void rt_call(Cpu *c, u64 t) {
   if (t >= import_base && t < import_base + 8ull * import_total) {
     u32 i = (u32)((t - import_base) / 8);
+#if GUEST_BITS == 32
+    // the return address, and what a stdcall function removes
+    if (import_pop[i] < 0) rt_fatal("no argument size is known for %s (called from 0x%llx): the stack cannot be cleaned", import_name_of[i], (u64)MP(R[RSP]));
+    u32 pop = 4 + (u32)import_pop[i];
+#else
+    u32 pop = 8; // the return address the caller pushed
+#endif
     if (!import_fn[i]) {
       if (strict < 0) { const char *e = getenv("SW_STRICT"); strict = e && *e == '1'; }
-      if (strict) rt_fatal("import not implemented: %s (called from 0x%llx)", import_name_of[i], M64(R[RSP]));
+      if (strict) rt_fatal("import not implemented: %s (called from 0x%llx)", import_name_of[i], (u64)MP(R[RSP]));
       static u8 told[8192];
-      if (!told[i]) { told[i] = 1; rt_log("stub: %s (called from 0x%llx) returns 0x%x", import_name_of[i], M64(R[RSP]), stub_value(import_name_of[i])); }
+      if (!told[i]) { told[i] = 1; rt_log("stub: %s (called from 0x%llx) returns 0x%x", import_name_of[i], (u64)MP(R[RSP]), stub_value(import_name_of[i])); }
       R[RAX] = stub_value(import_name_of[i]);
-      R[RSP] += 8;
+      R[RSP] += pop;
       return;
     }
     if (rt_trace > 1) rt_log("[%u] %s", THREAD(c)->id, import_name_of[i]);
     import_fn[i](c);
-    R[RSP] += 8; // the return address the caller pushed
+    R[RSP] += pop;
     return;
   }
   unsigned lo = 0, hi = fn_count;
   while (lo < hi) { unsigned m = (lo + hi) / 2; if (fn_addrs[m] < t) lo = m + 1; else hi = m; }
   if (lo < fn_count && fn_addrs[lo] == t) { fn_ptrs[lo](c); return; }
-  rt_fatal("indirect call or jump to 0x%llx, which is no lifted function (return address 0x%llx)", t, M64(R[RSP]));
+  rt_fatal("indirect call or jump to 0x%llx, which is no lifted function (return address 0x%llx)", t, (u64)MP(R[RSP]));
 }
 
 // ---- handles and waits ----
@@ -236,22 +269,26 @@ static __thread Thread *current;
 // implicit TLS: each module with a TLS directory has an index; a thread's TLS array holds a copy of each template
 static u64 new_teb(Thread *t) {
   u64 teb = rt_valloc(TEB_SIZE, 4096);
-  M64(teb + TEB_SELF) = teb;
-  M64(teb + TEB_STACK_BASE) = t->stack_hi;
-  M64(teb + TEB_STACK_LIMIT) = t->stack_lo;
-  M64(teb + TEB_PID) = 4;
-  M64(teb + TEB_TID) = t->id;
-  M64(teb + TEB_PEB) = rt_peb;
+#ifdef TEB_SEH
+  MP(teb + TEB_SEH) = 0xFFFFFFFFu;
+#endif
+  MP(teb + TEB_SELF) = teb;
+  MP(teb + TEB_STACK_BASE) = t->stack_hi;
+  MP(teb + TEB_STACK_LIMIT) = t->stack_lo;
+  MP(teb + TEB_PID) = 4;
+  MP(teb + TEB_TID) = t->id;
+  MP(teb + TEB_PEB) = rt_peb;
   u64 array = rt_valloc(64 * 8, 64);
   for (unsigned k = 0; k < rt_module_count; k++) {
     u64 dir = rt_modules[k].tls_dir;
     if (!dir) continue;
-    u64 start = M64(dir), end = M64(dir + 8), zero = M32(dir + 32);
+    // IMAGE_TLS_DIRECTORY: start, end, the index's address, callbacks (pointers), then the zero fill's size
+    u64 start = MP(dir), end = MP(dir + PTR_SIZE), zero = M32(dir + 4 * PTR_SIZE);
     u64 block = rt_valloc(end - start + zero + 64, 64);
     memcpy((void *)GP(block), (void *)GP(start), end - start);
-    M64(array + 8 * M32(M64(dir + 16))) = block;
+    MP(array + PTR_SIZE * M32(MP(dir + 2 * PTR_SIZE))) = block;
   }
-  M64(teb + TEB_TLS_POINTER) = array;
+  MP(teb + TEB_TLS_POINTER) = array;
   return teb;
 }
 
@@ -264,6 +301,10 @@ Thread *rt_thread_new(u64 stack_size) {
   pthread_mutex_lock(&rt_wait_lock); t->id = next_tid += 4; pthread_mutex_unlock(&rt_wait_lock);
   t->teb = new_teb(t);
   t->cpu.gs_base = t->teb;
+#if GUEST_BITS == 32
+  t->cpu.fs_base = t->teb; // 32-bit code reaches the TEB through fs
+  t->cpu.fcw = 0x027F;     // what Windows gives a 32-bit thread: 53-bit precision, round to nearest
+#endif
   t->cpu.r[RSP] = t->stack_hi - 64;
   t->cpu.mxcsr = 0x1F80;
   t->handle = rt_object_new(OBJ_THREAD);
@@ -273,7 +314,7 @@ Thread *rt_thread_new(u64 stack_size) {
 
 // TLS callbacks and DllMain of every module (DLLs first, the exe last; in reverse on detach)
 static void attach_module(Thread *t, const ModuleDef *m, int reason) {
-  if (m->tls_dir) for (u64 cbs = M64(m->tls_dir + 24); cbs && M64(cbs); cbs += 8) rt_guest_call(&t->cpu, M64(cbs), m->base, (u64)reason, 0, 0);
+  if (m->tls_dir) for (u64 cbs = MP(m->tls_dir + 3 * PTR_SIZE); cbs && MP(cbs); cbs += PTR_SIZE) rt_guest_call(&t->cpu, MP(cbs), m->base, (u64)reason, 0, 0);
   if (m->is_dll && m->entry && m->entry != m->base) rt_guest_call(&t->cpu, m->entry, m->base, (u64)reason, 0, 0);
 }
 void rt_thread_attach(Thread *t, int reason) {
@@ -383,18 +424,19 @@ static void load_modules(void) {
       u64 va = m->sections[i].va, n = m->sections[i].len;
       if (n && host_read_file(m->name, (u32)strlen(m->name), m->sections[i].off, n, va) != n) rt_fatal("cannot read section %u of %s", i, m->name);
     }
-    for (unsigned i = 0; i < m->reloc_count; i++) M64(m->relocs[i]) += m->base - m->file_base;
-    if (m->tls_dir) M32(M64(m->tls_dir + 16)) = k; // the module's TLS index
+    for (unsigned i = 0; i < m->reloc_count; i++) MP(m->relocs[i]) += m->base - m->file_base;
+    if (m->tls_dir) M32(MP(m->tls_dir + 2 * PTR_SIZE)) = k; // the module's TLS index
   }
   unsigned missing = 0;
   for (unsigned i = 0; i < import_count; i++) {
     import_name_of[i] = import_names[i];
-    if (import_targets[i]) { M64(import_slots[i]) = import_targets[i]; continue; } // a DLL we lifted
+    if (import_targets[i]) { MP(import_slots[i]) = import_targets[i]; continue; } // a DLL we lifted
     u64 data = rt_data_import(import_names[i]);
-    if (data) { M64(import_slots[i]) = data; continue; }
+    if (data) { MP(import_slots[i]) = data; continue; }
     import_fn[i] = find_import(import_names[i]);
+    import_pop[i] = (short)stdcall_bytes(import_names[i]);
     if (!import_fn[i]) missing++;
-    M64(import_slots[i]) = import_base + 8ull * i;
+    MP(import_slots[i]) = import_base + 8ull * i;
   }
   import_total = import_count;
   if (missing && rt_trace) {
@@ -418,21 +460,35 @@ int main(int argc, char **argv) {
   for (unsigned k = 0; k < rt_module_count; k++) if (rt_modules[k].base + rt_modules[k].size > top) top = rt_modules[k].base + rt_modules[k].size;
   top = (top + 0xFFFF) & ~0xFFFFull;
   u64 have = (u64)__builtin_wasm_memory_size(0) * 65536;
-  if ((u64)(uptr)sbrk(0) > image_base) rt_fatal("the runtime's heap (0x%llx) already reaches the image base 0x%llx", (u64)(uptr)sbrk(0), image_base);
-  if (top > have && __builtin_wasm_memory_grow(0, (top - have) / 65536) == (uptr)-1) rt_fatal("cannot grow memory to 0x%llx", top);
-  // the image's range is taken out of malloc's reach: sbrk moves past it
-  sbrk((intptr_t)(top - (u64)(uptr)sbrk(0)));
+  // Two layouts (tools/build-title.sh picks). An image that must load low (32-bit titles: 0x400000, often with
+  // no relocations) sits in a gap the link left for it, between the runtime's stack and its data; nothing of
+  // the runtime reaches it. Otherwise the images are above the runtime and its heap has to jump over them.
+  extern char __global_base, __stack_high;
+  u64 low = top;
+  for (unsigned k = 0; k < rt_module_count; k++) if (rt_modules[k].base < low) low = rt_modules[k].base;
+  if (top <= (u64)(uptr)&__global_base) {
+    if (low < (u64)(uptr)&__stack_high) rt_fatal("the image at 0x%llx overlaps the runtime's stack (it ends at 0x%llx)", low, (u64)(uptr)&__stack_high);
+  } else {
+    if ((u64)(uptr)sbrk(0) > image_base) rt_fatal("the runtime's heap (0x%llx) already reaches the image base 0x%llx", (u64)(uptr)sbrk(0), image_base);
+    if (top > have && __builtin_wasm_memory_grow(0, (top - have) / 65536) == (uptr)-1) rt_fatal("cannot grow memory to 0x%llx", top);
+    // the image's range is taken out of malloc's reach: sbrk moves past it
+    sbrk((intptr_t)(top - (u64)(uptr)sbrk(0)));
+  }
   rt_crt_init(); // before the imports are bound: data imports point into it
   load_modules();
   rt_peb = rt_valloc(0x1000, 4096);
-  M64(rt_peb + 0x10) = image_base; // ImageBaseAddress
+  MP(rt_peb + PEB_IMAGE_BASE) = image_base;
   Thread *t = rt_main_thread = rt_thread_new(image_stack_reserve);
   current = t;
   rt_thread_attach(t, 1); // DLL_PROCESS_ATTACH
   jmp_buf jb; t->exit_jmp = &jb;
   if (!setjmp(jb)) {
     Cpu *c = &t->cpu;
+#if GUEST_BITS == 32
+    PUSH32(0);
+#else
     PUSH64(0);
+#endif
     rt_call(c, rt_modules[0].entry);
     t->exit_code = (u32)R[RAX];
   }

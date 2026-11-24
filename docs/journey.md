@@ -239,6 +239,32 @@ packaged in layers from a base. The plan and its milestones are in [status.md](s
 - **A toolchain script and a test runner** (`tools/setup-toolchain.sh`, `tests/run.sh`): this machine had
   lost its toolchains, and the fixtures had only been run by hand.
 
+### 3.12 32-bit code: the lifter's second mode, and the first 32-bit titles (2026-11-24)
+Milestone M1. The lifter now reads PE32 and lifts 32-bit x86; the runtime builds for a 32-bit guest; two
+32-bit titles run in Node and in headless Chrome and print exactly what they print under Wine.
+- **One lifter, a width carried through**: PE32 loading, 4-byte relocations and import slots, 32-bit decoding,
+  4-byte stack operations, `fs` as the TEB. An image without relocations stays where it was linked. The C for
+  64-bit titles did not change by a byte (six titles compared before and after).
+- **Functions without an exception table**: recursive descent from the entry point and call targets ("hard"
+  entries), plus code addresses found in data, in immediates and by a scan of what nothing reached ("soft").
+  Only hard entries cut a function; a soft entry inside another function is one more way into its body.
+- **Jump tables** as Visual C++ writes them: `jmp [reg*4+table]` with the table after the function, and the
+  two-level form through a byte table. Bounds are found by walking back along control flow (`memcpy` indexes
+  its tables with negative numbers).
+- **Instructions 64-bit code never has**: `pushad`, `pushfd` / `popfd` (EFLAGS.ID round-trips, so `cpuid`
+  detection works), `enter`, `loop`, `jecxz`, `std` with string instructions, `rcl` / `rcr`, `xlat`; x87's
+  transcendentals through libm, `fucomip`, `fxam`, and **precision control**: in 24-bit mode results are
+  rounded to `float`, as Direct3D 9 leaves the FPU.
+- **The runtime for a 32-bit guest** (`-DGUEST_BITS=32`): arguments read from the stack, a stdcall function's
+  arguments removed after it returns (sizes from llvm-mingw's 32-bit import libraries:
+  `tools/stdcall-sizes.sh`; an unknown size stops the run instead of guessing), the TEB on `fs` with the x86
+  offsets, 4-byte loader writes, the low-image memory layout (`docs/memory.md`).
+- **Two test titles** whose expected output is Wine's: `hello` built for i686 (7/7) and `fixtures/x87`
+  (27 lines: control word, rounding modes, 24- and 53-bit precision, transcendentals, compares, the direction
+  flag, EFLAGS.ID, a stdcall callback, a compiled jump table, 64-bit integer helpers).
+- **The game lifts**: 349,540 instructions, 96 % of `.text`, all 88 jump tables; what is left out is MMX and
+  3DNow only ([narbacular-drop.md](narbacular-drop.md)).
+
 ## 4. Roadblocks
 
 ### Resolved
@@ -262,6 +288,10 @@ packaged in layers from a base. The plan and its milestones are in [status.md](s
 | R16 | Wine's installer run failed twice | a first boot stopped at the Mono prompt left a prefix that cannot load 32-bit programs; the C locale cannot create the one file whose name has `©` | no Mono / Gecko, `LANG=C.UTF-8`, and `oracle.sh prefix` recreates a half-made prefix |
 | R17 | `+snoop` logged no FMOD calls | the DLL is UPX-packed: when it loads, every export still points at zeros, and snoop skips those | unpack it first (`upx -d`); it behaves the same |
 | R18 | `dxc` for Linux needs glibc 2.38 and Docker was not running | the Doom fixture compiles one HLSL shader | the Windows `dxc.exe` under the oracle's Wine, with paths given the `Z:` drive |
+| R19 | A false function entry silently breaks a branch | flags live in the lifted function, and a jump to another entry becomes a call; without an exception table, words in data that look like code addresses can point into the middle of a function | hard and soft entries: only the entry point, exports and call targets cut a function |
+| R20 | `fxch st(i)` exchanged st(0) with itself | the emitter read the first operand, which is always st(0) | the last operand; found when the 32-bit x87 work compared against Wine (no 64-bit test title used it) |
+| R21 | The 32-bit `hello` crashed under Wine itself | Rust's `raw-dylib` imports stdcall functions under their decorated names (`_WriteFile@20`) on x86; kernel32 exports plain names | `import_name_type = "undecorated"`, and Wine's crash debugger turned off so a crash ends the run instead of waiting |
+| R22 | 64-bit division in a 32-bit program with no C runtime | the compiler calls Visual C++'s helpers (`__aulldiv`, ...: arguments on the stack, removed by the callee) | thunks in the fixture around a shift-and-subtract division |
 
 ### Open
 | # | Roadblock | Why it matters | Plan |
@@ -309,6 +339,8 @@ packaged in layers from a base. The plan and its milestones are in [status.md](s
 | Micro-benchmark, lifted vs native | 1.3–6× slower; wasm64 0–45 % slower than wasm32 |
 | XCL console title | 50 / 50 checks in Chrome (WebGPU), 46 / 50 in Node (no pixels there) |
 | Our test titles | hello 7/7, threads 9/9, C++ exceptions 7/7, DLL 7/7, benchmark checksums 5/5 |
+| 32-bit test titles | hello (i686) 7/7; `fixtures/x87` 27 lines equal Wine's output; both in Node and Chrome |
+| Narbacular Drop, lifted | 3,955 functions, 349,540 instructions, 88 jump tables, 96.2 % of `.text`; 8,279 MMX / 3DNow instructions not lifted; 3 indirect jumps unresolved (C++ exception code) |
 | Doom (console title) | 871 functions, 37 jump tables, 0 unlifted; 7,156-frame timedemo matches native on all 7,123 frames native draws deterministically, in Node and read back from WebGPU in Chrome; ~35 fps in headless Chrome on SwiftShader |
 | Runtime imports implemented | 464 functions (before graphics) plus the D3D12 / D3D12.X objects, XAudio2 and GameInput readings across kernel32, ntdll, msvcrt, ucrtbase, kernelx, XMem, XGameRuntime, user32, DWM, GameInput, oleaut32, advapi32 |
 

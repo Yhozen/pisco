@@ -29,15 +29,32 @@ const ModuleDef *rt_module_named(const char *name);       // by file name, case-
 u64 rt_module_export(const ModuleDef *m, const char *name); // from its export directory in guest memory
 
 // ---- guest calls ----
+// The runtime is built for one guest width (GUEST_BITS, from the title: cpu.h defaults it to 64).
+#if GUEST_BITS == 32
+// Arguments of a 32-bit call (stdcall or cdecl), as an import sees them: all on the stack, above the return
+// address ESP points at. The import returns normally; rt_call then removes the return address and, for a
+// stdcall function, its arguments (the sizes come from tools/stdcall-sizes.sh).
+#define ARG(n) ((u64)M32(R[RSP] + 4 + 4 * (n)))
+#define FARG(n) MF64(R[RSP] + 4 + 8 * (n))  // right when every argument is a double (the C runtime's math functions)
+#define RET(v) (R[RAX] = (u32)(v))
+#define RET64(v) do { u64 v_ = (u64)(v); R[RAX] = (u32)v_; R[RDX] = (u32)(v_ >> 32); } while (0)
+#define MP(a) M32(a)   // a pointer-sized value in guest memory
+#define PTR_SIZE 4
+#else
 // Arguments of a Win64 call, as an import sees them: RSP points at the return address.
 #define ARG(n) ((n) == 0 ? R[RCX] : (n) == 1 ? R[RDX] : (n) == 2 ? R[8] : (n) == 3 ? R[9] : M64(R[RSP] + 8 + 8 * (n)))
 #define FARG(n) (X[n].pd[0])
 #define RET(v) (R[RAX] = (u64)(v))
+#define RET64(v) RET(v)
+#define MP(a) M64(a)
+#define PTR_SIZE 8
+#endif
 #define GSTR(a) ((char *)GP(a))
 typedef u16 wchar16;
 #define GWSTR(a) ((wchar16 *)GP(a))
 
-// Calls a guest function with up to four integer arguments and returns RAX.
+// Calls a guest function with up to four integer arguments and returns RAX (EAX for a 32-bit guest, where the
+// arguments go on the stack and it does not matter whether the callee removes them).
 u64 rt_guest_call(Cpu *c, u64 fn, u64 a0, u64 a1, u64 a2, u64 a3);
 
 // ---- logging ----
@@ -74,6 +91,19 @@ void rt_thread_attach(Thread *t, int reason); // runs the image's TLS callbacks
 __attribute__((noreturn)) void rt_thread_exit(Cpu *c, u32 code);
 
 // TEB fields
+#if GUEST_BITS == 32
+#define TEB_SEH 0x00   // the head of the exception handler chain; -1: empty
+#define TEB_STACK_BASE 0x04
+#define TEB_STACK_LIMIT 0x08
+#define TEB_SELF 0x18
+#define TEB_PID 0x20
+#define TEB_TID 0x24
+#define TEB_TLS_POINTER 0x2C
+#define TEB_PEB 0x30
+#define TEB_LAST_ERROR 0x34
+#define TEB_TLS_SLOTS 0xE10
+#define PEB_IMAGE_BASE 0x08
+#else
 #define TEB_STACK_BASE 0x08
 #define TEB_STACK_LIMIT 0x10
 #define TEB_SELF 0x30
@@ -83,6 +113,8 @@ __attribute__((noreturn)) void rt_thread_exit(Cpu *c, u32 code);
 #define TEB_PEB 0x60
 #define TEB_LAST_ERROR 0x68
 #define TEB_TLS_SLOTS 0x1480
+#define PEB_IMAGE_BASE 0x10
+#endif
 #define TEB_ERRNO 0x1900 // ours: msvcrt's per-thread errno
 #define TEB_SIZE 0x2000
 #define SET_LAST_ERROR(e) (M32(THREAD(c)->teb + TEB_LAST_ERROR) = (e))
@@ -107,8 +139,13 @@ u64 rt_handle_new(Object *o);
 Object *rt_handle_get(u64 h);
 Object *rt_object_new(int type);
 void rt_handle_close(u64 h);
+#if GUEST_BITS == 32
+#define PSEUDO_PROCESS 0xFFFFFFFFull
+#define PSEUDO_THREAD 0xFFFFFFFEull
+#else
 #define PSEUDO_PROCESS 0xFFFFFFFFFFFFFFFFull
 #define PSEUDO_THREAD 0xFFFFFFFFFFFFFFFEull
+#endif
 // every wait and every signal go through this lock and condition
 extern pthread_mutex_t rt_wait_lock;
 extern pthread_cond_t rt_wait_cond;

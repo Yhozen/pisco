@@ -31,3 +31,19 @@ A guest address is an offset in linear memory (`GP(a)` in `rt/cpu.h`). The build
 
 Plan: stay wasm32 by default, keep every guest address going through `GP()`, and switch per title when
 the first run's peak shows it needs more.
+
+## 32-bit titles: an image that must load low
+
+A 32-bit exe usually wants `0x400000`, and an old one often has no relocations, so it cannot be moved above
+the runtime as 64-bit images are. `tools/build-title.sh` gives such a title a gap instead (checked with
+wasi-sdk 34's linker):
+
+```
+0 .. IMAGE_LOW            the runtime's own stack (--stack-first, -z stack-size: at most 8 MiB)
+IMAGE_LOW .. IMAGE_HIGH   the title's images: the exe where it was linked, its DLLs after it
+IMAGE_HIGH (to 1 MiB) ..  the runtime's data (--global-base), then its heap, which the guest's memory comes from
+```
+
+`IMAGE_LOW` / `IMAGE_HIGH` come from the lifter (`title.env`). Guest allocations stay below 2 GiB, as a program
+that is not large-address-aware expects. Addresses below `0x10000` are not a trap in wasm: a null pointer
+read returns the runtime's stack bytes (a known limit, as for 64-bit titles).

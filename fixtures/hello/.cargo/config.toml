@@ -4,3 +4,7 @@ target = "x86_64-pc-windows-msvc"
 [target.x86_64-pc-windows-msvc]
 linker = "lld-link"
 rustflags = ["-C", "link-args=/ENTRY:start /SUBSYSTEM:CONSOLE /NODEFAULTLIB /DYNAMICBASE", "-C", "target-feature=+crt-static"]
+# the same title as a 32-bit program: cargo build --release --target i686-pc-windows-msvc
+[target.i686-pc-windows-msvc]
+linker = "lld-link"
+rustflags = ["-C", "link-args=/ENTRY:start /SUBSYSTEM:CONSOLE /NODEFAULTLIB /DYNAMICBASE /SAFESEH:NO", "-C", "target-feature=+crt-static"]

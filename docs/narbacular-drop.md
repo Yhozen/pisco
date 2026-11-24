@@ -88,6 +88,23 @@ machine has no sound device, and the game loads no sounds. Afterwards it still c
 `DirectInput8Create` once; the rest goes through COM. The mouse is opened exclusive and foreground and read as
 relative motion; the keyboard foreground and non-exclusive. user32 is asked for no input at all.
 
+## What the lifter makes of it (M1)
+
+`target/release/lifter "<the exe>" out/nd/title.c --split 16`, 2026-11-24:
+
+| | `Narbacular Drop.exe` |
+|---|---|
+| Functions | 2,212 found from calls, the entry point and exports ("hard"); 1,743 more from code addresses in data and immediates ("soft") |
+| Instructions lifted | 349,540 |
+| `.text` | 96.19 % instructions, 0.23 % jump tables, 2.84 % padding, 0.74 % not reached (8.7 KB: a data table inside `.text` and unreferenced C runtime stubs) |
+| Jump tables | 88 recovered: every `jmp [reg*4+table]`, the two-level byte-index form included |
+| Indirect jumps left | 3, none a table: `_JumpToContinuation` and two neighbours in the C runtime's C++ exception code |
+| Not lifted | 8,279 instructions, all MMX or 3DNow (`movq`, `pfmul`, `pfadd`, `femms`, ...): D3DX's CPU-specific paths, never taken when the virtual CPU reports neither |
+
+When `fmod.dll` beside it is the unpacked one, it lifts too (78,137 instructions, 19 jump tables, 99.3 % of
+its code): running the game's own FMOD is a real alternative to implementing its 33 functions. The packed
+DLL as shipped is not liftable; a recipe has to unpack it or leave it out.
+
 ## What this decides
 
 | Question | Answer |

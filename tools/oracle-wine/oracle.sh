@@ -7,6 +7,8 @@
 #   oracle.sh start <title> <program.exe, a Windows path in the prefix> [program arguments...]
 #       starts the X server if needed and the program in the background; Wine's log goes to the run folder
 #   oracle.sh play <title> <session.json>      plays a session script (see README.md); screenshots go to the run folder
+#   oracle.sh run <title> <program.exe, a path on this machine> [arguments...]
+#       runs a console program to its end and prints what it printed (Wine's own messages go to the run folder)
 #   oracle.sh stop <title>                     ends the title's Wine processes
 #   oracle.sh reg <title> <reg arguments...>   `wine reg` in the title's prefix
 #   oracle.sh dir <title>                      prints the run folder
@@ -15,7 +17,7 @@
 #   and env.sh's ORACLE_HOME / WINE_HOME. A title's prefix is $ORACLE_HOME/prefix-<title>.
 set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd); root=$(cd "$here/../.." && pwd); . "$here/env.sh"
-cmd=${1:?usage: oracle.sh prefix|start|play|stop|reg|dir <title> ...}; title=${2:?title}; shift 2
+cmd=${1:?usage: oracle.sh prefix|start|run|play|stop|reg|dir <title> ...}; title=${2:?title}; shift 2
 export WINEPREFIX=${WINEPREFIX_OVERRIDE:-$ORACLE_HOME/prefix-$title}
 export DISPLAY=${ORACLE_DISPLAY:-:77}
 run=${ORACLE_RUN:-$root/out/oracle/$title}; mkdir -p "$run"
@@ -43,6 +45,10 @@ case $cmd in
     cd "$(dirname "$unix")"
     WINEDEBUG=${TRACE:--all} nohup wine "$(basename "$unix")" "$@" > "$run/wine.log" 2>&1 &
     echo $! > "$run/pid"; echo "started $(basename "$unix") on $DISPLAY (log: $run/wine.log)" ;;
+  run)
+    xserver; exe=$(realpath "${1:?program}"); shift
+    [ -f "$WINEPREFIX/system.reg" ] || "$0" prefix "$title" > /dev/null
+    WINEDEBUG=-all wine "$exe" "$@" 2> "$run/run.log" ;;
   play)
     session=${1:?session.json}
     "$ORACLE_HOME/venv/bin/python" -I "$here/play.py" "$DISPLAY" "$session" "$run" ;;
