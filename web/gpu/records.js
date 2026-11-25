@@ -58,7 +58,7 @@ export function readDraw(g, at) {
 export function shaderInterface(code) {
   const bindings = new Map(), inputs = new Set();
   for (const m of code.matchAll(/@group\(0\) @binding\((\d+)\) var(<uniform>)? \w+: ([\w<>]+);/g)) {
-    bindings.set(+m[1], m[2] ? GPU.BIND_UNIFORM : m[3].startsWith('texture_3d') ? GPU.BIND_TEXTURE_3D : m[3].startsWith('texture_2d') ? GPU.BIND_TEXTURE_2D : m[3] === 'sampler' ? GPU.BIND_SAMPLER : 0);
+    bindings.set(+m[1], m[2] ? GPU.BIND_UNIFORM : m[3].startsWith('texture_3d') ? GPU.BIND_TEXTURE_3D : m[3].startsWith('texture_cube') ? GPU.BIND_TEXTURE_CUBE : m[3].startsWith('texture_2d') ? GPU.BIND_TEXTURE_2D : m[3] === 'sampler' ? GPU.BIND_SAMPLER : 0);
   }
   const vin = code.match(/struct VIn \{([^}]*)\}/);
   if (vin) for (const m of vin[1].matchAll(/@location\((\d+)\)/g)) inputs.add(+m[1]);
