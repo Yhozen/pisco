@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // node tools/progress.mjs [--refresh] [--out <dir>]: the progress map (progress.svg, progress.json, badges) — what
-// the runtime implements, measured against what real titles use.
+// each runtime implements (its base's files), measured against what its titles use.
 //   --refresh  re-reads the build outputs (the lifter's import tables of our titles in out/, XCL's test-title run)
 //              into docs/progress-data.json, which is committed; without it the map is drawn from that file and
 //              from the runtime's sources, so CI can draw it without building anything.
@@ -12,24 +12,41 @@ const argv = process.argv.slice(2);
 const out = argv.includes('--out') ? path.resolve(argv[argv.indexOf('--out') + 1]) : path.join(root, 'out/progress');
 const dataPath = path.join(root, 'docs/progress-data.json');
 
-// ---- the runtime: every IMP(dll, name) and whether it does something ----
-const impls = new Map(); // "dll.dll!name" -> true when it does more than return E_NOTIMPL
-const rtFiles = (dir) => fs.readdirSync(path.join(root, dir), { withFileTypes: true }).flatMap((e) =>
-  e.isDirectory() ? (dir === 'rt' && e.name !== 'windows-x86' ? rtFiles(`${dir}/${e.name}`) : []) : e.name.endsWith('.c') ? [`${dir}/${e.name}`] : []);
-for (const f of rtFiles('rt')) { // the core and the 64-bit runtimes' folders (the Windows x86 runtime is counted on its own: A4)
-  const src = fs.readFileSync(path.join(root, f), 'utf8');
-  for (const m of src.matchAll(/^IMP\((\w+), *(\w+)\) *\{(.*)$/gm)) {
-    const stub = /^\s*RET\((E_NOTIMPL|0x80004001u?)\);\s*\}/.test(m[3]);
-    impls.set(`${m[1]}.dll!${m[2]}`, !stub);
-  }
+// ---- the runtimes: each base's files (bases/<runtime>/1/base.toml, the one list of them), their IMP(dll, name), and
+// whether each does something ----
+const RUNTIMES = { 'xbox-series': 'Xbox Series', 'windows-x64': 'Windows x64', 'windows-x86': 'Windows x86' };
+function baseFiles(rt) { // every `sources = [...]` of the base (its core and its libraries), each glob within one folder
+  const toml = fs.readFileSync(path.join(root, `bases/${rt}/1/base.toml`), 'utf8');
+  const globs = [...toml.matchAll(/^sources = \[([^\]]*)\]/gm)].flatMap((m) => [...m[1].matchAll(/"([^"]+)"/g)].map((g) => g[1]));
+  return globs.flatMap((g) => {
+    const dir = path.dirname(g), re = new RegExp('^' + path.basename(g).replace(/[.]/g, '\\.').replace(/\*/g, '[^/]*') + '$');
+    return fs.readdirSync(path.join(root, dir)).filter((f) => re.test(f)).map((f) => `${dir}/${f}`);
+  });
 }
+const implsOf = {}; // runtime -> Map "dll.dll!name" -> true when it does more than return E_NOTIMPL
+for (const rt of Object.keys(RUNTIMES)) {
+  const m = new Map();
+  for (const f of new Set(baseFiles(rt))) {
+    const src = fs.readFileSync(path.join(root, f), 'utf8');
+    for (const x of src.matchAll(/^IMP\((\w+), *(\w+)\) *\{(.*)$/gm)) m.set(`${x[1]}.dll!${x[2]}`, !/^\s*RET\((E_NOTIMPL|0x80004001u?)\);\s*\}/.test(x[3]));
+  }
+  implsOf[rt] = m;
+}
+const impls = new Map([...implsOf['windows-x64'], ...implsOf['xbox-series']]); // D3D12's methods: both 64-bit runtimes
+// the runtime each title is built for (its recipe's base)
+const TITLE_RUNTIME = { 'Doom (our console title)': 'xbox-series', "XCL's console test title": 'xbox-series', 'Stockfish 19 (official build)': 'windows-x64',
+  'SimpleTriangleDesktop (clang-cl)': 'windows-x64', 'SimpleTriangleDesktop (MSVC)': 'windows-x64', 'SimplePBR (clang-cl)': 'windows-x64', 'Narbacular Drop': 'windows-x86' };
 const dataImports = new Set(['msvcrt.dll!__initenv', 'msvcrt.dll!_commode', 'msvcrt.dll!_fmode']);
-// rt/process.c's find_import, in JavaScript
-function resolves(full) {
+// rt/process.c's find_import, in JavaScript, against one runtime's functions
+function resolves(full, rt) {
+  const impls = implsOf[rt];
   if (dataImports.has(full)) return true;
   const has = (n) => impls.get(n) === true;
   if (impls.has(full)) return has(full);
   const [dll, name] = full.split('!');
+  // a DLL that exports its stdcall functions under their decorated names (fmod.dll: `_FSOUND_Init@12`)
+  const bare = name.match(/^_(\w+)@\d+$/);
+  if (bare && impls.has(`${dll}!${bare[1]}`)) return has(`${dll}!${bare[1]}`);
   const crt = dll.startsWith('api-ms-win-crt-') || ['ucrtbase.dll', 'vcruntime140.dll', 'msvcrt.dll'].includes(dll);
   const core = dll.startsWith('api-ms-win-core-') || ['kernelbase.dll', 'ntdll.dll'].includes(dll) || dll.startsWith('ext-ms-win-');
   const alts = [];
@@ -58,6 +75,7 @@ if (argv.includes('--refresh')) {
     'SimpleTriangleDesktop (clang-cl)': 'out/st-local/title.c',   // tests/gfx/st.sh builds both
     'SimpleTriangleDesktop (MSVC)': 'out/st-boat-msvc/title.c',
     'SimplePBR (clang-cl)': 'out/pbr/title.c',                    // tests/gfx/pbr.sh
+    'Narbacular Drop': 'out/nd/title.c',                          // tests/run.sh nd
   };
   const old = fs.existsSync(dataPath) ? JSON.parse(fs.readFileSync(dataPath, 'utf8')) : {};
   const data = { updated: new Date().toISOString().slice(0, 10), titles: old.titles || {}, xcl: old.xcl || [], ladder: old.ladder, facts: old.facts };
@@ -128,15 +146,21 @@ const consoleMethods = [['Device #44 CreatePlacedResourceX', 'Device_CreatePlace
   ['List #94 RSSetDepthBiasX', 'CommandList_RSSetDepthBiasX'], ['List #146 UAV barrier', 'CommandList_UavBarrierX'], ['List #148 AllocateUploadMemory', 'CommandList_AllocateUploadMemoryX'],
   ['DMA list (copy queue)', 'Device_CreateCommandListX']];
 d3d.push({ name: 'D3D12.X console methods', items: consoleMethods.map(([n, f]) => ({ name: n, done: !!f && impls.get(`d3d12.dll!${f}`) === true })) });
-const union = new Map();
-for (const list of Object.values(data.titles)) for (const n of list) union.set(n, resolves(n));
-const byDll = new Map();
-for (const [n, ok] of union) { const g = group(n.split('!')[0]); if (!byDll.has(g)) byDll.set(g, []); byDll.get(g).push({ name: n.split('!')[1], done: ok }); }
+// per runtime: the union of its titles' imports, by DLL
 const SHIPPED = new Set(['msvcp140', 'vcruntime140_1', 'msvcp140_1', 'msvcp140_2', 'concrt140']);
-const dlls = [...byDll].map(([name, items]) => ({ name, lifted: SHIPPED.has(name), items: items.sort((a, b) => b.done - a.done) }));
-const runtimeDlls = dlls.filter((g) => !g.lifted);
 const shipped = (n) => SHIPPED.has(group(n.split('!')[0]));
-const titleBars = Object.entries(data.titles).map(([name, list]) => ({ name, done: list.filter((n) => !shipped(n) && resolves(n)).length, total: list.filter((n) => !shipped(n)).length, shipped: list.filter(shipped).length }));
+const perRuntime = Object.keys(RUNTIMES).map((rt) => {
+  const titles = Object.entries(data.titles).filter(([name]) => (TITLE_RUNTIME[name] || 'windows-x64') === rt);
+  const union = new Map();
+  for (const [, list] of titles) for (const n of list) union.set(n, resolves(n, rt));
+  const byDll = new Map();
+  for (const [n, ok] of union) { const g = group(n.split('!')[0]); if (!byDll.has(g)) byDll.set(g, []); byDll.get(g).push({ name: n.split('!')[1], done: ok }); }
+  const dlls = [...byDll].map(([name, items]) => ({ name, lifted: SHIPPED.has(name), items: items.sort((a, b) => b.done - a.done) }));
+  const bars = titles.map(([name, list]) => ({ name, runtime: RUNTIMES[rt], done: list.filter((n) => !shipped(n) && resolves(n, rt)).length, total: list.filter((n) => !shipped(n)).length, shipped: list.filter(shipped).length }));
+  return { rt, name: RUNTIMES[rt], dlls, bars };
+});
+const runtimeDlls = perRuntime.flatMap((r) => r.dlls.filter((g) => !g.lifted));
+const titleBars = perRuntime.flatMap((r) => r.bars);
 const xclGroups = new Map();
 for (const c of data.xcl) { const g = c.check.split(':')[0]; if (!xclGroups.has(g)) xclGroups.set(g, []); xclGroups.get(g).push({ name: c.check, done: c.pass }); }
 const xcl = [...xclGroups].map(([name, items]) => ({ name, items }));
@@ -189,7 +213,7 @@ function panel(y, title, groups, h, x = 10, w = W - 20) {
   return s;
 }
 let svg = '', y = 10;
-svg += label(10, y + 24, 'PISCO: Xbox titles in the browser', 24, TEXT, 700);
+svg += label(10, y + 24, 'PISCO: Xbox Series · Windows x64 · Windows x86', 24, TEXT, 700);
 svg += label(W - 10, y + 24, `updated ${data.updated}`, 13, DIM, 400, 'end');
 y += 40;
 // facts and the graphics ladder
@@ -204,7 +228,7 @@ for (const f of data.facts || []) chip(`${f.label}: ${f.value}`, f.ok ? '#1f6f3a
 const [xd, xt] = sum(xcl);
 chip(`XCL console checks: ${xd}/${xt}`, '#30363d');
 y += 40;
-svg += label(10, y + 18, 'Graphics ladder', 16);
+svg += label(10, y + 18, 'Graphics ladder (the 64-bit runtimes; its last rung is the Xbox Series runtime\'s goal)', 16);
 y += 26;
 const steps = data.ladder || [], sw = (W - 20 - 8 * (steps.length - 1)) / steps.length;
 steps.forEach((st, i) => {
@@ -213,13 +237,16 @@ steps.forEach((st, i) => {
 });
 y += 64;
 svg += panel(y, 'D3D12 / D3D12.X methods (vtable slots with a runtime function)', d3d, 300); y += 340;
-svg += panel(y, `Runtime imports our titles use (${titleBars.length} titles)`, dlls, 330); y += 370;
+for (const r of perRuntime) {
+  if (!r.bars.length) continue;
+  svg += panel(y, `${r.name} runtime: the imports its titles use (${r.bars.length} title${r.bars.length > 1 ? 's' : ''})`, r.dlls, r.rt === 'windows-x86' ? 200 : 260); y += r.rt === 'windows-x86' ? 240 : 300;
+}
 // per title
-svg += label(10, y + 20, 'Imports of each title the runtime answers', 16); y += 30;
+svg += label(10, y + 20, 'Imports of each title its runtime answers', 16); y += 30;
 for (const b of titleBars) {
-  const bw = W - 20 - 500, f = b.total ? b.done / b.total : 0;
-  svg += `<g><title>${esc(`${b.name}: ${b.done}/${b.total}`)}</title>` + label(10, y + 15, b.name, 13, TEXT, 500)
-    + `<rect x="270" y="${y + 2}" width="${bw}" height="16" rx="3" fill="${TODO}"/><rect x="270" y="${y + 2}" width="${(bw * f).toFixed(1)}" height="16" rx="3" fill="${f === 1 ? DONE : f >= 0.8 ? DONE : PART}"/>`
+  const bw = W - 20 - 560, f = b.total ? b.done / b.total : 0;
+  svg += `<g><title>${esc(`${b.name} (${b.runtime}): ${b.done}/${b.total}`)}</title>` + label(10, y + 15, `${b.name}`, 13, TEXT, 500) + label(255, y + 15, b.runtime, 11, DIM, 400)
+    + `<rect x="330" y="${y + 2}" width="${bw}" height="16" rx="3" fill="${TODO}"/><rect x="330" y="${y + 2}" width="${(bw * f).toFixed(1)}" height="16" rx="3" fill="${f === 1 ? DONE : f >= 0.8 ? DONE : PART}"/>`
     + label(W - 10, y + 15, `${b.done}/${b.total} (${pct(b.done, b.total)}%)${b.shipped ? ` +${b.shipped} C++ runtime` : ''}`, 13, TEXT, 500, 'end') + '</g>';
   y += 24;
 }
@@ -249,13 +276,13 @@ fs.writeFileSync(path.join(out, 'progress.html'), `<!doctype html>
 <title>PISCO progress</title>
 <style>body{font:16px/1.5 system-ui,sans-serif;background:#0d1117;color:#e6edf3;max-width:1020px;margin:2em auto;padding:0 1em}a{color:#58a6ff}img,object{max-width:100%}</style>
 <h1>PISCO progress</h1>
-<p>What the runtime implements, measured against what real titles use. Hover the map for names. Updated ${data.updated}.
+<p>What each runtime implements, measured against what its titles use. Hover the map for names. Updated ${data.updated}.
 <a href="https://github.com/Yhozen/pisco">Source</a> · <a href="./">Doom video</a> · <a href="progress.json">progress.json</a></p>
 <p><img src="badge-ladder.svg" alt="graphics ladder"> <img src="badge-d3d12.svg" alt="D3D12 methods"> <img src="badge-imports.svg" alt="imports"> <img src="badge-xcl.svg" alt="XCL checks"></p>
 <object data="progress.svg" type="image/svg+xml" width="1000">progress map</object>
 <ul>
 <li><b>D3D12 / D3D12.X methods</b>: every vtable slot of the PC interfaces (d3d12.h order) and the console methods known from XCL; green when a runtime function stands behind it.</li>
-<li><b>Runtime imports</b>: the union of what the titles below import (${titleBars.map((b) => esc(b.name)).join(', ')}), resolved as the runtime resolves them.</li>
+<li><b>Runtime imports</b>, one panel per runtime: the union of what its titles import (${titleBars.map((b) => esc(`${b.name} (${b.runtime})`)).join(', ')}), resolved as that runtime (its base's files) resolves them.</li>
 <li><b>XCL's console test title</b>: its 50 checks, from the last run.</li>
 </ul>
 `);

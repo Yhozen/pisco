@@ -1,31 +1,66 @@
-# Status and next steps (2026-11-25)
+# Status and next steps, by runtime (2026-11-25)
 
-## Done
+PISCO is one recompiler, one package format and several runtimes ([plan.md](plan.md)). Each runtime has its own
+titles, its own next steps and its own goal:
+
+| Runtime | Runs | Next | Goal |
+|---|---|---|---|
+| [Xbox Series](#xbox-series) | Doom as a console title, XCL's console test title (50/50) | D3D12.X shaders from RDNA2 code, MSVC FH4 | Minecraft, the Xbox Series build |
+| [Windows x64](#windows-x64) | Stockfish 19, SimpleTriangleDesktop, SimplePBR | more desktop D3D12 titles | desktop D3D12 titles |
+| [Windows x86](#windows-x86) | Narbacular Drop, playable | Tag: The Power of Paint (Direct3D 9 shaders, D3DX effects, FMOD Ex) | 32-bit Direct3D 9 games of the 2000s |
+
+## Shared: the recompiler, the core runtime, the packages
 
 - **Gate A (CPU and OS layer on synthetic titles): passed** in Node and headless Chrome — our own titles
   (Rust, C++ with libc++/libunwind, a multi-image title with a DLL) and XCL's console test title (28 of its
   50 checks: all CPU-side ones but 3 that need XCL's above-4-GiB memory layout).
-- **A real 64-bit Windows program** (Stockfish 19's official build, MinGW-compiled, 103 MB) runs bit-exactly:
-  `bench` searches 2,497,913 nodes, the signature published with the release, at ~106 k nodes/s in Node and
-  ~111 k in Chrome.
 - wasm32 vs wasm64 measured (`docs/memory.md`).
+- **Title images**: `pisco build` makes an image FROM one base per runtime (`bases/`), the only list of the
+  runtime's files; one title of each base is built twice with empty caches to equal digests (`tests/run.sh images`).
+
+## Xbox Series
 
 - **Graphics, sound, input and saves on a console title: Doom** (step 3 of the graphics ladder; `fixtures/doom`,
   `docs/journey.md` §3.9). D3D12.X → WebGPU in headless Chrome, XAudio2 → AudioWorklet, GameInput from the page,
   XGameSave's folder kept in OPFS. Its `-timedemo` frames, read back from WebGPU, equal native doomgeneric's on
   every frame native draws deterministically. Video: `fixtures/doom/video.sh`.
-
-- **The graphics ladder's steps 1–2**: SimpleTriangleDesktop (both builds, through DXGI, with Microsoft's C++
-  runtime DLLs lifted and MSVC C++ exceptions) and SimplePBR (DirectXTK12, PBR with image-based lighting, HDR)
-  render in headless Chrome (§3.20, §3.21).
 - **XCL's console test title: 50 of 50 checks** in headless Chrome (step 4 of the ladder; `docs/journey.md`
   §3.10, `tests/gfx/xcl.sh`): D3D12.X's UMA memory and console methods, DirectStorage, MFPlat, XG, XAudio2
   with XMA2 / Opus. What passing does not cover is listed in §3.10 (no raytracing, our own XG layout, no
   RDNA2 shaders yet).
 
-## Windows PC titles: Narbacular Drop first
+### Next, toward its goal (Minecraft, the Xbox Series build), in the order it probably needs them
 
-The second kind of title: an ordinary 32-bit Windows game, by the same route (recompiled ahead of time, no
+0. ~~**The graphics ladder's steps 1–2**~~: done 2026-11-24, as Windows x64 titles (SimpleTriangleDesktop with clang-cl and MSVC builds,
+   SimplePBR; `docs/journey.md` §3.20–3.21, `tests/gfx/st.sh`, `tests/gfx/pbr.sh`). What they needed:
+   the MSVC C++ runtime DLLs, the AVX rule in the lifter, DXGI swap chains, vertex / index / constant buffers,
+   depth, BC textures. The shared D3D12 core they need exists (written for all of D3D12, tested on Doom's part).
+1. **D3D12.X** (historical note, before 2026-11-24): nothing yet. First a null device (objects that accept every call, as XCL's M1) to reach the
+   first frame submission (Gate B); its vtable layouts can come from XCL's `hle/d3d12_layout.rs`. Then command
+   lists → WebGPU, title memory copied to GPU buffers before each submission (VIctory's `shadow.rs` model).
+2. **Shaders**: the census exists (`crates/shaders`, decoder and container parser from XCL). A translator
+   RDNA2 → WGSL is the big piece; XCL's HLSL emitter (`gpu/recomp/emit.rs`) is the reference.
+3. **MSVC C++ exceptions**: FH3 works (§3.20); FH4 (current `cl.exe`) is untested.
+4. **Audio**: done for PCM, XMA2 and Opus (FFmpeg); XMA streamed across buffers is not.
+5. **Input**: GameInput's object exists with timestamps only; readings from the Gamepad API next.
+6. **Persistence**: the VFS overlay is in memory; saves should go to OPFS in the browser, a folder in Node.
+7. **Speed**: lifted code runs ~1.3–6× native on our micro-benchmarks. Next: keep flags lazily, register
+   locals across calls, AVX2 paths (the virtual CPU reports SSE4.2 only), wasm64 only when needed.
+
+## Windows x64
+
+- **A real 64-bit Windows program** (Stockfish 19's official build, MinGW-compiled, 103 MB) runs bit-exactly:
+  `bench` searches 2,497,913 nodes, the signature published with the release, at ~106 k nodes/s in Node and
+  ~111 k in Chrome.
+- **The graphics ladder's steps 1–2**: SimpleTriangleDesktop (both builds, through DXGI, with Microsoft's C++
+  runtime DLLs lifted and MSVC C++ exceptions) and SimplePBR (DirectXTK12, PBR with image-based lighting, HDR)
+  render in headless Chrome (§3.20, §3.21).
+
+## Windows x86
+
+### Narbacular Drop, the first title
+
+An ordinary 32-bit Windows game, by the same route (recompiled ahead of time, no
 Wine at run time). Wine is the oracle it is compared with. What the game needs, measured:
 [narbacular-drop.md](narbacular-drop.md). Two halves:
 
@@ -113,23 +148,13 @@ exception is thrown), MMX and 3DNow (the virtual CPU still reports MMX and SSE t
 per title comes with M2), `fbld` / `fbstp`, the x87 tag
 word, 80-bit precision, and every import beyond the four the two test titles call.
 
-## Not done, in the order Minecraft probably needs it
+### Next: Tag: The Power of Paint (2008)
 
-0. ~~**The graphics ladder's steps 1–2**~~: done 2026-11-24 (SimpleTriangleDesktop with clang-cl and MSVC builds,
-   SimplePBR; `docs/journey.md` §3.20–3.21, `tests/gfx/st.sh`, `tests/gfx/pbr.sh`). What they needed:
-   the MSVC C++ runtime DLLs, the AVX rule in the lifter, DXGI swap chains, vertex / index / constant buffers,
-   depth, BC textures. The shared D3D12 core they need exists (written for all of D3D12, tested on Doom's part).
-1. **D3D12.X** (historical note, before 2026-11-24): nothing yet. First a null device (objects that accept every call, as XCL's M1) to reach the
-   first frame submission (Gate B); its vtable layouts can come from XCL's `hle/d3d12_layout.rs`. Then command
-   lists → WebGPU, title memory copied to GPU buffers before each submission (VIctory's `shadow.rs` model).
-2. **Shaders**: the census exists (`crates/shaders`, decoder and container parser from XCL). A translator
-   RDNA2 → WGSL is the big piece; XCL's HLSL emitter (`gpu/recomp/emit.rs`) is the reference.
-3. **MSVC C++ exceptions**: FH3 works (§3.20); FH4 (current `cl.exe`) is untested.
-4. **Audio**: done for PCM, XMA2 and Opus (FFmpeg); XMA streamed across buffers is not.
-5. **Input**: GameInput's object exists with timestamps only; readings from the Gamepad API next.
-6. **Persistence**: the VFS overlay is in memory; saves should go to OPFS in the browser, a folder in Node.
-7. **Speed**: lifted code runs ~1.3–6× native on our micro-benchmarks. Next: keep flags lazily, register
-   locals across calls, AVX2 paths (the virtual CPU reports SSE4.2 only), wasm64 only when needed.
+DigiPen's game draws everything through 16 D3DX effects compiled at run time to 23 `vs_2_a` and 23 `ps_2_a` shaders,
+and plays its sound through FMOD Ex. What it needs, in order: its census and the Wine oracle with Microsoft's own
+`d3dx9_35.dll` (T0); lifting the exe with that DLL and the imports by ordinal and by C++ name (T1); the main loop on
+the null GPU (T2); a Direct3D 9 shader translator, vs/ps 1.1 to 2.x to WGSL (T3); its pixels (T4); FMOD Ex, input,
+saves (T5); playable from `pisco build` (T6).
 
 ## Known limits
 
