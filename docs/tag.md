@@ -199,3 +199,11 @@ temporary files, `GetFullPathNameA`, `MoveFileA`, `GlobalMemoryStatus`, `Interlo
 - T3: the 46 bytecodes need only the plain SM2 arithmetic, `texld` on 2D and cube samplers, `dp2add`, `nrm`, `pow`,
   `cmp`, `abs`, `frc`; vertex inputs include no tangent or binormal in the session's shaders.
 - T4: R32F render targets, a cube texture, `DrawPrimitiveUP`; no point sprites, no DXT, no `StretchRect`.
+
+## Progress
+
+- **T1, lift and start.** `pisco build recipes/tag` lifts `Tag.exe` with `d3dx9_35.dll` from the installer's cab
+  beside it; under `SW_STRICT=1` the game reaches `CreateDevice` (full screen, 1024x768, D16). Its calls up to
+  `Direct3DCreate9` are Wine's, step for step: `tools/oracle-wine/trace-diff.py recipes/tag/traces/start.txt
+  <our SW_TRACE=2 log> --image 400000-570fff --until Direct3DCreate9` (699 steps; `HeapSize` had to answer the
+  size asked for, as the CRT's `atexit` table grows on it).
