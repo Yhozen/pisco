@@ -63,6 +63,8 @@ u64 rt_guest_call(Cpu *c, u64 fn, u64 a0, u64 a1, u64 a2, u64 a3) {
 #endif
 }
 
+volatile u32 rt_last_pc;
+
 // ---- imports ----
 typedef struct { const char *name; ImportFn fn; } ImportDef;
 extern const ImportDef rt_import_table[]; extern const unsigned rt_import_table_count; // imports.gen.c

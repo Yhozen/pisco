@@ -166,5 +166,10 @@ if (isMainThread) {
   try {
     if (tid === 0) { instance.exports._start(); exit(0); }
     else instance.exports.wasi_thread_start(tid, workerData.start);
-  } catch (e) { console.error(String(e.stack || e)); exit(123); }
+  } catch (e) {
+    console.error(String(e.stack || e));
+    const at = instance.exports.rt_last_pc; // lifted with --trace-pc: the guest block last entered
+    if (at) { const pc = new Uint32Array(memory.buffer, Number(at.value), 1)[0]; if (pc) console.error(`pisco: the last guest block entered: 0x${pc.toString(16)}`); }
+    exit(123);
+  }
 }

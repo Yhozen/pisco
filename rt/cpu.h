@@ -35,6 +35,7 @@ typedef struct Landing { void *jb; u64 entry_rsp; u64 resume; struct Landing *pr
     u64 resume_at = 0; if (setjmp(jb)) resume_at = L.resume; body(c, resume_at); c->landing = L.prev; } while (0)
 typedef struct { u8 cf, zf, sf, of, pf, af, df; } Flags; // df: 32-bit code only (64-bit code assumes it clear)
 
+extern volatile u32 rt_last_pc;   // a title lifted with --trace-pc: the guest address of the block last entered
 #define R (c->r)
 #define X (c->x)
 enum { RAX, RCX, RDX, RBX, RSP, RBP, RSI, RDI };

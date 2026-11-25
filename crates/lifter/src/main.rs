@@ -862,6 +862,7 @@ fn decode_func(img: &Image, entry: u64, entries: &BTreeSet<u64>) -> (Func, BTree
 }
 
 struct Emit<'a> {
+    trace_pc: bool,                    // --trace-pc: each block stores its address in rt_last_pc (the place a trap was)
     img: &'a Image,
     unimpl: BTreeMap<String, u32>,
     /// AVX-and-later instructions: lifted as traps (the virtual CPU does not report AVX, so code that checks
@@ -1514,6 +1515,7 @@ impl Emit<'_> {
             }
             if f.leaders.contains(&ip) {
                 writeln!(s, "L_{ip:x}:;").unwrap();
+                if self.trace_pc { writeln!(s, "rt_last_pc=0x{ip:x}u;").unwrap(); }
             }
             let body = self.insn(i, f, entries, entry);
             if !body.is_empty() {
@@ -1869,7 +1871,7 @@ fn main() {
 fn lift() {
     let args: Vec<String> = std::env::args().collect();
     if args.len() < 3 {
-        eprintln!("usage: lifter <image.exe> <out.c> [--split N] [--base hex] [--entry hex]... [--builtin name.dll]... [--dll-dir <folder>=<guest folder>]...");
+        eprintln!("usage: lifter <image.exe> <out.c> [--split N] [--base hex] [--entry hex]... [--builtin name.dll]... [--dll-dir <folder>=<guest folder>]... [--trace-pc]");
         std::process::exit(2);
     }
     let exe = std::path::Path::new(&args[1]);
@@ -2025,7 +2027,7 @@ fn lift() {
     }
     // a fallthrough into another function's entry is emitted as a call to it: make sure it exists
     let cut = found32.as_ref().map(|f| &f.hard).unwrap_or(&entries);
-    let mut em = Emit { img: &img, unimpl: BTreeMap::new(), avx: 0, unresolved: 0, cut, counted: BTreeSet::new(), unresolved_at: BTreeSet::new(), pointer_jumps: BTreeSet::new() };
+    let mut em = Emit { trace_pc: args.iter().any(|a| a == "--trace-pc"), img: &img, unimpl: BTreeMap::new(), avx: 0, unresolved: 0, cut, counted: BTreeSet::new(), unresolved_at: BTreeSet::new(), pointer_jumps: BTreeSet::new() };
     let _ = em.img;
     let parts: usize = args.iter().position(|a| a == "--split").map(|i| args[i + 1].parse().expect("--split N")).unwrap_or(1).max(1);
     // (a 64-bit title's files stay as they were: cpu.h takes GUEST_BITS as 64 when it is not defined)

@@ -15,7 +15,7 @@ W=${WASI_SDK:-$HOME/tools/wasi-sdk-34.0-x86_64-linux}/bin
 JOBS=${JOBS:-$(nproc)}
 TARGET="--target=wasm32-wasip1-threads -matomics -mbulk-memory -msimd128 -mnontrapping-fptoint -msign-ext"
 # DLL_DIR=<folder>: the DLLs the title imports from its system folder (an image's C:\WINDOWS\system32), lifted with it
-"$root/target/release/lifter" "$exe" "$out/title.c" --split "${SPLIT:-8}" ${DLL_DIR:+--dll-dir "$DLL_DIR=c:/WINDOWS/system32"} $([ -n "${RECIPE:-}" ] && python3 "$root/tools/recipe-gen.py" --lifter-options "$RECIPE")
+"$root/target/release/lifter" "$exe" "$out/title.c" --split "${SPLIT:-8}" ${TRACE_PC:+--trace-pc} ${DLL_DIR:+--dll-dir "$DLL_DIR=c:/WINDOWS/system32"} $([ -n "${RECIPE:-}" ] && python3 "$root/tools/recipe-gen.py" --lifter-options "$RECIPE")
 GUEST_BITS=64; IMAGE_LOW=0; IMAGE_HIGH=0; FIXED_BASE=0
 [ -f "$out/title.env" ] && . "$out/title.env"
 [ -z "${PROFILE:-}" ] || { echo "build-title.sh: PROFILE is gone; BASE=windows-x86, windows-x64 or xbox-series" >&2; exit 2; }
@@ -49,5 +49,5 @@ for f in $RT_FILES; do b=$(echo "${f#$root/rt/}" | tr / _ | sed "s/\.c$//"); X="
 "$W/clang" $CF -c "$out/recipe.gen.c" -o "$out/recipe.gen.o"
 wait
 "$W/clang" $TARGET -pthread "$out"/title*.c.o "$out"/rt_*.o "$out/imports.gen.o" "$out/recipe.gen.o" $AUDIO_LIBS -o "$out/title.wasm" -mllvm -wasm-enable-sjlj -lsetjmp \
-  -Wl,--import-memory,--shared-memory,--initial-memory=67108864,--max-memory=4294967296,--export=wasi_thread_start,$LAYOUT \
+  -Wl,--import-memory,--shared-memory,--initial-memory=67108864,--max-memory=4294967296,--export=wasi_thread_start,--export=rt_last_pc,$LAYOUT \
   -Wl,--export=__heap_base

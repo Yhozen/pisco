@@ -230,6 +230,7 @@ fn lift(t: &Tools, r: &Recipe, exe: &Path, ex: &Extracted, cache: &Path) -> R<Li
     for e in &r.entries { args.extend(["--entry".into(), format!("{e:x}")]); }
     if let Some(b) = r.base_address { args.extend(["--base".into(), format!("{b:x}")]); }
     for d in r.dll.keys() { args.extend(["--builtin".into(), d.clone()]); }
+    if std::env::var_os("PISCO_TRACE_PC").is_some() { args.push("--trace-pc".into()); }   // each block notes its address (debugging a trap)
     let mut dll_dirs: Vec<String> = Vec::new();   // not in the key: where the files are differs between machines
     for d in &sys_dirs { dll_dirs.extend(["--dll-dir".into(), format!("{}=c:/WINDOWS/system32", d.display())]); }
     key.push_str(&format!("options {}\n", args.join(" ")));
@@ -396,7 +397,7 @@ pub fn build(root: &Path, o: &Opts) -> R<()> {
     link.push("-pthread".into());
     let objects: Vec<&PathBuf> = lifted.objects.iter().chain(&rt_objs).chain(&gen_objs).collect();
     let tail = ["-mllvm".to_string(), "-wasm-enable-sjlj".into(), "-lsetjmp".into(),
-        format!("-Wl,--import-memory,--shared-memory,--initial-memory=67108864,--max-memory=4294967296,--export=wasi_thread_start,{layout_flags}"), "-Wl,--export=__heap_base".into()];
+        format!("-Wl,--import-memory,--shared-memory,--initial-memory=67108864,--max-memory=4294967296,--export=wasi_thread_start,--export=rt_last_pc,{layout_flags}"), "-Wl,--export=__heap_base".into()];
     let mut key = format!("link 2 (as title.wasm)\nclang {}\nflags {} {}\n", t.clang_version, link.join(" "), tail.join(" "));
     for o in &objects { key.push_str(&format!("{}\n", oci::sha256(&io(std::fs::read(o), o)?))); }
     let key = oci::sha256(key.as_bytes());
