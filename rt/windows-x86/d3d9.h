@@ -63,6 +63,8 @@ typedef struct Surface9 {
   u8 lockable;                 // not a render target inside a texture, not a back buffer or a target made without the option
   u32 dirty;                   // counts unlocks and copies into it: the back end's sign that the bytes changed
   u32 gpu_id, gpu_dirty;       // d3d9_gpu.c: its texture on the GPU (a surface that is no texture's level), and the `dirty` last sent there
+  u32 part_id, part_w, part_h; // d3d9_gpu.c: a depth buffer drawn with a smaller target: the target-sized depth texture used then
+  u8 part_written;             // ... which was written since the buffer's last clear: the buffer's own corner no longer agrees
 } Surface9;
 typedef struct Volume9 { Object9 o; VolumeDesc9 desc; u32 level; u8 *bits; u32 row_pitch, slice_pitch, size; s32 locked; u32 dirty, gpu_dirty; } Volume9;
 typedef struct Texture9 {      // a 2D texture (K_TEXTURE: `surfaces`), a cube texture (K_CUBETEXTURE: `surfaces`, six faces of

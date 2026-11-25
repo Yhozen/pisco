@@ -169,7 +169,7 @@ static u32 target(Surface9 *s, u32 *mip) {
 }
 void d3d9_gpu_release(Object9 *o) {
   switch (o->kind) {
-  case K_SURFACE: destroy(((Surface9 *)o)->gpu_id); break;
+  case K_SURFACE: destroy(((Surface9 *)o)->gpu_id); destroy(((Surface9 *)o)->part_id); break;
   case K_TEXTURE: case K_VOLUMETEXTURE: case K_CUBETEXTURE: destroy(((Texture9 *)o)->gpu_id); break;
   case K_VERTEXBUFFER: case K_INDEXBUFFER: destroy(((Buffer9 *)o)->gpu_id); break;
   default: break;
@@ -177,22 +177,36 @@ void d3d9_gpu_release(Object9 *o) {
 }
 
 // ---- passes ----
-static struct { int open; u32 color, mip, depth, color_format, depth_format, width, height; } pass;
+static struct { int open, stale; u32 color, mip, depth, color_format, depth_format, width, height; Surface9 *part; } pass;
 static struct { int sent; Viewport9 vp; Rect9 scissor; } view;
 // The pass draws go to: the device's target and depth buffer. With `flags` (D3DCLEAR_*) it starts with a clear.
+// Direct3D 9 lets a depth buffer be larger than the target (its top left corner is used); WebGPU wants the two of
+// one size, so such a pair draws with a target-sized depth texture of the buffer's own. That is the same as long as
+// what is drawn there starts from a depth clear, or does not test depth: `pass.stale` marks a pass whose depth
+// contents are not the buffer's (see the draw), in either direction.
 static int set_pass(Device9 *d, u32 flags, u32 color, float z, u32 stencil) {
   Surface9 *t = d->targets[0], *ds = d->depth; u32 mip = 0, dmip = 0;
-  u32 cid = t ? target(t, &mip) : 0, did = 0;
+  u32 cid = t ? target(t, &mip) : 0, did = 0; int part = 0;
   if (!cid) { UNSURE_ONCE("Direct3D 9: a render target of format %u is not drawn into", t ? t->desc.format : 0); return 0; }
   if (ds) {
-    if (ds->desc.width != t->desc.width || ds->desc.height != t->desc.height) UNSURE_ONCE("Direct3D 9: a %ux%u depth buffer with a %ux%u target: drawn without depth", ds->desc.width, ds->desc.height, t->desc.width, t->desc.height);
-    else did = target(ds, &dmip);
+    if (ds->desc.width < t->desc.width || ds->desc.height < t->desc.height) UNSURE_ONCE("Direct3D 9: a %ux%u depth buffer with a larger %ux%u target: drawn without depth", ds->desc.width, ds->desc.height, t->desc.width, t->desc.height);
+    else if (ds->desc.width != t->desc.width || ds->desc.height != t->desc.height) {
+      u32 format = dxgi_of(ds->desc.format);
+      if (format && (!ds->part_id || ds->part_w != t->desc.width || ds->part_h != t->desc.height)) {
+        destroy(ds->part_id); ds->part_w = t->desc.width; ds->part_h = t->desc.height;
+        ds->part_id = resource(2, format, ds->part_w, ds->part_h, 1, 1, 2); stat.textures++;
+      }
+      did = format ? ds->part_id : 0; part = 1;
+    } else did = target(ds, &dmip);
   }
   if (!flags && pass.open && pass.color == cid && pass.mip == mip && pass.depth == did) return 1;
   float c[4]; color_rgba(color, c);
   u32 w[10] = {cid, mip, did, ((flags & 1) ? GPU_PASS_CLEAR_COLOR : 0) | ((flags & 2) && did ? GPU_PASS_CLEAR_DEPTH : 0) | ((flags & 4) && did ? GPU_PASS_CLEAR_STENCIL : 0),
                bits_of(c[0]), bits_of(c[1]), bits_of(c[2]), bits_of(c[3]), bits_of(z), stencil};
   rec(GPU_R_PASS, w, 10);
+  if (did && (flags & 2)) { ds->part_written = (u8)part; pass.stale = 0; }   // a clear of the part changes the buffer's corner too
+  else pass.stale = did && (part || ds->part_written);
+  pass.part = did && part ? ds : 0;
   pass.open = 1; pass.color = cid; pass.mip = mip; pass.depth = did; pass.width = t->desc.width; pass.height = t->desc.height;
   pass.color_format = dxgi_of(t->desc.format); pass.depth_format = did ? dxgi_of(ds->desc.format) : 0;
   stat.passes++;
@@ -436,6 +450,8 @@ static void draw_with(Device9 *d, PipelineKey *pkp, const u8 *streams, const Bou
   if (pk.depth_format) {
     int z = s->rs[RS_ZENABLE] != 0;   // D3DZB_USEW (2) is drawn as a z buffer
     pk.depth_compare = (u8)(z && s->rs[RS_ZFUNC] >= 1 && s->rs[RS_ZFUNC] <= 8 ? s->rs[RS_ZFUNC] : 8); pk.depth_write = z && s->rs[RS_ZWRITEENABLE];
+    if (pass.stale && (pk.depth_compare != 8 || pk.depth_write)) UNSURE_ONCE("Direct3D 9: a draw tests depth that a depth buffer shared between targets of two sizes holds only in part");
+    if (pass.part && pk.depth_write) pass.part->part_written = 1;
     if (type >= PT_TRIANGLELIST || type == PT_POINTLIST) {   // WebGPU biases triangles only
       float bias = f32_of(s->rs[RS_DEPTHBIAS]) * 16777216.0f;   // depth units -> steps of a 24-bit depth buffer
       pk.depth_bias = (s32)(bias < 0 ? bias - 0.5f : bias + 0.5f); pk.slope = s->rs[RS_SLOPESCALEDEPTHBIAS];
