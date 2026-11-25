@@ -371,16 +371,21 @@ u64 rt_now_us(void) {
   struct timespec t; clock_gettime(CLOCK_REALTIME, &t); return (u64)t.tv_sec * 1000000 + (u64)t.tv_nsec / 1000;
 }
 void mixer_clock_moved(void);   // mixer.c: under a virtual clock the sound is mixed up to the clock as it moves
-void rt_clock_advance(u64 us) { if (rt_clock_virtual()) { __atomic_add_fetch(&clock_virtual, us, __ATOMIC_SEQ_CST); mixer_clock_moved(); } }
+static u32 clock_polls;   // reads of the clock since it last moved
+void rt_clock_advance(u64 us) { if (rt_clock_virtual()) { clock_polls = 0; __atomic_add_fetch(&clock_virtual, us, __ATOMIC_SEQ_CST); mixer_clock_moved(); } }
+// A title that waits for time by reading the clock in a loop (Tag's frame limiter: PeekMessage, QueryPerformanceCounter)
+// would wait for ever on a virtual clock, which moves only when a frame is presented or the title sleeps: after 64
+// reads in a row each read moves it on by a millisecond. A title that reads it a few times a frame is not affected.
+static void clock_polled(void) { if (rt_clock_virtual() && ++clock_polls > 64) rt_clock_advance(1000); }
 u64 rt_clock_virtual_us(void) { return __atomic_load_n(&clock_virtual, __ATOMIC_SEQ_CST); }   // the virtual clock since it started
 void rt_clock_advance_frame(void) { rt_clock_advance(clock_step); }
 // What the system has been up for: it started a minute before the first time anyone asked
 u64 rt_uptime_us(void) { static u64 boot; u64 now = rt_now_us(); if (!boot) boot = now - 60000000; return now - boot; }
 #if GUEST_BITS == 32
 // 32-bit titles: every clock is the title's clock
-IMP(kernel32, QueryPerformanceCounter) { M64(ARG(0)) = rt_uptime_us(); RET(1); }
+IMP(kernel32, QueryPerformanceCounter) { clock_polled(); M64(ARG(0)) = rt_uptime_us(); RET(1); }
 IMP(kernel32, QueryPerformanceFrequency) { M64(ARG(0)) = 1000000; RET(1); }
-IMP(kernel32, GetTickCount) { RET((u32)(rt_uptime_us() / 1000)); }
+IMP(kernel32, GetTickCount) { clock_polled(); RET((u32)(rt_uptime_us() / 1000)); }
 IMP(kernel32, GetTickCount64) { RET64(rt_uptime_us() / 1000); }
 static u64 filetime_now(void) { return rt_now_us() * 10 + 116444736000000000ull; }
 #else
