@@ -762,6 +762,7 @@ fn decode_func(img: &Image, entry: u64, entries: &BTreeSet<u64>) -> (Func, BTree
                             calls.insert(ins.near_branch_target());
                         } else if is_near(&ins) && ins.near_branch_target() != next {
                             calls.insert(ins.near_branch_target()); // (`call $+5` only pushes its return address)
+                            if is_setjmp_thunk(img, ins.near_branch_target()) { f.pads.insert(next); work.push(next); }   // (a longjmp resumes there)
                         }
                         f.leaders.insert(next);
                         if !m32 && is_import_thunk(img, ins.near_branch_target(), "_CxxThrowException") { calls.extend(throw_info_functions(img, &f.insns, &ins)); }
@@ -772,7 +773,7 @@ fn decode_func(img: &Image, entry: u64, entries: &BTreeSet<u64>) -> (Func, BTree
                         // its return address is a landing pad
                         if m32 && ins.op0_kind() == OpKind::Memory && ins.memory_base() == Register::None && ins.memory_index() == Register::None {
                             let slot = ins.memory_displacement64();
-                            if img.imports.iter().any(|(s, n)| *s == slot && ["!_setjmp3", "!_setjmp", "!setjmp"].iter().any(|x| n.ends_with(x))) {
+                            if is_setjmp_slot(img, slot) {
                                 f.pads.insert(next);
                                 work.push(next);
                             }
@@ -2634,6 +2635,16 @@ fn is_import_thunk(img: &Image, at: u64, name: &str) -> bool {
     let mut d = Decoder::with_ip(64, &b[..b.len().min(16)], at, DecoderOptions::NONE);
     let i = d.decode();
     i.mnemonic() == Mnemonic::Jmp && i.is_ip_rel_memory_operand() && img.imports.iter().any(|(slot, n)| *slot == i.ip_rel_memory_address() && n.ends_with(&format!("!{name}")))
+}
+/// 32-bit: is `at` an import slot of a setjmp, or a thunk (`jmp [slot]`) to one? A call to it returns twice.
+fn is_setjmp_slot(img: &Image, slot: u64) -> bool {
+    img.imports.iter().any(|(s, n)| *s == slot && ["!_setjmp3", "!_setjmp", "!setjmp"].iter().any(|x| n.ends_with(x)))
+}
+fn is_setjmp_thunk(img: &Image, at: u64) -> bool {
+    let Some(b) = img.bytes(at) else { return false };
+    let mut d = Decoder::with_ip(32, &b[..b.len().min(16)], at, DecoderOptions::NONE);
+    let i = d.decode();
+    i.mnemonic() == Mnemonic::Jmp && i.op0_kind() == OpKind::Memory && i.memory_base() == Register::None && i.memory_index() == Register::None && is_setjmp_slot(img, i.memory_displacement64())
 }
 /// GCC / LLVM (`.gcc_except_table`, here inline after the personality's RVA): the call-site table's landing pads.
 fn gcc_lsda(img: &Image, at: u64, start: u64, end: u64) -> Option<Vec<u64>> {
