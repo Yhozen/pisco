@@ -4,6 +4,7 @@
 #include <time.h>
 #include <unistd.h>
 #include "rt.h"
+#include "vfs.h"
 
 u64 rt_create_thread(Cpu *c, u64 stack, u64 start, u64 param, int suspended, u32 *tid);
 int rt_resume_thread(u64 h);
@@ -332,10 +333,22 @@ IMP(kernel32, LocalAlloc) { RET((uptr)((ARG(0) & 0x40) ? calloc(1, ARG(1) ? ARG(
 IMP(kernel32, LocalFree) { free((void *)GP(ARG(0))); RET(0); }
 
 // file mappings without files: shared memory inside the process
+// (file or INVALID_HANDLE_VALUE, security, protection, size high, size low, name). A file's mapping is a copy of its
+// bytes, made now: what readers of a mapped file see (writes through the view do not reach the file).
 IMP(kernel32, CreateFileMappingA) {
-  if (ARG(0) != 0xFFFFFFFFFFFFFFFFull) { SET_LAST_ERROR(50); RET(0); return; }
+  u64 fh = ARG(0), size = (ARG(3) << 32) | (u32)ARG(4);
+  VFile *vf = 0;
+  if (fh != PSEUDO_PROCESS) {   // INVALID_HANDLE_VALUE: the pagefile, at the guest's width
+    Object *f = rt_handle_get(fh);
+    if (!f || f->type != OBJ_FILE || !f->vf) { SET_LAST_ERROR(6); RET(0); return; }
+    vf = f->vf; if (!size) size = vfs_size(vf);
+    if (!size) { SET_LAST_ERROR(1006); RET(0); return; }   // ERROR_FILE_INVALID: an empty file cannot be mapped
+  }
   int ex; Object *o = named(OBJ_MAPPING, ARG(5) ? GSTR(ARG(5)) : 0, &ex);
-  if (!ex) { o->size = (ARG(3) << 32) | (u32)ARG(4); o->view = rt_valloc(o->size, 65536); }
+  if (!ex) {
+    o->size = size; o->view = rt_valloc(o->size, 65536);
+    if (vf && o->view) { u64 *pos = vfs_pos(vf), keep = *pos; *pos = 0; u64 n = vfs_size(vf); vfs_read(vf, (void *)GP(o->view), n < size ? n : size); *pos = keep; }
+  }
   SET_LAST_ERROR(ex ? 183 : 0);
   RET(o->view ? rt_handle_new(o) : 0);
 }
