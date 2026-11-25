@@ -5,6 +5,7 @@
 // (code page 1252): what a 2005 title was written for.
 #include <ctype.h>
 #include "../rt.h"
+#include "../vfs.h"
 
 IMP(kernel32, GetVersionExA) {
   u64 p = ARG(0); u32 size = M32(p);
@@ -165,3 +166,100 @@ IMP(kernel32, UnhandledExceptionFilter) { // (EXCEPTION_POINTERS*)
   u64 ep = ARG(0), rec = ep ? MP(ep) : 0;
   rt_fatal("unhandled exception 0x%08x at 0x%llx", rec ? M32(rec) : 0, rec ? (u64)MP(rec + 12) : 0);
 }
+
+// ---- resources: the .rsrc of a lifted image, found through its PE header's data directory 2 ----
+static u32 resource_dir(const ModuleDef *m, u32 *size) { // the directory's RVA, read from the image's file (its headers are not loaded)
+  u8 h[1024];
+  if (host_read_file(m->name, (u32)strlen(m->name), 0, sizeof h, (u64)(uptr)h) != sizeof h) return 0;
+  u32 pe; memcpy(&pe, h + 0x3C, 4);
+  if (pe > sizeof h - 0x100 || memcmp(h + pe, "PE\0\0", 4)) return 0;
+  u32 rva; memcpy(&rva, h + pe + 24 + 96 + 8 * 2, 4); memcpy(size, h + pe + 24 + 96 + 8 * 2 + 4, 4);
+  return rva;
+}
+// one level of the directory: the entry whose id (a number) or name (UTF-16, case-insensitive) matches `key`
+static u32 resource_find(u64 root, u64 dir, u64 key, int wide) {
+  u16 named = M16(dir + 12), ids = M16(dir + 14); u64 e = dir + 16;
+  char want[128] = ""; u32 want_id = 0;
+  if (key < 0x10000) want_id = (u32)key;
+  else {
+    if (wide) { const wchar16 *w = GWSTR(key); size_t i = 0; for (; w[i] && i < 127; i++) want[i] = (char)w[i]; want[i] = 0; }
+    else snprintf(want, sizeof want, "%s", GSTR(key));
+    if (want[0] == '#') { want_id = (u32)atoi(want + 1); want[0] = 0; }
+  }
+  for (u32 i = 0; i < (u32)named + ids; i++, e += 8) {
+    u32 name = M32(e), off = M32(e + 4);
+    if (i < named) {
+      if (!want[0]) continue;
+      u64 s = root + (name & 0x7FFFFFFF); u16 n = M16(s); if (strlen(want) != n) continue;
+      int same = 1; for (u16 k = 0; k < n && same; k++) same = toupper((u8)want[k]) == toupper((int)(M16(s + 2 + 2 * k) & 0xFF));
+      if (same) return off;
+    } else if (!want[0] && name == want_id) return off;
+  }
+  return 0xFFFFFFFFu;
+}
+// FindResource(module, name, type): the data entry of the first language found
+static u64 find_resource(Cpu *c, u64 module, u64 name, u64 type, int wide) {
+  const ModuleDef *m = module ? rt_module_of(module) : &rt_modules[0];
+  u32 size, rva = m ? resource_dir(m, &size) : 0;
+  if (!rva) { SET_LAST_ERROR(1812); return 0; }   // ERROR_RESOURCE_DATA_NOT_FOUND
+  u64 root = m->base + rva, at = root;
+  u32 o = resource_find(root, at, type, wide); if (o == 0xFFFFFFFFu || !(o >> 31)) { SET_LAST_ERROR(1813); return 0; }   // ERROR_RESOURCE_TYPE_NOT_FOUND
+  at = root + (o & 0x7FFFFFFF);
+  o = resource_find(root, at, name, wide); if (o == 0xFFFFFFFFu || !(o >> 31)) { SET_LAST_ERROR(1814); return 0; }    // ERROR_RESOURCE_NAME_NOT_FOUND
+  at = root + (o & 0x7FFFFFFF);
+  if (M16(at + 12) + M16(at + 14) == 0) { SET_LAST_ERROR(1815); return 0; }
+  o = M32(at + 16 + 4);                          // the first language
+  if (o >> 31) { SET_LAST_ERROR(1815); return 0; }
+  return root + o;                               // IMAGE_RESOURCE_DATA_ENTRY: data RVA, size, code page
+}
+IMP(kernel32, FindResourceA) { RET(find_resource(c, ARG(0), ARG(1), ARG(2), 0)); }
+IMP(kernel32, FindResourceW) { RET(find_resource(c, ARG(0), ARG(1), ARG(2), 1)); }
+IMP(kernel32, LoadResource) { const ModuleDef *m = ARG(0) ? rt_module_of(ARG(0)) : &rt_modules[0]; RET(m && ARG(1) ? m->base + M32(ARG(1)) : 0); }
+IMP(kernel32, LockResource) { RET(ARG(0)); }
+IMP(kernel32, SizeofResource) { RET(ARG(1) ? M32(ARG(1) + 4) : 0); }
+IMP(kernel32, FreeResource) { RET(0); }
+
+// ---- paths ----
+static const char temp_dir[] = "C:\\WINDOWS\\Temp\\";
+IMP(kernel32, GetTempPathA) { u32 n = (u32)ARG(0), need = (u32)sizeof temp_dir; if (n < need) { RET(need); return; } memcpy(GSTR(ARG(1)), temp_dir, need); RET(need - 1); }
+static u32 temp_file_name(const char *path, const char *prefix, u32 unique, char *out) {
+  static u32 seq; u32 u = unique ? unique : ++seq;
+  snprintf(out, 260, "%s%s%.3s%X.tmp", path, *path && path[strlen(path) - 1] != '\\' ? "\\" : "", prefix, u & 0xFFFF);
+  if (!unique) { u32 e; VFile *f = vfs_open(out, 0x40000000u, 2, &e); if (f) vfs_close(f); }   // created empty, as Windows does
+  return u & 0xFFFF;
+}
+IMP(kernel32, GetTempFileNameA) { char out[300]; u32 u = temp_file_name(GSTR(ARG(0)), ARG(1) ? GSTR(ARG(1)) : "", (u32)ARG(2), out); strcpy(GSTR(ARG(3)), out); RET(u); }
+IMP(kernel32, GetTempFileNameW) {
+  char *p = rt_narrow(GWSTR(ARG(0))), *x = ARG(1) ? rt_narrow(GWSTR(ARG(1))) : strdup(""), out[300];
+  u32 u = temp_file_name(p, x, (u32)ARG(2), out); free(p); free(x);
+  size_t i = 0; for (; out[i]; i++) M16(ARG(3) + 2 * i) = (u8)out[i]; M16(ARG(3) + 2 * i) = 0;
+  RET(u);
+}
+// (name, characters, buffer, &file part): a relative name is under the title's folder, where it runs
+IMP(kernel32, GetFullPathNameA) {
+  const char *n = GSTR(ARG(0)); char full[300];
+  if ((n[0] && n[1] == ':') || (n[0] == '\\' && n[1] == '\\')) snprintf(full, sizeof full, "%s", n);
+  else if (n[0] == '\\') snprintf(full, sizeof full, "C:%s", n);
+  else snprintf(full, sizeof full, "C:\\title\\%s", n[0] == '.' && (n[1] == '\\' || n[1] == '/') ? n + 2 : n);   // the current directory (files.c)
+  for (char *p = full; *p; p++) if (*p == '/') *p = '\\';
+  u32 need = (u32)strlen(full) + 1;
+  if ((u32)ARG(1) < need) { RET(need); return; }
+  strcpy(GSTR(ARG(2)), full);
+  if (ARG(3)) { char *s = strrchr(GSTR(ARG(2)), '\\'); MP(ARG(3)) = s ? ARG(2) + (u64)(s + 1 - GSTR(ARG(2))) : 0; }
+  RET(need - 1);
+}
+IMP(kernel32, ExpandEnvironmentStringsA) { // no variables are set: the text is copied as it is
+  const char *s = GSTR(ARG(0)); u32 need = (u32)strlen(s) + 1;
+  if (ARG(1) && (u32)ARG(2) >= need) memcpy(GSTR(ARG(1)), s, need);
+  RET(need);
+}
+IMP(kernel32, MoveFileA) { u32 e = vfs_rename(GSTR(ARG(0)), GSTR(ARG(1)), 0); if (e) SET_LAST_ERROR(e); RET(e == 0); }
+
+// ---- memory, strings, atomics ----
+IMP(kernel32, GlobalMemoryStatus) { // MEMORYSTATUS: a 2 GB machine with most of it free
+  u64 p = ARG(0); M32(p) = 32; M32(p + 4) = 25;
+  M32(p + 8) = 0x7FFFFFFFu; M32(p + 12) = 0x60000000u; M32(p + 16) = 0x7FFFFFFFu; M32(p + 20) = 0x70000000u; M32(p + 24) = 0x7FFE0000u; M32(p + 28) = 0x70000000u;
+}
+IMP(kernel32, InterlockedCompareExchange) { u32 want = (u32)ARG(2); __atomic_compare_exchange_n((u32 *)GP(ARG(0)), &want, (u32)ARG(1), 0, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST); RET(want); }
+IMP(kernel32, IsDBCSLeadByte) { RET(0); }
+IMP(kernel32, lstrcmpiA) { int r = strcasecmp(GSTR(ARG(0)), GSTR(ARG(1))); RET((u32)(r < 0 ? -1 : r > 0)); }

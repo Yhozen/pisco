@@ -209,11 +209,20 @@ pub fn lifted_imports(title_c: &Path) -> R<Vec<String>> {
     v.sort(); v.dedup();
     Ok(v)
 }
-fn lift(t: &Tools, r: &Recipe, exe: &Path, cache: &Path) -> R<Lifted> {
+fn lift(t: &Tools, r: &Recipe, exe: &Path, ex: &Extracted, cache: &Path) -> R<Lifted> {
     let dir = exe.parent().unwrap();
-    // the images the lifter reads: the exe and every DLL beside it that is not builtin
+    // the images the lifter reads: the exe and every DLL beside it that is not builtin, and the DLLs the image puts in
+    // C:\WINDOWS\system32 (a [[source.cab]]'s), which it may import too: the lifter looks in their folders
     let mut images: Vec<(String, PathBuf)> = io(std::fs::read_dir(dir), dir)?.filter_map(|e| e.ok()).map(|e| (e.file_name().to_string_lossy().to_ascii_lowercase(), e.path()))
         .filter(|(n, p)| p == exe || (n.ends_with(".dll") && !r.dll.contains_key(n))).collect();
+    let mut sys_dirs: Vec<PathBuf> = Vec::new();
+    for (g, h) in &ex.files {
+        let Some((folder, name)) = g.rsplit_once('/') else { continue };
+        if folder.eq_ignore_ascii_case("WINDOWS/system32") && name.to_ascii_lowercase().ends_with(".dll") {
+            images.push((format!("c:/windows/system32/{}", name.to_ascii_lowercase()), h.clone()));
+            if let Some(p) = h.parent() { if !sys_dirs.iter().any(|d| d == p) { sys_dirs.push(p.to_path_buf()); } }
+        }
+    }
     images.sort();
     let mut key = format!("lifter {}\n", t.lifter_hash);
     for (n, p) in &images { key.push_str(&format!("image {n} {}\n", oci::sha256(&io(std::fs::read(p), p)?))); }
@@ -221,6 +230,8 @@ fn lift(t: &Tools, r: &Recipe, exe: &Path, cache: &Path) -> R<Lifted> {
     for e in &r.entries { args.extend(["--entry".into(), format!("{e:x}")]); }
     if let Some(b) = r.base_address { args.extend(["--base".into(), format!("{b:x}")]); }
     for d in r.dll.keys() { args.extend(["--builtin".into(), d.clone()]); }
+    let mut dll_dirs: Vec<String> = Vec::new();   // not in the key: where the files are differs between machines
+    for d in &sys_dirs { dll_dirs.extend(["--dll-dir".into(), format!("{}=c:/WINDOWS/system32", d.display())]); }
     key.push_str(&format!("options {}\n", args.join(" ")));
     for h in ["rt/cpu.h", "rt/modules.h"] { key.push_str(&format!("{h} {}\n", oci::sha256(&io(std::fs::read(t.root.join(h)), &t.root.join(h))?))); }
     key.push_str(&format!("clang {}\nopt {}\n", t.clang_version, r.opt));
@@ -231,7 +242,7 @@ fn lift(t: &Tools, r: &Recipe, exe: &Path, cache: &Path) -> R<Lifted> {
         say(&format!("lift: cached, lift key {}: not lifted or compiled again", &key[..16]));
     } else {
         let tmp = tmp_name(&out); let _ = std::fs::remove_dir_all(&tmp); io(std::fs::create_dir_all(&tmp), &tmp)?;
-        let o = Command::new(&t.lifter).arg(exe).arg("title.c").args(&args).current_dir(&tmp).output().map_err(|e| format!("lifter: {e}"))?;
+        let o = Command::new(&t.lifter).arg(exe).arg("title.c").args(&args).args(&dll_dirs).current_dir(&tmp).output().map_err(|e| format!("lifter: {e}"))?;
         io(std::fs::write(tmp.join("lifter.log"), [&o.stdout[..], &o.stderr[..]].concat()), &tmp)?;
         if !o.status.success() { return Err(format!("the lifter failed: see {}", tmp.join("lifter.log").display())); }
         let lifted_at = time.elapsed().as_secs_f64();
@@ -331,7 +342,7 @@ pub fn build(root: &Path, o: &Opts) -> R<()> {
     let exe = ex.files.iter().find(|(g, _)| g.eq_ignore_ascii_case(&exe_guest)).map(|x| x.1.clone()).ok_or(format!("{}: not among the installer's files", r.exe))?;
 
     // 2. lifted
-    let lifted = lift(&t, &r, &exe, &cache)?;
+    let lifted = lift(&t, &r, &exe, &ex, &cache)?;
     // the imports against what the base and the libraries answer for
     let shipped: Vec<String> = ex.files.keys().filter(|g| g.rsplit_once('/').map(|x| x.0).unwrap_or("").eq_ignore_ascii_case(exe_guest.rsplit_once('/').map(|x| x.0).unwrap_or("")))
         .map(|g| g.rsplit('/').next().unwrap().to_ascii_lowercase()).filter(|n| n.ends_with(".dll") && !r.dll.contains_key(n)).collect();

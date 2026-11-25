@@ -14,7 +14,8 @@ root=$(cd "$(dirname "$0")/.." && pwd); exe=$1; out=$2; mkdir -p "$out"
 W=${WASI_SDK:-$HOME/tools/wasi-sdk-34.0-x86_64-linux}/bin
 JOBS=${JOBS:-$(nproc)}
 TARGET="--target=wasm32-wasip1-threads -matomics -mbulk-memory -msimd128 -mnontrapping-fptoint -msign-ext"
-"$root/target/release/lifter" "$exe" "$out/title.c" --split "${SPLIT:-8}" $([ -n "${RECIPE:-}" ] && python3 "$root/tools/recipe-gen.py" --lifter-options "$RECIPE")
+# DLL_DIR=<folder>: the DLLs the title imports from its system folder (an image's C:\WINDOWS\system32), lifted with it
+"$root/target/release/lifter" "$exe" "$out/title.c" --split "${SPLIT:-8}" ${DLL_DIR:+--dll-dir "$DLL_DIR=c:/WINDOWS/system32"} $([ -n "${RECIPE:-}" ] && python3 "$root/tools/recipe-gen.py" --lifter-options "$RECIPE")
 GUEST_BITS=64; IMAGE_LOW=0; IMAGE_HIGH=0; FIXED_BASE=0
 [ -f "$out/title.env" ] && . "$out/title.env"
 [ -z "${PROFILE:-}" ] || { echo "build-title.sh: PROFILE is gone; BASE=windows-x86, windows-x64 or xbox-series" >&2; exit 2; }

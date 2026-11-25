@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // A 32-bit title that leans on msvcrt.dll and kernel32's interlocked lists the way the DLLs of old Windows games do:
-// the C math functions (cdecl: doubles on the stack, the result on the x87 stack), sprintf with doubles and 64-bit
-// integers among 32-bit arguments, strtod, and the SList functions on an 8-byte header. It prints one line per check;
+// the C math functions (cdecl: doubles on the stack, the result on the x87 stack) and the "_CI" ones (on the x87
+// stack both ways), sprintf with doubles and 64-bit integers among 32-bit arguments, strtod, _setjmp3 / longjmp, and
+// the SList functions on an 8-byte header. It prints one line per check;
 // the expected output (expected.txt) is what it prints under Wine:
 //   tools/oracle-wine/oracle.sh run fixtures out/crt32/crt32.exe > fixtures/crt32/expected.txt
 // No C runtime of its own: the entry point is ours and every C function comes from msvcrt.dll (build.sh).
@@ -24,12 +25,21 @@ __declspec(dllimport) double modf(double, double *); __declspec(dllimport) doubl
 __declspec(dllimport) double log10(double); __declspec(dllimport) double fabs(double); __declspec(dllimport) double asin(double);
 __declspec(dllimport) double acos(double); __declspec(dllimport) double strtod(const char *, char **);
 __declspec(dllimport) int sprintf(char *, const char *, ...);
+// setjmp as MSVC's x86 code calls it, and longjmp (a jmp_buf is 16 ints)
+__declspec(dllimport) __attribute__((returns_twice)) int _setjmp3(int *buf, int count);
+__declspec(dllimport) __attribute__((noreturn)) void longjmp(int *buf, int value);
+// the "_CI" functions' import slots, by their symbols (they have no C prototype: their arguments are on the x87 stack)
+extern void *imp_CIsin __asm__("__imp___CIsin"), *imp_CIpow __asm__("__imp___CIpow"), *imp_CIatan2 __asm__("__imp___CIatan2"),
+  *imp_CIfmod __asm__("__imp___CIfmod"), *imp_CIsqrt __asm__("__imp___CIsqrt");
 __declspec(dllimport) int _snprintf(char *, u32, const char *, ...);
 
 static void out(const char *s) { u32 n = 0, w; while (s[n]) n++; WriteFile(GetStdHandle((u32)-11), s, n, &w, 0); }
 static char buf[512];
 static void d1(const char *name, double v) { sprintf(buf, "%s %.15g\n", name, v); out(buf); }
 static volatile double one = 1.0, two = 2.0, half = 0.5; // not folded by the compiler
+
+__attribute__((noinline)) static void deeper(int *jb, int v) { longjmp(jb, v); }
+__attribute__((noinline)) static void deep_jump(int *jb, int v) { char pad[64]; pad[0] = (char)v; deeper(jb, pad[0]); }
 
 void start(void) {
   d1("sin(1)", sin(one)); d1("cos(1)", cos(one)); d1("tan(1)", tan(one)); d1("atan(2)", atan(two));
@@ -52,5 +62,21 @@ void start(void) {
   Entry *p = InterlockedPopEntrySList(&h); sprintf(buf, "slist pop %u depth %u\n", p ? p->value : 0, (u32)QueryDepthSList(&h)); out(buf);
   Entry *l = InterlockedFlushSList(&h); u32 n = 0, sum = 0; for (; l; l = l->next) { n++; sum += l->value; }
   sprintf(buf, "slist flush %u entries sum %u depth %u empty %d\n", n, sum, (u32)QueryDepthSList(&h), InterlockedPopEntrySList(&h) == 0); out(buf);
+  // setjmp / longjmp: a longjmp from a function two calls down comes back with its value; locals kept in memory survive
+  { static int jb[16]; static volatile int depth; volatile int seen = 0;
+    int r = _setjmp3(jb, 0);
+    if (r == 0) { seen = 1; depth = 2; deep_jump(jb, 7); }
+    sprintf(buf, "setjmp again %d, seen %d, depth %d\n", r, seen, depth); out(buf);
+    r = _setjmp3(jb, 0);
+    if (r == 0) longjmp(jb, 0);   // a value of 0 comes back as 1
+    sprintf(buf, "longjmp 0 gives %d\n", r); out(buf); }
+  // the x87 "_CI" functions: arguments and result on the x87 stack
+  { double r1, r2, r3, r4, r5, x = 0.5 * one, y = 3.0 * one;
+    __asm__ volatile("fldl %1\n\tcall *%2\n\tfstpl %0" : "=m"(r1) : "m"(x), "m"(imp_CIsin) : "memory", "st", "eax", "ecx", "edx");
+    __asm__ volatile("fldl %1\n\tfldl %2\n\tcall *%3\n\tfstpl %0" : "=m"(r2) : "m"(y), "m"(x), "m"(imp_CIpow) : "memory", "st", "eax", "ecx", "edx");
+    __asm__ volatile("fldl %1\n\tfldl %2\n\tcall *%3\n\tfstpl %0" : "=m"(r3) : "m"(x), "m"(y), "m"(imp_CIatan2) : "memory", "st", "eax", "ecx", "edx");
+    __asm__ volatile("fldl %1\n\tfldl %2\n\tcall *%3\n\tfstpl %0" : "=m"(r4) : "m"(y), "m"(x), "m"(imp_CIfmod) : "memory", "st", "eax", "ecx", "edx");
+    __asm__ volatile("fldl %1\n\tcall *%2\n\tfstpl %0" : "=m"(r5) : "m"(y), "m"(imp_CIsqrt) : "memory", "st", "eax", "ecx", "edx");
+    sprintf(buf, "_CI sin %.15g pow %.15g atan2 %.15g fmod %.15g sqrt %.15g\n", r1, r2, r3, r4, r5); out(buf); }
   ExitProcess(0);
 }

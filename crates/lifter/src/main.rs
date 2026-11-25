@@ -768,6 +768,15 @@ fn decode_func(img: &Image, entry: u64, entries: &BTreeSet<u64>) -> (Func, BTree
                     }
                     FlowControl::IndirectCall => {
                         f.leaders.insert(next);
+                        // 32-bit `call [__imp__setjmp3]`: a longjmp resumes after the call, in this frame (rt/msvcrt.c);
+                        // its return address is a landing pad
+                        if m32 && ins.op0_kind() == OpKind::Memory && ins.memory_base() == Register::None && ins.memory_index() == Register::None {
+                            let slot = ins.memory_displacement64();
+                            if img.imports.iter().any(|(s, n)| *s == slot && ["!_setjmp3", "!_setjmp", "!setjmp"].iter().any(|x| n.ends_with(x))) {
+                                f.pads.insert(next);
+                                work.push(next);
+                            }
+                        }
                         if !m32 && ins.is_ip_rel_memory_operand() && img.imports.iter().any(|(slot, n)| *slot == ins.ip_rel_memory_address() && n.ends_with("!_CxxThrowException")) {
                             calls.extend(throw_info_functions(img, &f.insns, &ins));
                         }
