@@ -281,14 +281,53 @@ IMP(kernel32, GetProcessHeap) { RET(0x7000); }
 static void heap_fresh(void *p, u64 from, u64 to) {
   if (p && to > from && rt_heap_fill >= 0) memset((u8 *)p + from, to >= 0x7F000 ? 0 : rt_heap_fill, to - from);   // 0x7F000: above it Windows' heap allocates fresh pages
 }
-IMP(kernel32, HeapAlloc) { u64 n = ARG(2); void *p = (ARG(1) & 8) ? calloc(1, n ? n : 1) : malloc(n ? n : 1); if (!(ARG(1) & 8)) heap_fresh(p, 0, n); RET((uptr)p); }
-IMP(kernel32, HeapFree) { free((void *)GP(ARG(2))); RET(1); }
+// The size a block was asked for: what Windows' HeapSize answers (malloc_usable_size is rounded up). A title's
+// CRT grows its atexit table when HeapSize says the table is full, so a larger answer changes its calls. Kept
+// beside the heap, by address (open addressing; a freed entry becomes a tombstone), so blocks stay as malloc
+// lays them out.
+static struct { uptr *key; u64 *size; u32 cap, used; } asked;
+static pthread_mutex_t asked_lock = PTHREAD_MUTEX_INITIALIZER;
+#define ASKED_GONE ((uptr)1)
+static u32 asked_slot(uptr p) { u64 h = (u64)p * 0x9E3779B97F4A7C15ull; return (u32)(h >> 32) & (asked.cap - 1); }
+static void asked_put_locked(uptr p, u64 n) {
+  if ((asked.used + 1) * 2 > asked.cap) {   // grow (tombstones dropped)
+    uptr *ok = asked.key; u64 *os = asked.size; u32 oc = asked.cap;
+    asked.cap = oc ? oc * 2 : 4096; asked.key = calloc(asked.cap, sizeof *asked.key); asked.size = malloc(asked.cap * sizeof *asked.size); asked.used = 0;
+    for (u32 i = 0; i < oc; i++) if (ok[i] > ASKED_GONE) { u32 j = asked_slot(ok[i]); while (asked.key[j]) j = (j + 1) & (asked.cap - 1); asked.key[j] = ok[i]; asked.size[j] = os[i]; asked.used++; }
+    free(ok); free(os);
+  }
+  u32 j = asked_slot(p), tomb = ~0u;
+  for (; asked.key[j]; j = (j + 1) & (asked.cap - 1)) {
+    if (asked.key[j] == p) { asked.size[j] = n; return; }
+    if (asked.key[j] == ASKED_GONE && tomb == ~0u) tomb = j;
+  }
+  if (tomb != ~0u) j = tomb; else asked.used++;
+  asked.key[j] = p; asked.size[j] = n;
+}
+static void asked_drop_locked(uptr p) {
+  if (!asked.cap || !p) return;
+  for (u32 j = asked_slot(p); asked.key[j]; j = (j + 1) & (asked.cap - 1)) if (asked.key[j] == p) { asked.key[j] = ASKED_GONE; return; }
+}
+static void asked_put(void *p, u64 n) { if (!p) return; pthread_mutex_lock(&asked_lock); asked_put_locked((uptr)p, n); pthread_mutex_unlock(&asked_lock); }
+static void asked_drop(void *p) { pthread_mutex_lock(&asked_lock); asked_drop_locked((uptr)p); pthread_mutex_unlock(&asked_lock); }
+static u64 asked_size(void *p) {   // a block the heap functions did not hand out: its usable size
+  u64 n = p ? malloc_usable_size(p) : 0;
+  pthread_mutex_lock(&asked_lock);
+  if (asked.cap && p) for (u32 j = asked_slot((uptr)p); asked.key[j]; j = (j + 1) & (asked.cap - 1)) if (asked.key[j] == (uptr)p) { n = asked.size[j]; break; }
+  pthread_mutex_unlock(&asked_lock);
+  return n;
+}
+IMP(kernel32, HeapAlloc) { u64 n = ARG(2); void *p = (ARG(1) & 8) ? calloc(1, n ? n : 1) : malloc(n ? n : 1); if (!(ARG(1) & 8)) heap_fresh(p, 0, n); asked_put(p, n); RET((uptr)p); }
+IMP(kernel32, HeapFree) { void *p = (void *)GP(ARG(2)); asked_drop(p); free(p); RET(1); }
 IMP(kernel32, HeapReAlloc) { // (heap, flags, block, size): a grown block's new bytes are zero with HEAP_ZERO_MEMORY (8)
-  void *old = (void *)GP(ARG(2)); u64 n = ARG(3), had = old ? malloc_usable_size(old) : 0; u8 *p = realloc(old, n ? n : 1);
+  void *old = (void *)GP(ARG(2)); u64 n = ARG(3), had = asked_size(old), room = old ? malloc_usable_size(old) : 0;
+  if (ARG(1) & 0x10) { if (n > room) { RET(0); return; } }   // HEAP_REALLOC_IN_PLACE_ONLY: it fits in the block or fails
+  u8 *p = (ARG(1) & 0x10) ? old : realloc(old, n ? n : 1);
   if (p && n > had) { if (ARG(1) & 8) memset(p + had, 0, n - had); else heap_fresh(p, had, n); }
+  if (p) { pthread_mutex_lock(&asked_lock); if (p != (u8 *)old) asked_drop_locked((uptr)old); asked_put_locked((uptr)p, n); pthread_mutex_unlock(&asked_lock); }
   RET((uptr)p);
 }
-IMP(kernel32, HeapSize) { RET(malloc_usable_size((void *)GP(ARG(2)))); }
+IMP(kernel32, HeapSize) { RET(asked_size((void *)GP(ARG(2)))); }
 IMP(kernel32, LocalAlloc) { RET((uptr)((ARG(0) & 0x40) ? calloc(1, ARG(1) ? ARG(1) : 1) : malloc(ARG(1) ? ARG(1) : 1))); }
 IMP(kernel32, LocalFree) { free((void *)GP(ARG(0))); RET(0); }
 
