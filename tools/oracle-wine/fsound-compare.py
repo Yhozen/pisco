@@ -2,7 +2,7 @@
 # usage: fsound-compare.py WINE_LOG OUR_LOG [--quiet]
 # Sets the FMOD 3 calls a title made under Wine against the ones it made in our runtime.
 #   WINE_LOG  a WINEDEBUG=+snoop log of the title with the shipped fmod.dll unpacked (README.md), with a sound device
-#   OUR_LOG   a run with SW_FMOD_TRACE=1 (lines "series-web: fmod: Name(args) = result", rt/win32/fmod3.c)
+#   OUR_LOG   a run with SW_FMOD_TRACE=1 (lines "pisco: fmod: Name(args) = result", rt/win32/fmod3.c)
 # Wine's clock is the wall's and ours is virtual, so the two runs differ in how many frames a phase lasts, and so
 # in how often the per-frame calls are made and in when the sounds the game plays at random times (torches) start.
 # What is compared:
@@ -49,7 +49,7 @@ def wine(path):
 def ours(path):
     calls = []
     for line in open(path, errors='replace'):
-        m = re.match(r'^series-web: fmod: (\w+)\((.*)\) = (\S+)$', line.rstrip())
+        m = re.match(r'^pisco: fmod: (\w+)\((.*)\) = (\S+)$', line.rstrip())
         if m: calls.append((m.group(1), split_args(m.group(2)), m.group(3)))
     return calls
 

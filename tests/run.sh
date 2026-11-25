@@ -28,9 +28,9 @@
 #            the cage; its sound not silent and the same on a second run; its FMOD calls against Wine's +snoop trace
 #            when the oracle's is there), system.opt written by Quit and read again by a second run (SW_SAVES), then
 #            the same in Chrome: the session's screenshots, and a reload that finds system.opt in OPFS (minutes)
-#   images   tests/images.sh: title images (M6): `sw build` of hello32 and, from the user's installer (ND_SETUP; skipped
+#   images   tests/images.sh: title images (M6): `pisco build` of hello32 and, from the user's installer (ND_SETUP; skipped
 #            without it), Narbacular Drop, each twice with empty caches (the same manifest digest), their shared base
-#            layer, a registry-only rebuild that lifts, compiles and links nothing, then `sw run` of the menu-to-level
+#            layer, a registry-only rebuild that lifts, compiles and links nothing, then `pisco run` of the menu-to-level
 #            session in Node with the nd step's checkpoints, and the image's registry read by advapi32 (minutes). The
 #            nd, ndgfx and ndplay steps keep building from the installed folder with tools/build-title.sh
 #   doom     tests/gfx/doom.sh: Doom as a console title in Node and Chrome (minutes)
@@ -48,7 +48,7 @@ step() { # name, command...: one line, the log's tail on failure
   else echo "FAIL  $name (see $log)"; tail -6 "$log" | sed 's/^/        /'; fail=1; fi
 }
 build() {
-  cargo build -q --release -p lifter -p shaders || return 1
+  cargo build -q --release -p pisco-lifter -p pisco-shaders || return 1
   for t in hello threads bench bench-native; do (cd "fixtures/$t" && cargo build -q --release) || return 1; done
   # one C++ runtime inside each image (-static): nothing but the title's own DLL is shipped beside it
   "$CXX" -O2 -static fixtures/cxx/eh.cpp -o fixtures/cxx/eh.exe || return 1
@@ -105,19 +105,19 @@ nd() {
   local want=recipes/narbacular-drop/traces/menu-to-level.txt code n
   nd_session > out/nd.session.log 2>&1; code=$?
   [ $code = 0 ] || { echo "the session ended with exit code $code:"; tail -3 out/nd.session.log | cut -c1-300; return 1; }
-  grep -E '^series-web: (checkpoint |session done)' out/nd.session.log | sed 's/^series-web: //' > out/nd.session.checkpoints.txt
+  grep -E '^pisco: (checkpoint |session done)' out/nd.session.log | sed 's/^pisco: //' > out/nd.session.checkpoints.txt
   grep -q '^session done' out/nd.session.checkpoints.txt || { echo "the session did not reach its end:"; tail -3 out/nd.session.log | cut -c1-300; return 1; }
   [ -z "${ND_RECORD:-}" ] || { grep '^#' $want > out/nd.session.head.txt; cat out/nd.session.head.txt out/nd.session.checkpoints.txt > $want; }
   diff <(grep -v '^#' $want) out/nd.session.checkpoints.txt > out/nd.session.diff || { echo "the session's checkpoints are not the recorded ones (< $want, > this run):"; head -6 out/nd.session.diff; return 1; }
   nd_session > out/nd.session.2.log 2>&1
   cmp -s out/nd.session.log out/nd.session.2.log || { echo "two runs of the session differ: out/nd.session.log, out/nd.session.2.log"; return 1; }
   # what reached the GPU ring: counted and checked by the null back end; the shaders this run made, by naga
-  grep -q '^series-web: gpu (null back end): .* 0 of the records were inconsistent$' out/nd.session.log || { echo "the null GPU back end did not find the session's records consistent:"; grep '^series-web: gpu' out/nd.session.log | tail -3 | cut -c1-300; return 1; }
+  grep -q '^pisco: gpu (null back end): .* 0 of the records were inconsistent$' out/nd.session.log || { echo "the null GPU back end did not find the session's records consistent:"; grep '^pisco: gpu' out/nd.session.log | tail -3 | cut -c1-300; return 1; }
   local shaders="naga is not installed: its shaders were not validated"
   if command -v naga > /dev/null; then shaders=$(tests/gfx/d3d9-ffp.sh out/nd.session.log 2>&1) || { echo "the session's shaders: $shaders"; return 1; }; shaders="its $(wc -l < out/ffp/run-keys.txt) shaders pass naga"; fi
   n=$(grep -c '^checkpoint ' out/nd.session.checkpoints.txt)
   echo "session: $n checkpoints as recorded, $(sed -n 's/^session done: .*, \([0-9]*\) frames$/\1/p' out/nd.session.checkpoints.txt) frames, two runs give the same log"
-  echo "$(sed -n 's/^series-web: gpu (null back end): \(.*\); 0 of the records were inconsistent$/\1/p' out/nd.session.log), all consistent, and $shaders"
+  echo "$(sed -n 's/^pisco: gpu (null back end): \(.*\); 0 of the records were inconsistent$/\1/p' out/nd.session.log), all consistent, and $shaders"
 }
 gdi() {
   mkdir -p out/gdi
@@ -128,7 +128,7 @@ gdi() {
   python3 -I tools/oracle-wine/gdi-compare.py $probe out/gdi/fonts.txt
 }
 nd_session() { SW_STRICT=1 SW_CLOCK=16667 SW_D3D9_STATS=1 SW_SESSION=recipes/narbacular-drop/sessions/menu-to-level.json timeout 600 node web/run-node.mjs out/nd/title.wasm "$ND/Narbacular Drop.exe"; }
-ND=${ND:-$HOME/.series-web/oracle/prefix-narbacular-drop/drive_c/Program Files (x86)/Narbacular Drop}
+ND=${ND:-$HOME/.pisco/oracle/prefix-narbacular-drop/drive_c/Program Files (x86)/Narbacular Drop}
 for s in ${*:-build node bench win32 ffp gdi}; do case $s in
   build)  step build build ;;
   node)   LINES_SHOWN=8 step node tests/regress.sh ;;

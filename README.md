@@ -23,7 +23,7 @@ from [XCL](https://github.com/ivall/xcl) are GPL-2.0-only). See [LICENSING.md](L
 
 Docs: [the journey so far](docs/journey.md) (what was built, measured and learned, roadblocks) ·
 [status and next steps](docs/status.md) · [first run of a real title](docs/first-run.md) · [wasm32 or wasm64](docs/memory.md) ·
-[Narbacular Drop, the first Windows PC title](docs/narbacular-drop.md) · [title images and `sw`](docs/images.md)
+[Narbacular Drop, the first Windows PC title](docs/narbacular-drop.md) · [title images and `pisco`](docs/images.md)
 
 ## How it works
 
@@ -52,7 +52,7 @@ runtime (rt/, C on wasi-libc, linked into the same module) ◄──────
 Imports nothing implements become stubs that log their first call and return 0 (E_NOTIMPL for the console's
 HRESULT APIs), as in XCL; SW_STRICT=1 stops at them instead.
 host (web/)   WASI calls, one worker per guest thread over one shared memory; image.mjs reads a title image
-sw (crates/sw) builds a recipe and the user's installer into a title image (OCI layout), and runs it
+pisco (crates/pisco) builds a recipe and the user's installer into a title image (OCI layout), and runs it
 ```
 
 - **Images**: the exe and every DLL it imports that sits beside it are lifted together, each rebased below
@@ -81,7 +81,7 @@ tests [llvm-mingw](https://github.com/mstorsjo/llvm-mingw). `tools/setup-toolcha
 shader tools the Doom test needs); `tests/run.sh` builds and runs every test title.
 
 ```sh
-cargo build --release -p lifter
+cargo build --release -p pisco-lifter
 (cd fixtures/hello && cargo build --release)                       # our own Windows-format test titles
 tools/build-title.sh fixtures/hello/target/x86_64-pc-windows-msvc/release/hello.exe out/hello
 node web/run-node.mjs out/hello/title.wasm fixtures/hello/target/x86_64-pc-windows-msvc/release/hello.exe
@@ -93,13 +93,13 @@ A Windows PC title is built from its recipe and your own installer into a title 
 (`tools/setup-toolchain.sh innoextract`), and never copied into the repository:
 
 ```sh
-cargo build --release -p sw -p lifter
-target/release/sw build recipes/narbacular-drop --source ~/Downloads/narbacular_drop_setup.exe   # -> out/images/narbacular-drop
-target/release/sw run out/images/narbacular-drop --session recipes/narbacular-drop/sessions/menu-to-level.json
-target/release/sw run out/images/narbacular-drop --chrome          # headless Chrome; in a browser of your own:
+cargo build --release -p pisco -p pisco-lifter
+target/release/pisco build recipes/narbacular-drop --source ~/Downloads/narbacular_drop_setup.exe   # -> out/images/narbacular-drop
+target/release/pisco run out/images/narbacular-drop --session recipes/narbacular-drop/sessions/menu-to-level.json
+target/release/pisco run out/images/narbacular-drop --chrome          # headless Chrome; in a browser of your own:
 node tools/serve.mjs 8000 web out/images/narbacular-drop           # then http://127.0.0.1:8000/browser/index.html?image=/files/0/
-target/release/sw inspect out/images/narbacular-drop               # its layers, config and registry
-target/release/sw census <a title's .exe>                          # what the base and its libraries answer for
+target/release/pisco inspect out/images/narbacular-drop               # its layers, config and registry
+target/release/pisco census <a title's .exe>                          # what the base and its libraries answer for
 ```
 
 `SW_TRACE=1` logs missing imports and exception dispatch; `SW_TRACE=2` every import call. For Windows
@@ -110,11 +110,11 @@ Chrome the frame presented at each of its `shot` steps is saved as a PNG beside 
 
 ## State (2026-11-25)
 
-[![graphics ladder](https://yhozen.github.io/series-web/badge-ladder.svg)](https://yhozen.github.io/series-web/progress.html) [![D3D12 methods](https://yhozen.github.io/series-web/badge-d3d12.svg)](https://yhozen.github.io/series-web/progress.html) [![imports](https://yhozen.github.io/series-web/badge-imports.svg)](https://yhozen.github.io/series-web/progress.html) [![XCL checks](https://yhozen.github.io/series-web/badge-xcl.svg)](https://yhozen.github.io/series-web/progress.html)
+[![graphics ladder](https://yhozen.github.io/pisco/badge-ladder.svg)](https://yhozen.github.io/pisco/progress.html) [![D3D12 methods](https://yhozen.github.io/pisco/badge-d3d12.svg)](https://yhozen.github.io/pisco/progress.html) [![imports](https://yhozen.github.io/pisco/badge-imports.svg)](https://yhozen.github.io/pisco/progress.html) [![XCL checks](https://yhozen.github.io/pisco/badge-xcl.svg)](https://yhozen.github.io/pisco/progress.html)
 
-[![progress map](https://yhozen.github.io/series-web/progress.svg)](https://yhozen.github.io/series-web/progress.html)
+[![progress map](https://yhozen.github.io/pisco/progress.svg)](https://yhozen.github.io/pisco/progress.html)
 
-Video: [Doom as an Xbox console title in the browser](https://yhozen.github.io/series-web/) (D3D12.X on WebGPU, XAudio2, GameInput, saves in OPFS).
+Video: [Doom as an Xbox console title in the browser](https://yhozen.github.io/pisco/) (D3D12.X on WebGPU, XAudio2, GameInput, saves in OPFS).
 The map is drawn by `tools/progress.mjs` (`--refresh` re-reads the build outputs into `docs/progress-data.json`)
 and published by `.github/workflows/progress.yml`.
 

@@ -3,7 +3,7 @@
 // The title's files come from its folder's URL (`dir`), or for a title image from its drive (`drive`: the file layers,
 // served by tools/serve.mjs) where its folder is `folder` (web/image.mjs).
 import { driveName } from '../image.mjs';
-const bus = new BroadcastChannel('series-web');
+const bus = new BroadcastChannel('pisco');
 bus.onmessage = (e) => { if (e.data.stop) close(); };
 const kinds = ['trap', 'instruction not lifted', 'import not implemented', 'indirect call to unknown code', 'image does not fit', 'fatal'];
 // A pooled worker waits on its slot of `ctl` (state, tid, start argument): 1 = idle, 2 = claimed.
@@ -65,7 +65,7 @@ function run(d) {
   };
   const ask = (name, what) => { const u = urlOf(name); if (!u) return null; const x = new XMLHttpRequest(); x.open('GET', `${u}?${what}`, false); x.send(); return x.status === 200 ? x.responseText : null; };
   const host = {
-    fault: (kind, a) => { bus.postMessage({ out: `series-web: ${kinds[kind]}${kind === 5 ? '' : ` at 0x${BigInt.asUintN(64, a).toString(16)}`}\n` }); exit(120); },
+    fault: (kind, a) => { bus.postMessage({ out: `pisco: ${kinds[kind]}${kind === 5 ? '' : ` at 0x${BigInt.asUintN(64, a).toString(16)}`}\n` }); exit(120); },
     now_us: () => clock() * 1000,
     read_file: (name, nlen, off, len, dst) => {
       const f = file(text(name, nlen)); if (!f) return 0;
@@ -76,7 +76,7 @@ function run(d) {
       const r = ask(text(name, nlen), 'list'); if (r === null) return 0;
       const b = enc.encode(r); if (buf && cap >= b.length) u8().set(b, buf); return b.length;
     },
-    log: (p, n) => bus.postMessage({ out: `series-web: ${text(p, n)}\n` }),
+    log: (p, n) => bus.postMessage({ out: `pisco: ${text(p, n)}\n` }),
     // the title's persistent storage: the page loaded it from OPFS before the title started, and saves changes there
     store_info: (i, name, cap) => { const f = store[i]; if (!f) return -1n; const b = enc.encode(f.name + '\0'); if (b.length <= cap) u8().set(b, name); return BigInt(f.data.length); },
     store_read: (i, dst) => { u8().set(store[i].data, dst); },
@@ -106,5 +106,5 @@ function run(d) {
   try {
     if (tid === 0) { instance.exports._start(); exit(0); }
     else instance.exports.wasi_thread_start(tid, start);
-  } catch (err) { bus.postMessage({ out: `series-web: ${err && err.stack || err}\n` }); exit(123); }
+  } catch (err) { bus.postMessage({ out: `pisco: ${err && err.stack || err}\n` }); exit(123); }
 }

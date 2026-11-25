@@ -66,7 +66,7 @@ IMP(dxgi, Adapter_EnumOutputs) { if (ARG(2)) M64(ARG(2)) = 0; RET(DXGI_ERROR_NOT
 static void adapter_desc(Cpu *c, int one) { // DXGI_ADAPTER_DESC(1): description, ids, memory sizes, LUID (the device's), flags
   u64 d = ARG(1); if (!d) { RET(E_INVALIDARG); return; }
   memset((void *)GP(d), 0, one ? 304 : 304);
-  const char *name = "series-web WebGPU (D3D12.X)";
+  const char *name = "pisco WebGPU (D3D12.X)";
   for (int i = 0; name[i]; i++) M16(d + 2 * i) = (u8)name[i];
   M64(d + 272) = 0; M64(d + 280) = 0; M64(d + 288) = 13824ull << 20; // shared system memory: the console's
   M32(d + 296) = 0x5357; M32(d + 300) = 0;                          // Device_GetAdapterLuid's LUID

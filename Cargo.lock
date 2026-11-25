@@ -112,14 +112,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "65cd87c9a6d60536580b316ad985726104730a5151c99845f2490428ef91240a"
 
 [[package]]
-name = "lifter"
-version = "0.1.0"
-dependencies = [
- "iced-x86",
- "object",
-]
-
-[[package]]
 name = "memchr"
 version = "2.8.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -141,6 +133,31 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "62948e14d923ea95ea2c7c86c71013138b66525b86bdc08d2dcc262bdb497b87"
 dependencies = [
  "memchr",
+]
+
+[[package]]
+name = "pisco"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "sha2",
+ "toml",
+]
+
+[[package]]
+name = "pisco-lifter"
+version = "0.1.0"
+dependencies = [
+ "iced-x86",
+ "object",
+]
+
+[[package]]
+name = "pisco-shaders"
+version = "0.1.0"
+dependencies = [
+ "miniz_oxide",
+ "serde",
 ]
 
 [[package]]
@@ -222,23 +239,6 @@ dependencies = [
  "cfg-if",
  "cpufeatures",
  "digest",
-]
-
-[[package]]
-name = "shaders"
-version = "0.1.0"
-dependencies = [
- "miniz_oxide",
- "serde",
-]
-
-[[package]]
-name = "sw"
-version = "0.1.0"
-dependencies = [
- "serde_json",
- "sha2",
- "toml",
 ]
 
 [[package]]

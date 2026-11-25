@@ -6,7 +6,7 @@ The title's files stay outside this repository (e.g. `~/games/minecraft`, the un
 ## 1. Census (minutes, nothing runs)
 
 ```sh
-cargo build --release -p lifter -p shaders
+cargo build --release -p pisco-lifter -p pisco-shaders
 tools/census.sh ~/games/minecraft/Minecraft.Windows.exe out/mc-census
 ```
 

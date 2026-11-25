@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-// sw build: a recipe and the user's own installer -> a title image (docs/images.md).
+// pisco build: a recipe and the user's own installer -> a title image (docs/images.md).
 //   1. the installer, checked by its sha256, is extracted (innoextract) into the cache, once per installer
 //   2. the title's images are lifted and the lifted C compiled, once per lift key: the digest of the images' bytes,
 //      the lifter (its version and the hash of its sources), rt/cpu.h and rt/modules.h, the lifter's options,
 //      clang's version and the flags
 //   3. the runtime's sources (the base's core and the recipe's libraries) are compiled, once per source and flags
 //   4. the module is linked (once per set of objects), the file layers written as tars, the config and the manifest
-// The cache is out/sw-cache (--cache): what is in it only saves time, an image never depends on it.
+// The cache is out/pisco-cache (--cache): what is in it only saves time, an image never depends on it.
 use crate::census::Census;
 use crate::oci::{self, Layout, Tree, LAYER, LOCAL, MODULE, ROLE, TITLE};
 use crate::recipe::{self, Base, RegData, Recipe, R};
@@ -18,7 +18,7 @@ use std::time::Instant;
 
 pub struct Opts { pub recipe: PathBuf, pub source: Option<PathBuf>, pub out: Option<PathBuf>, pub cache: Option<PathBuf>, pub compare: Option<PathBuf> }
 
-pub fn say(s: &str) { eprintln!("sw: {s}"); }
+pub fn say(s: &str) { eprintln!("pisco: {s}"); }
 fn io<T>(r: std::io::Result<T>, what: &Path) -> R<T> { r.map_err(|e| format!("{}: {e}", what.display())) }
 const TARGET: &[&str] = &["--target=wasm32-wasip1-threads", "-matomics", "-mbulk-memory", "-msimd128", "-mnontrapping-fptoint", "-msign-ext"];
 
@@ -30,11 +30,11 @@ pub fn tools(root: &Path) -> R<Tools> {
     let clang_version = String::from_utf8_lossy(&v.stdout).lines().next().unwrap_or("").to_string();
     // the lifter: built from its sources first, so that the hash of the sources is the lifter's
     if std::env::var_os("SW_NO_CARGO").is_none() {
-        let st = Command::new("cargo").args(["build", "-q", "--release", "-p", "lifter"]).current_dir(root).status().map_err(|e| format!("cargo: {e}"))?;
-        if !st.success() { return Err("cargo build -p lifter failed".into()); }
+        let st = Command::new("cargo").args(["build", "-q", "--release", "-p", "pisco-lifter"]).current_dir(root).status().map_err(|e| format!("cargo: {e}"))?;
+        if !st.success() { return Err("cargo build -p pisco-lifter failed".into()); }
     }
     let lifter = root.join("target/release/lifter");
-    if !lifter.is_file() { return Err(format!("{}: not built (cargo build --release -p lifter)", lifter.display())); }
+    if !lifter.is_file() { return Err(format!("{}: not built (cargo build --release -p pisco-lifter)", lifter.display())); }
     let mut h = String::new();
     let mut files = vec![root.join("crates/lifter/Cargo.toml"), root.join("Cargo.lock")];
     let mut src: Vec<PathBuf> = io(std::fs::read_dir(root.join("crates/lifter/src")), &root.join("crates/lifter/src"))?.filter_map(|e| e.ok()).map(|e| e.path()).collect();
@@ -155,8 +155,8 @@ fn cflags(t: &Tools, cache: &Path, opt: &str, bits: u32) -> Vec<String> {
     f.push(format!("-I{}", t.root.join("rt").display()));
     f.push(format!("-DGUEST_BITS={bits}"));
     // no path of this machine in what is built: two checkouts give the same bytes
-    f.push(format!("-ffile-prefix-map={}=/sw-cache", cache.display()));
-    f.push(format!("-ffile-prefix-map={}=/series-web", t.root.display()));
+    f.push(format!("-ffile-prefix-map={}=/pisco-cache", cache.display()));
+    f.push(format!("-ffile-prefix-map={}=/pisco", t.root.display()));
     f
 }
 /// What the lifter puts in the import table of the lifted C ("dll!name")
@@ -262,7 +262,7 @@ pub fn build(root: &Path, o: &Opts) -> R<()> {
     let r = recipe::load_recipe(&o.recipe)?;
     let base = recipe::load_base(root, &r.from)?;
     for l in &r.libraries { if !base.libraries.contains_key(l) { return Err(format!("library {l} is not one of {}'s ({})", base.reference(), base.libraries.keys().cloned().collect::<Vec<_>>().join(", "))); } }
-    let cache = o.cache.clone().unwrap_or(root.join("out/sw-cache"));
+    let cache = o.cache.clone().unwrap_or(root.join("out/pisco-cache"));
     io(std::fs::create_dir_all(&cache), &cache)?;
     let cache = io(cache.canonicalize(), &cache)?;
     let out = o.out.clone().unwrap_or(root.join("out/images").join(&r.name));
@@ -389,7 +389,7 @@ pub fn build(root: &Path, o: &Opts) -> R<()> {
     let mut descs: Vec<_> = layers.iter().map(|b| b.descriptor()).collect();
     descs.push(module.descriptor());
     let manifest = json!({ "schemaVersion": 2, "mediaType": oci::MANIFEST, "artifactType": oci::ARTIFACT, "config": cfg.descriptor(), "layers": descs,
-        "annotations": { TITLE: r.name, "org.series-web.base": base.reference() } });
+        "annotations": { TITLE: r.name, "org.pisco.base": base.reference() } });
     let man = lay.put_json(oci::MANIFEST, &manifest, &[])?;
     lay.finish(&man, &r.name)?;
     if out.exists() { io(std::fs::remove_dir_all(&out), &out)?; }
@@ -417,5 +417,5 @@ fn base_layer(root: &Path, base: &Base, cen: &Census) -> R<Tree> {
 }
 fn placeholders(tree: &mut Tree, base: &Base, dlls: &[String], from: &str) {
     let dir = recipe::drive_path(&format!("C:\\{}", base.system32)).unwrap_or_default();
-    for d in dlls { tree.file(&format!("{dir}/{d}"), format!("series-web: {d} is built into the runtime ({from}); there is no code in this file.\r\n").into_bytes()); }
+    for d in dlls { tree.file(&format!("{dir}/{d}"), format!("pisco: {d} is built into the runtime ({from}); there is no code in this file.\r\n").into_bytes()); }
 }

@@ -47,7 +47,7 @@ void rt_cpuid(Cpu *c) {
   case 0x80000000: a = 0x80000004; break;
   case 0x80000001: cx = 1u << 0; d = (1u << 11) | (1u << 20) | (1u << 29); break; // LAHF; SYSCALL NX LM
   case 0x80000002: case 0x80000003: case 0x80000004: {
-    static const char brand[48] = "series-web virtual CPU (lifted x86-64)";
+    static const char brand[48] = "pisco virtual CPU (lifted x86-64)";
     const u32 *w = (const u32 *)(brand + 16 * (leaf - 0x80000002)); a = w[0]; b = w[1]; cx = w[2]; d = w[3]; break;
   }
   }

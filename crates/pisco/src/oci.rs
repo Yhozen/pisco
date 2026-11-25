@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // The image format (docs/images.md): an OCI image layout (oci-layout, index.json, blobs/sha256/<digest>) holding one
-// manifest whose config and layers have series-web's own media types. File layers are plain tar files written
+// manifest whose config and layers have PISCO's own media types. File layers are plain tar files written
 // here so that the same files always give the same bytes: entries sorted, every time 0, owner 0, fixed modes.
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -9,14 +9,14 @@ use std::path::{Path, PathBuf};
 
 pub const MANIFEST: &str = "application/vnd.oci.image.manifest.v1+json";
 pub const INDEX: &str = "application/vnd.oci.image.index.v1+json";
-pub const ARTIFACT: &str = "application/vnd.series-web.title.v1";
-pub const CONFIG: &str = "application/vnd.series-web.title.config.v1+json";
-pub const LAYER: &str = "application/vnd.series-web.layer.v1.tar";
-pub const MODULE: &str = "application/vnd.series-web.module.v1.wasm";
-pub const ROLE: &str = "org.series-web.layer.role";
+pub const ARTIFACT: &str = "application/vnd.pisco.title.v1";
+pub const CONFIG: &str = "application/vnd.pisco.title.config.v1+json";
+pub const LAYER: &str = "application/vnd.pisco.layer.v1.tar";
+pub const MODULE: &str = "application/vnd.pisco.module.v1.wasm";
+pub const ROLE: &str = "org.pisco.layer.role";
 pub const TITLE: &str = "org.opencontainers.image.title";
 pub const REF: &str = "org.opencontainers.image.ref.name";
-pub const LOCAL: &str = "org.series-web.local-only";
+pub const LOCAL: &str = "org.pisco.local-only";
 
 pub fn sha256(data: &[u8]) -> String { hex(&Sha256::digest(data)) }
 pub fn hex(b: &[u8]) -> String { b.iter().map(|x| format!("{x:02x}")).collect() }
@@ -93,7 +93,7 @@ fn header(out: &mut Vec<u8>, name: &str, prefix: &str, size: usize, kind: u8, mo
     put(&mut h, 148, format!("{sum:06o}\0 ").as_bytes());
     out.extend_from_slice(&h);
 }
-/// The entries of a tar (name, offset of the data, size, is a directory), for `sw inspect`
+/// The entries of a tar (name, offset of the data, size, is a directory), for `pisco inspect`
 pub fn tar_list(data: &[u8]) -> Vec<(String, usize, usize, bool)> {
     let mut out = Vec::new(); let mut at = 0; let mut long: Option<String> = None;
     while at + 512 <= data.len() {
@@ -167,7 +167,7 @@ pub fn open(dir: &Path) -> Result<Image, String> {
     let m = index["manifests"].as_array().and_then(|a| a.first()).ok_or("index.json has no manifest")?;
     let digest = m["digest"].as_str().ok_or("manifest without a digest")?.to_string();
     let manifest: Value = serde_json::from_slice(&blob(dir, &digest)?).map_err(|e| e.to_string())?;
-    if manifest["artifactType"] != ARTIFACT { return Err(format!("{}: not a series-web title image (artifactType {})", dir.display(), manifest["artifactType"])); }
+    if manifest["artifactType"] != ARTIFACT { return Err(format!("{}: not a pisco title image (artifactType {})", dir.display(), manifest["artifactType"])); }
     let config: Value = serde_json::from_slice(&blob(dir, manifest["config"]["digest"].as_str().ok_or("no config")?)?).map_err(|e| e.to_string())?;
     Ok(Image { dir: dir.to_path_buf(), manifest_digest: digest, manifest, config })
 }

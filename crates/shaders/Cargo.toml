@@ -1,10 +1,13 @@
 # SPDX-License-Identifier: GPL-2.0-only
 [package]
-name = "shaders"
+name = "pisco-shaders"
 version = "0.1.0"
 edition = "2021"
 license = "GPL-2.0-only"
 description = "Xbox Series shader containers and RDNA2 code (from XCL), and a census of a title's shaders"
+[lib]
+name = "shaders"
+
 [dependencies]
 miniz_oxide = "0.9"
 serde = { version = "1", features = ["derive"] }

@@ -4,7 +4,7 @@
 # Every IMP(dll, name) the runtime sources define goes into rt_import_table (and <out dir>/imports.txt); for a
 # 32-bit title also what each import removes from the stack (rt_stdcall_table): first rt/win32/stdcall.txt, then what
 # the import libraries say (tools/stdcall-sizes.sh) of the runtime's functions and of the imports named in the
-# lifted C (<lifted dir>/title*.c). Used by tools/build-title.sh and by `sw build` (crates/sw).
+# lifted C (<lifted dir>/title*.c). Used by tools/build-title.sh and by `pisco build` (crates/pisco).
 set -euo pipefail
 root=$(cd "$(dirname "$0")/.." && pwd); bits=$1; lifted=$2; out=$3; shift 3
 list=$(dirname "$out")/imports.txt

@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-// sw: series-web's title images (docs/images.md).
-//   sw build <recipe dir> [--source <installer>] [--out <image dir>] [--cache <dir>] [--compare <installed folder>]
-//   sw run <image> [--session <session.json>] [--saves <dir>] [--chrome] [-- title arguments]
-//   sw census <image | title.exe> [--recipe <recipe dir> | --from base/win32-x86:1 --libraries a,b] [--all]
-//   sw inspect <image> [--files]
-// The repository is found from this program's own place (target/release/sw), or SW_ROOT.
+// pisco: builds, runs and inspects title images (docs/images.md).
+//   pisco build <recipe dir> [--source <installer>] [--out <image dir>] [--cache <dir>] [--compare <installed folder>]
+//   pisco run <image> [--session <session.json>] [--saves <dir>] [--chrome] [-- title arguments]
+//   pisco census <image | title.exe> [--recipe <recipe dir> | --from base/win32-x86:1 --libraries a,b] [--all]
+//   pisco inspect <image> [--files]
+// The repository is found from this program's own place (target/release/pisco), or SW_ROOT.
 mod build;
 mod census;
 mod oci;
@@ -16,13 +16,13 @@ use std::process::Command;
 
 fn root() -> PathBuf {
     if let Ok(r) = std::env::var("SW_ROOT") { return r.into(); }
-    let is_root = |p: &Path| p.join("bases").is_dir() && p.join("rt").is_dir() && p.join("crates/sw").is_dir();
+    let is_root = |p: &Path| p.join("bases").is_dir() && p.join("rt").is_dir() && p.join("crates/pisco").is_dir();
     let starts = [std::env::current_exe().ok(), std::env::current_dir().ok()];
     for s in starts.into_iter().flatten() { for a in s.ancestors() { if is_root(a) { return a.to_path_buf(); } } }
     PathBuf::from(".")
 }
 fn usage() -> ! {
-    eprintln!("usage:\n  sw build <recipe dir> [--source <installer>] [--out <image dir>] [--cache <dir>] [--compare <installed folder>]\n  sw run <image> [--session <session.json>] [--saves <dir>] [--chrome] [-- title arguments]\n  sw census <image | title.exe> [--recipe <recipe dir> | --from <base> --libraries a,b] [--all]\n  sw inspect <image> [--files]");
+    eprintln!("usage:\n  pisco build <recipe dir> [--source <installer>] [--out <image dir>] [--cache <dir>] [--compare <installed folder>]\n  pisco run <image> [--session <session.json>] [--saves <dir>] [--chrome] [-- title arguments]\n  pisco census <image | title.exe> [--recipe <recipe dir> | --from <base> --libraries a,b] [--all]\n  pisco inspect <image> [--files]");
     std::process::exit(2);
 }
 struct Args { pos: Vec<String>, opts: Vec<(String, Option<String>)>, rest: Vec<String> }
@@ -55,9 +55,9 @@ fn main() {
         "census" => census(&root, &parse(&args[1..], &["from", "libraries", "recipe"])),
         "inspect" => inspect(&parse(&args[1..], &[])),
         "-h" | "--help" | "help" => usage(),
-        _ => { eprintln!("sw: unknown command {cmd}"); usage() }
+        _ => { eprintln!("pisco: unknown command {cmd}"); usage() }
     };
-    if let Err(e) = r { eprintln!("sw: {e}"); std::process::exit(1); }
+    if let Err(e) = r { eprintln!("pisco: {e}"); std::process::exit(1); }
 }
 
 /// The image in Node (web/run-node.mjs) or in headless Chrome (tools/run-chrome.mjs): both read it with web/image.mjs
@@ -86,7 +86,7 @@ fn census(root: &Path, a: &Args) -> R<()> {
         // an exe: lifted (with the recipe's builtin DLLs, if one is given) into a folder of its own to read its import table
         let rec = a.get("recipe").map(|r| recipe::load_recipe(&r)).transpose()?;
         let builtin: Vec<String> = rec.as_ref().map(|r| r.dll.keys().cloned().collect()).unwrap_or_default();
-        let tmp = root.join("out/sw-census"); let _ = std::fs::remove_dir_all(&tmp); std::fs::create_dir_all(&tmp).map_err(|e| e.to_string())?;
+        let tmp = root.join("out/pisco-census"); let _ = std::fs::remove_dir_all(&tmp); std::fs::create_dir_all(&tmp).map_err(|e| e.to_string())?;
         let t = build::tools(root)?;
         let o = Command::new(&t.lifter).arg(target.canonicalize().map_err(|e| format!("{}: {e}", target.display()))?).arg("title.c").args(builtin.iter().flat_map(|d| ["--builtin", d.as_str()])).current_dir(&tmp).output().map_err(|e| e.to_string())?;
         std::fs::write(tmp.join("lifter.log"), [&o.stdout[..], &o.stderr[..]].concat()).map_err(|e| e.to_string())?;

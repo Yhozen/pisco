@@ -38,7 +38,7 @@ fn add1(x: u64) -> u64 { x + 1 } fn dbl(x: u64) -> u64 { x * 2 }
     f += check(b"sort on stack", a == [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
     let s = fsum(1000);
     f += check(b"f64 sum", s > 7.4854 && s < 7.4855);
-    f += check(b"fnv hash", hash(core::hint::black_box(b"series-web")) == hash(b"series-web") && hash(b"a") == 0xaf63dc4c8601ec8c);
+    f += check(b"fnv hash", hash(core::hint::black_box(b"pisco")) == hash(b"pisco") && hash(b"a") == 0xaf63dc4c8601ec8c);
     unsafe {
         let p = VirtualAlloc(core::ptr::null_mut(), 1 << 16, 0x3000, 4);
         let mut okm = !p.is_null();

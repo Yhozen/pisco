@@ -5,7 +5,7 @@
 # process), the save loaded back (F3) from the browser's storage. Then captions are added at the marks.
 set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd); root=$(cd "$here/../.." && pwd); game=$root/out/doom/game
-out=$(realpath -m "${1:-$root/out/doom/video/doom-series-web.mp4}"); mkdir -p "$(dirname "$out")"
+out=$(realpath -m "${1:-$root/out/doom/video/doom-pisco.mp4}"); mkdir -p "$(dirname "$out")"
 raw=${out%.mp4}.raw.mp4
 cd "$root/out/doom"
 KEYS="$(cat "$here/session1.json")" KEYS2="$(cat "$here/session2.json")" RELOAD_AT=${RELOAD_AT:-62} DURATION=${DURATION:-98} TIMEOUT=200 \

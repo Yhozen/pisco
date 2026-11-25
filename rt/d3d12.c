@@ -855,7 +855,7 @@ IMP(d3dcompiler_47, D3DCompile) { // (source, size, name, defines, include, entr
   rt_log("d3dcompile-source %016llx %s %s %s", (unsigned long long)h, target, entry, enc);
   free(enc);
   if (code) M64(code) = 0;
-  if (errors) { const char *m = "series-web: this shader was not compiled ahead of time (tools/hlsl-prep.mjs)"; M64(errors) = rt_blob_new(m, strlen(m) + 1); }
+  if (errors) { const char *m = "pisco: this shader was not compiled ahead of time (tools/hlsl-prep.mjs)"; M64(errors) = rt_blob_new(m, strlen(m) + 1); }
   RET(0x80004005u);
 }
 

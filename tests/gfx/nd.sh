@@ -14,7 +14,7 @@
 # (seconds, default 1500).
 set -uo pipefail
 root=$(cd "$(dirname "$0")/../.." && pwd); cd "$root"
-ND=${ND:-$HOME/.series-web/oracle/prefix-narbacular-drop/drive_c/Program Files (x86)/Narbacular Drop}
+ND=${ND:-$HOME/.pisco/oracle/prefix-narbacular-drop/drive_c/Program Files (x86)/Narbacular Drop}
 session=recipes/narbacular-drop/sessions/menu-to-level.json
 if [ -n "${ORACLE:-}" ]; then oracle=$ORACLE; mean=${MEAN:-3}
 elif [ -f out/oracle/narbacular-drop/plain/menu.png ]; then oracle=out/oracle/narbacular-drop/plain; mean=${MEAN:-0.5}
@@ -24,8 +24,8 @@ rm -rf out/nd/shots
 start=$(date +%s)
 TIMEOUT=${TIMEOUT:-1500} SW_STRICT=1 SW_CLOCK=16667 SW_SESSION=$session node tools/run-chrome.mjs out/nd/title.wasm "$ND/Narbacular Drop.exe" > out/nd.chrome.log 2>&1; code=$?
 took=$(( $(date +%s) - start ))
-[ $code = 0 ] || { echo "the session ended with exit code $code:"; grep -v '^series-web:   ' out/nd.chrome.log | tail -4 | cut -c1-300; exit 1; }
-grep -q '^series-web: session done' out/nd.chrome.log || { echo "the session did not reach its end:"; tail -3 out/nd.chrome.log | cut -c1-300; exit 1; }
+[ $code = 0 ] || { echo "the session ended with exit code $code:"; grep -v '^pisco:   ' out/nd.chrome.log | tail -4 | cut -c1-300; exit 1; }
+grep -q '^pisco: session done' out/nd.chrome.log || { echo "the session did not reach its end:"; tail -3 out/nd.chrome.log | cut -c1-300; exit 1; }
 if grep -q -e '^gpu: WebGPU error' -e '^gpu: shader ' -e '^gpu: pipeline ' -e '^page exception' out/nd.chrome.log; then echo "WebGPU refused something:"; grep -e '^gpu: ' -e '^page exception' out/nd.chrome.log | head -4 | cut -c1-300; exit 1; fi
 grep -q '^gpu explicit records: .*"skipped":{}}, [0-9]* presents, 0 WebGPU errors$' out/nd.chrome.log || { echo "the back end left draws out or saw errors:"; grep '^gpu explicit records' out/nd.chrome.log | cut -c1-400; exit 1; }
 want=$(python3 -I -c 'import json, sys; print(" ".join(s["shot"] for s in json.load(open(sys.argv[1]))["steps"] if "shot" in s))' "$session")

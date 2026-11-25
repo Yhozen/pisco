@@ -65,7 +65,7 @@ console's libraries (`gdk.c`, the D3D12 and DirectStorage front ends, XAudio2, t
 
 ## Title images
 
-`sw` (`crates/sw`, GPL-2.0-or-later) is a separate program: it runs the lifter, clang and innoextract (zlib licence;
+`pisco` (`crates/pisco`, GPL-2.0-or-later) is a separate program: it runs the lifter, clang and innoextract (zlib licence;
 downloaded, never linked) as subprocesses. In an image ([docs/images.md](docs/images.md)) the base's
 layer carries the Liberation fonts under the OFL with their `LICENSE` beside them; the game layer and the module are
 built from the user's own installer, stay on the user's machine and are marked so in the manifest.

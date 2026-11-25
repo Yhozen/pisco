@@ -1,4 +1,4 @@
-# The recipe for Narbacular Drop (2005, DigiPen): `sw build recipes/narbacular-drop --source <installer>` makes its
+# The recipe for Narbacular Drop (2005, DigiPen): `pisco build recipes/narbacular-drop --source <installer>` makes its
 # image (docs/images.md). tools/build-title.sh reads [cpu], [registry] and [dll] of it too (RECIPE=...).
 name = "narbacular-drop"
 from = "base/win32-x86:1"
