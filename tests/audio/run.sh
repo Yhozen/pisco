@@ -11,7 +11,7 @@ W=${WASI_SDK:-$HOME/tools/wasi-sdk-34.0-x86_64-linux}/bin
 ff=$root/out/ffmpeg
 "$root/tools/build-ffmpeg-audio.sh"
 TARGET="--target=wasm32-wasip1-threads -matomics -mbulk-memory -msimd128 -mnontrapping-fptoint -msign-ext"
-CF="$TARGET -mllvm -wasm-enable-sjlj -O2 -fno-strict-aliasing -I$root/rt -Wall -Wextra -Werror"
+CF="$TARGET -mllvm -wasm-enable-sjlj -O2 -fno-strict-aliasing -I$root/rt -I$root/rt/gdk -Wall -Wextra -Werror"
 "$W/clang" $CF -c "$root/rt/gdk/audio_codec.c" -o "$out/audio_codec_stub.o"
 "$W/clang" $CF -DSW_AUDIO_CODECS -I"$ff/include" -c "$root/rt/gdk/audio_codec.c" -o "$out/audio_codec.o"
 "$W/clang" $CF -c "$root/tests/audio/audio_codec_test.c" -o "$out/audio_codec_test.o"
