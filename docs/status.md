@@ -3,8 +3,8 @@
 ## Done
 
 - **Gate A (CPU and OS layer on synthetic titles): passed** in Node and headless Chrome — our own titles
-  (Rust, C++ with libc++/libunwind, a multi-image title with a DLL) and XCL's console test title (28 of its
-  50 checks: all CPU-side ones but 3 that need XCL's above-4-GiB memory layout).
+  (Rust, C++ with libc++/libunwind, a multi-image title with a DLL) and XCL's console test title (46 of its
+  50 checks in Node, where the 4 that read pixels back cannot pass; all 50 in Chrome, below).
 - **A real 64-bit Windows program** (Stockfish 19's official build, MinGW-compiled, 103 MB) runs bit-exactly:
   `bench` searches 2,497,913 nodes, the signature published with the release, at ~106 k nodes/s in Node and
   ~111 k in Chrome.
@@ -115,25 +115,34 @@ word, 80-bit precision, and every import beyond the four the two test titles cal
 
 ## Not done, in the order Minecraft probably needs it
 
-0. ~~**The graphics ladder's steps 1–2**~~: done 2026-11-24 (SimpleTriangleDesktop with clang-cl and MSVC builds,
-   SimplePBR; `docs/journey.md` §3.20–3.21, `tests/gfx/st.sh`, `tests/gfx/pbr.sh`). What they needed:
-   the MSVC C++ runtime DLLs, the AVX rule in the lifter, DXGI swap chains, vertex / index / constant buffers,
-   depth, BC textures. The shared D3D12 core they need exists (written for all of D3D12, tested on Doom's part).
-1. **D3D12.X** (historical note, before 2026-11-24): nothing yet. First a null device (objects that accept every call, as XCL's M1) to reach the
-   first frame submission (Gate B); its vtable layouts can come from XCL's `hle/d3d12_layout.rs`. Then command
-   lists → WebGPU, title memory copied to GPU buffers before each submission (VIctory's `shadow.rs` model).
-2. **Shaders**: the census exists (`crates/shaders`, decoder and container parser from XCL). A translator
-   RDNA2 → WGSL is the big piece; XCL's HLSL emitter (`gpu/recomp/emit.rs`) is the reference.
-3. **MSVC C++ exceptions**: FH3 works (§3.20); FH4 (current `cl.exe`) is untested.
-4. **Audio**: done for PCM, XMA2 and Opus (FFmpeg); XMA streamed across buffers is not.
-5. **Input**: GameInput's object exists with timestamps only; readings from the Gamepad API next.
-6. **Persistence**: the VFS overlay is in memory; saves should go to OPFS in the browser, a folder in Node.
-7. **Speed**: lifted code runs ~1.3–6× native on our micro-benchmarks. Next: keep flags lazily, register
-   locals across calls, AVX2 paths (the virtual CPU reports SSE4.2 only), wasm64 only when needed.
+The graphics ladder is done up to Minecraft (steps 1–4: SimpleTriangleDesktop, SimplePBR, Doom, XCL's checks).
+What is left before and during step 5:
+
+1. **The Minecraft files** (`docs/first-run.md`): every Minecraft-specific answer waits on them, among them
+   which imports are missing, which shader stages it uses and whether it needs wasm64. `tools/census.sh
+   <folder>/Minecraft.Windows.exe` answers those in minutes without running the game.
+2. **Shaders, RDNA2 → WGSL**: the console ships GPU machine code. The census and the decoder exist
+   (`crates/shaders`, from XCL); the translator is the big piece, with XCL's HLSL emitter (`gpu/recomp/emit.rs`)
+   and its instruction tests as the reference. Steps 1–4 do not exercise it: their shaders are DXIL.
+3. **WebGPU's limits**: no mesh shaders, no bindless heaps (XCL saw Minecraft use eight heaps of 73,727
+   descriptors), no 64-bit atomics. The answer (per-draw bindings, compute emulation) is decided after the census.
+4. **MSVC C++ exceptions, FH4**: FH3 works with the real `vcruntime140` (`docs/journey.md` §3.20); FH4, which
+   current `cl.exe` emits, is untested for want of a test title built by it.
+5. **Audio**: PCM, XMA2 and Opus voices play (FFmpeg); each XMA buffer is decoded whole when it is submitted,
+   so XMA streamed across buffers is not handled, and XAudio2 has no device callbacks yet.
+6. **Speed**: lifted code runs ~1.3–6× native on our micro-benchmarks. Next: keep flags lazily, register
+   locals across calls, AVX2 paths (the virtual CPU reports up to SSE4.2 and POPCNT, no AVX), wasm64 only
+   when needed.
+
+Done since the first version of this list: D3D12.X (Doom, XCL's checks), GameInput readings (keyboard and
+gamepad, from the page), saves kept in OPFS in the browser and in a folder in Node (`SW_SAVES`).
 
 ## Known limits
 
-- Exceptions resume only at landing pads the lifter found (GCC/LLVM LSDA, C scope tables); MSVC funclets not yet.
+- 64-bit exceptions resume at the landing pads the lifter finds: GCC / LLVM LSDA, C scope tables, MSVC FH3 catch
+  and cleanup funclets and catch continuations. FH4 tables are not read. 32-bit titles have no exception
+  dispatch yet.
+- AVX and later instructions trap where they are; titles never reach them, since CPUID does not report AVX.
 - x87 is emulated with doubles (no 80-bit precision).
 - Memory protection, guard pages and write watches do not exist; the VFS keeps S:\ and (Windows desktop titles) what a
   title writes in its own folder, not deletions of its own files.
