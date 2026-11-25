@@ -314,7 +314,8 @@ IMP(msvcrt, longjmp) {
   longjmp(*(jmp_buf *)l->jb, 1);
 }
 #else
-IMP(msvcrt, _setjmp) { RET(0); } // 64-bit: longjmp is not supported yet, a setjmp that only ever returns once
+IMP(msvcrt, _setjmp3) { RET(0); } // 64-bit: longjmp is not supported yet, a setjmp that only ever returns once
+IMP(msvcrt, _setjmp) { RET(0); }
 IMP(msvcrt, longjmp) { rt_fatal("longjmp is not implemented yet (from 0x%llx)", (u64)MP(R[RSP])); }
 #endif
 
