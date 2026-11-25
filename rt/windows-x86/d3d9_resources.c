@@ -546,6 +546,11 @@ static u32 create_shader(Cpu *c, u32 kind) {
   Shader9 *s = (Shader9 *)GP(com_new("d3d9", kind == K_VERTEXSHADER ? &IDirect3DVertexShader9_interface : &IDirect3DPixelShader9_interface, sizeof(Shader9)));
   d3d9_object_init(&s->o, kind, DEV, 0);
   s->count = (u32)n; s->tokens = malloc(4 * n); memcpy(s->tokens, t, 4 * n);
+  // SW_D3D9_SHADERS=1: each bytecode's length and hash, to set against the ones captured under Wine (docs/tag.md:
+  // tools/oracle-wine/d3dp.c writes them; tools/oracle-wine/sm-census.py --hashes prints the same line for each)
+  static int show = -1; if (show < 0) { const char *e = getenv("SW_D3D9_SHADERS"); show = e && *e == '1'; }
+  if (show) { u64 h = 0xcbf29ce484222325ull; for (size_t i = 0; i < 4 * n; i++) { h ^= ((const u8 *)t)[i]; h *= 0x100000001b3ull; }
+    char name[16]; sm_version_name(v, name, sizeof name); rt_log("Direct3D 9 bytecode %s %zu bytes fnv64 %016llx", name, 4 * n, (unsigned long long)h); }
   M32(out) = (u32)(uptr)s; return D3D_OK;
 }
 IMP(d3d9, IDirect3DDevice9_CreateVertexShader) { STAT(device_CreateVertexShader); RET(create_shader(c, K_VERTEXSHADER)); }

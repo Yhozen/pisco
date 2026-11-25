@@ -1,7 +1,20 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
-# sm-census.py DIR: Direct3D 9 shader bytecodes (*.bin, one each) -> versions, sizes, opcode counts per shader model,
+# sm-census.py [--hashes] DIR: Direct3D 9 shader bytecodes (*.bin, one each) -> versions, sizes, opcode counts per shader model,
 # modifiers, register types, sampler types. Python standard library only.
 import os, struct, sys, hashlib, collections
+
+# --hashes DIR: one line per bytecode, in the order the files are named (the order they were made), as the runtime
+# logs them with SW_D3D9_SHADERS=1: "Direct3D 9 bytecode vs_2_x 1234 bytes fnv64 0123456789abcdef"
+if len(sys.argv) > 2 and sys.argv[1] == '--hashes':
+    for f in sorted(x for x in os.listdir(sys.argv[2]) if x.endswith('.bin')):
+        data = open(os.path.join(sys.argv[2], f), 'rb').read()
+        v = struct.unpack_from('<I', data)[0]; major, minor = (v >> 8) & 0xFF, v & 0xFF
+        kind = 'vs' if v >> 16 == 0xFFFE else 'ps' if v >> 16 == 0xFFFF else '?s'
+        name = '%s_2_x' % kind if (major, minor) == (2, 1) else '%s_%d_%d' % (kind, major, minor)
+        h = 0xcbf29ce484222325
+        for b in data: h = ((h ^ b) * 0x100000001b3) & 0xFFFFFFFFFFFFFFFF
+        print('Direct3D 9 bytecode %s %d bytes fnv64 %016x' % (name, len(data), h))
+    sys.exit(0)
 
 OPS = {0: 'nop', 1: 'mov', 2: 'add', 3: 'sub', 4: 'mad', 5: 'mul', 6: 'rcp', 7: 'rsq', 8: 'dp3', 9: 'dp4', 10: 'min', 11: 'max',
        12: 'slt', 13: 'sge', 14: 'exp', 15: 'log', 16: 'lit', 17: 'dst', 18: 'lrp', 19: 'frc', 20: 'm4x4', 21: 'm4x3', 22: 'm3x4',
