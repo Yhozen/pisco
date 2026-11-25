@@ -1,12 +1,12 @@
 {
- "updated": "2026-11-24",
+ "updated": "2026-11-25",
  "d3d12": [
   223,
   353
  ],
  "imports": [
-  412,
-  480
+  463,
+  545
  ],
  "xcl": [
   50,
@@ -37,15 +37,21 @@
   },
   {
    "name": "SimpleTriangleDesktop (clang-cl)",
-   "done": 127,
-   "total": 193,
-   "shipped": 64
+   "done": 189,
+   "total": 265,
+   "shipped": 0
   },
   {
    "name": "SimpleTriangleDesktop (MSVC)",
-   "done": 128,
-   "total": 194,
-   "shipped": 88
+   "done": 190,
+   "total": 266,
+   "shipped": 0
+  },
+  {
+   "name": "SimplePBR (clang-cl)",
+   "done": 200,
+   "total": 280,
+   "shipped": 0
   }
  ]
 }
