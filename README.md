@@ -1,6 +1,13 @@
-# series-web (working name)
+<p align="center"><img src="docs/img/pisco.png" alt="PISCO logo: a glass of pisco on ice" width="160"></p>
 
-Runs a 64-bit Windows title's x86-64 code in WebAssembly — in a browser tab or in Node — by recompiling
+<h1 align="center">PISCO</h1>
+
+<p align="center"><b>PISCO Imitates Systems, Compiles Originals.</b><br>Recompile. Package. Run.</p>
+
+Pisco is distilled from wine, and this project owes a lot to [Wine](https://www.winehq.org): Windows PC titles are
+checked against it screen by screen and call by call.
+
+PISCO runs a 64-bit Windows title's x86-64 code in WebAssembly — in a browser tab or in Node — by recompiling
 it ahead of time and supplying the operating system underneath it. The target is the Xbox Series build of
 Minecraft; until those files are here it is tested on titles we build ourselves and on a real program
 (Stockfish 19's official Windows build).
