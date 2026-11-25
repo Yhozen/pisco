@@ -5,8 +5,8 @@
   353
  ],
  "imports": [
-  463,
-  545
+  897,
+  1005
  ],
  "xcl": [
   50,
@@ -19,38 +19,58 @@
  "titles": [
   {
    "name": "Doom (our console title)",
+   "runtime": "Xbox Series",
    "done": 79,
    "total": 79,
    "shipped": 0
   },
   {
    "name": "XCL's console test title",
+   "runtime": "Xbox Series",
    "done": 185,
    "total": 187,
    "shipped": 0
   },
   {
    "name": "Stockfish 19 (official build)",
+   "runtime": "Windows x64",
    "done": 180,
    "total": 180,
    "shipped": 0
   },
   {
    "name": "SimpleTriangleDesktop (clang-cl)",
-   "done": 189,
+   "runtime": "Windows x64",
+   "done": 177,
    "total": 265,
    "shipped": 0
   },
   {
    "name": "SimpleTriangleDesktop (MSVC)",
-   "done": 190,
+   "runtime": "Windows x64",
+   "done": 178,
    "total": 266,
    "shipped": 0
   },
   {
    "name": "SimplePBR (clang-cl)",
-   "done": 200,
+   "runtime": "Windows x64",
+   "done": 189,
    "total": 280,
+   "shipped": 0
+  },
+  {
+   "name": "Narbacular Drop",
+   "runtime": "Windows x86",
+   "done": 180,
+   "total": 186,
+   "shipped": 0
+  },
+  {
+   "name": "Tag: The Power of Paint",
+   "runtime": "Windows x86",
+   "done": 306,
+   "total": 315,
    "shipped": 0
   }
  ]
