@@ -59,11 +59,21 @@ IMP(kernel32, Sleep) {
   nanosleep(&ts, 0);
 }
 IMP(kernel32, SleepEx) { imp_kernel32_Sleep(c); RET(0); }
+// SYSTEM_INFO: 48 bytes for a 64-bit guest, 36 for a 32-bit one (whose pointers and mask are 4 bytes: writing the
+// 64-bit layout into a 32-bit caller's frame overwrote its saved EBP)
 IMP(kernel32, GetSystemInfo) {
-  u64 p = ARG(0); memset((void *)GP(p), 0, 48);
+  u64 p = ARG(0); u32 cpus = (u32)sysconf(_SC_NPROCESSORS_ONLN);
+#if GUEST_BITS == 32
+  memset((void *)GP(p), 0, 36);
+  M16(p) = 0; M32(p + 4) = 4096; M32(p + 8) = 0x10000; M32(p + 12) = 0x7FFEFFFF;   // PROCESSOR_ARCHITECTURE_INTEL
+  M32(p + 16) = cpus >= 32 ? 0xFFFFFFFFu : (1u << cpus) - 1; M32(p + 20) = cpus;
+  M32(p + 24) = 586; M32(p + 28) = 65536; M16(p + 32) = 6;                         // PROCESSOR_INTEL_PENTIUM, level 6
+#else
+  memset((void *)GP(p), 0, 48);
   M16(p) = 9; M32(p + 4) = 4096; M64(p + 8) = 0x10000; M64(p + 16) = 0x7FFFFFFEFFFF;
-  M64(p + 24) = (1ull << sysconf(_SC_NPROCESSORS_ONLN)) - 1; M32(p + 32) = (u32)sysconf(_SC_NPROCESSORS_ONLN);
+  M64(p + 24) = (1ull << cpus) - 1; M32(p + 32) = cpus;
   M32(p + 36) = 8664; M32(p + 40) = 65536; M16(p + 44) = 6;
+#endif
 }
 // PF_* numbers: 3 MMX, 6 XMMI, 10 XMMI64, 13 SSE3, 36 SSSE3, 37 SSE4_1, 38 SSE4_2, 39 AVX
 IMP(kernel32, IsProcessorFeaturePresent) { // PF_*: 2 CMPXCHG8B, 3 MMX, 6 SSE, 8 RDTSC, 10 SSE2, 12 NX, 13 SSE3, 14 CMPXCHG16B, 36 SSSE3, 37 SSE4.1, 38 SSE4.2
