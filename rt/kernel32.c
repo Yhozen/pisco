@@ -181,28 +181,36 @@ IMP(kernel32, WaitForMultipleObjects) {
   RET(rt_wait(c, n, hs, ARG(2) != 0, (u32)ARG(3)));
 }
 
-// ---- critical sections: a recursive pthread mutex behind the guest's 40-byte structure ----
+// ---- critical sections: a recursive pthread mutex behind the guest's structure (40 bytes in 64-bit code, 24 in
+// 32-bit), kept in its first pointer-sized field (DebugInfo), which needs no more than the pointer's alignment ----
+#if GUEST_BITS == 32
+typedef u32 CsCell;
+#define CS_BYTES 24
+#else
+typedef u64 CsCell;
+#define CS_BYTES 40
+#endif
 static pthread_mutex_t cs_init_lock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_mutex_t *cs_mutex(u64 cs) {
-  pthread_mutex_t *m = (pthread_mutex_t *)GP(__atomic_load_n((u64 *)GP(cs), __ATOMIC_ACQUIRE));
+  pthread_mutex_t *m = (pthread_mutex_t *)GP(__atomic_load_n((CsCell *)GP(cs), __ATOMIC_ACQUIRE));
   if (m) return m;
   pthread_mutex_lock(&cs_init_lock);
-  m = (pthread_mutex_t *)GP(M64(cs));
+  m = (pthread_mutex_t *)GP(MP(cs));
   if (!m) {
     m = malloc(sizeof *m);
     pthread_mutexattr_t a; pthread_mutexattr_init(&a); pthread_mutexattr_settype(&a, PTHREAD_MUTEX_RECURSIVE);
     pthread_mutex_init(m, &a);
-    __atomic_store_n((u64 *)GP(cs), (u64)(uptr)m, __ATOMIC_RELEASE);
+    __atomic_store_n((CsCell *)GP(cs), (CsCell)(uptr)m, __ATOMIC_RELEASE);
   }
   pthread_mutex_unlock(&cs_init_lock);
   return m;
 }
-IMP(kernel32, InitializeCriticalSection) { memset((void *)GP(ARG(0)), 0, 40); cs_mutex(ARG(0)); }
-IMP(kernel32, InitializeCriticalSectionAndSpinCount) { memset((void *)GP(ARG(0)), 0, 40); cs_mutex(ARG(0)); RET(1); }
-IMP(kernel32, InitializeCriticalSectionEx) { memset((void *)GP(ARG(0)), 0, 40); cs_mutex(ARG(0)); RET(1); }
+IMP(kernel32, InitializeCriticalSection) { memset((void *)GP(ARG(0)), 0, CS_BYTES); cs_mutex(ARG(0)); }
+IMP(kernel32, InitializeCriticalSectionAndSpinCount) { memset((void *)GP(ARG(0)), 0, CS_BYTES); cs_mutex(ARG(0)); RET(1); }
+IMP(kernel32, InitializeCriticalSectionEx) { memset((void *)GP(ARG(0)), 0, CS_BYTES); cs_mutex(ARG(0)); RET(1); }
 IMP(kernel32, DeleteCriticalSection) {
-  pthread_mutex_t *m = (pthread_mutex_t *)GP(M64(ARG(0)));
-  if (m) { pthread_mutex_destroy(m); free(m); M64(ARG(0)) = 0; }
+  pthread_mutex_t *m = (pthread_mutex_t *)GP(MP(ARG(0)));
+  if (m) { pthread_mutex_destroy(m); free(m); MP(ARG(0)) = 0; }
 }
 IMP(kernel32, EnterCriticalSection) { pthread_mutex_lock(cs_mutex(ARG(0))); }
 IMP(kernel32, LeaveCriticalSection) { pthread_mutex_unlock(cs_mutex(ARG(0))); }
