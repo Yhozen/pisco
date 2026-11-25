@@ -213,3 +213,12 @@ temporary files, `GetFullPathNameA`, `MoveFileA`, `GlobalMemoryStatus`, `Interlo
   byte. Against Wine's `+d3d9` trace (`d3d9-compare.py`): the same 76 methods, 96 counted arguments with the same
   sets of values; textures made and locked differ in number only as long phases do (the same 86 texture files are
   opened, `SW_FILES=1`). FMOD Ex came here, not in T5: strict mode needs `FMOD_System_Create`.
+- **T4, pixels.** In headless Chrome (WebGPU on SwiftShader), strict, on the virtual clock, `tests/run.sh tag` plays
+  `menu-to-level1` with every title shader translated (21 WGSL modules, 13 pipelines, 673,707 draws, no draw left
+  out, no WebGPU error) and sets the checkpoints against Wine's: level 1 1.24 / 0.95 / 1.35 of 255 on average
+  (2.3 % of pixels over 16), its tooltips 1.37 / 1.20 / 1.42, the menu 5.1 / 5.2 / 4.3 (the logo's colours are
+  random); the paint splash differs as its random splats and its timing do. What it took: infinities made at run
+  time (Tint refuses `bitcast<f32>(0x7f800000u)` as a constant, naga does not), `GetRenderTargetData` reading the
+  GPU's pixels back (1544 times in the session), bytes copied into render targets with `UpdateTexture` sent to the
+  GPU (each wall's paint map), a depth buffer larger than its target. Not needed by Tag, so not done: point
+  sprites with a vertex shader, a programmable stage beside a fixed-function one, BC textures, `StretchRect`.

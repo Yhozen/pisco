@@ -31,6 +31,8 @@
 #            and the glyph pixels' differences are printed
 #   ndgfx    tests/gfx/nd.sh: Narbacular Drop's session in headless Chrome, drawn (WebGPU on SwiftShader): a PNG at
 #            every checkpoint, and the still screens close to the oracle's screenshots when those are there (minutes)
+#   tag      tests/gfx/tag.sh: Tag: The Power of Paint from the user's installer (TAG_SETUP), its session in headless
+#            Chrome in strict mode: a PNG at every checkpoint, the menu close to the oracle's screenshot (an hour)
 #   ndplay   tests/gfx/ndplay.sh: Narbacular Drop played (M5): the level1-portals session in Node (both portals, out of
 #            the cage; its sound not silent and the same on a second run; its FMOD calls against Wine's +snoop trace
 #            when the oracle's is there), system.opt written by Quit and read again by a second run (SW_SAVES), then
@@ -181,6 +183,7 @@ for s in ${*:-build layout node bench win32 ffp sm gdi}; do case $s in
   d3dx)   if [ -f "$D3DX_DLL" ]; then step d3dx d3dx; else echo "skip  d3dx: no d3dx9_35.dll in D3DX_DLL=$D3DX_DLL (Tag's installer has one)"; fi ;;
   ndgfx)  if [ -f "$ND/Narbacular Drop.exe" ]; then LINES_SHOWN=16 ND=$ND step ndgfx tests/gfx/nd.sh; else echo "skip  ndgfx: the game is not installed (ND=$ND)"; fi ;;
   ndplay) if [ -f "$ND/Narbacular Drop.exe" ]; then LINES_SHOWN=16 ND=$ND step ndplay tests/gfx/ndplay.sh; else echo "skip  ndplay: the game is not installed (ND=$ND)"; fi ;;
+  tag)    if [ -f "${TAG_SETUP:-$HOME/games/Tag_setup.exe}" ]; then LINES_SHOWN=10 step tag tests/gfx/tag.sh; else echo "skip  tag: no installer at TAG_SETUP=${TAG_SETUP:-$HOME/games/Tag_setup.exe}"; fi ;;
   doom)   LINES_SHOWN=4 step doom tests/gfx/doom.sh ;;
   st)     if [ ! -f "$REDIST/vcruntime140.dll" ]; then echo "skip  st: no MSVC runtime DLLs in REDIST=$REDIST"
           elif [ ! -f out/gdk-samples/local/SimpleTriangleDesktop.exe ]; then echo "skip  st: out/gdk-samples/local is not built (tools/build-gdk-sample.sh)"
