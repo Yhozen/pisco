@@ -141,12 +141,11 @@ static u32 buffer(Buffer9 *b) {
 static u32 texture(Texture9 *t) {
   u32 format = dxgi_of(t->format), cube = t->o.kind == K_CUBETEXTURE;
   if (!format) return 0;   // a format without a number on the ring
-  int target = (t->usage & (USAGE_RENDERTARGET | USAGE_DEPTHSTENCIL)) != 0;
   if (!t->gpu_id) {
     t->gpu_id = resource(t->o.kind == K_VOLUMETEXTURE ? 3 : 2, format, t->width, t->height, cube ? 6 : t->depth, t->levels, (t->usage & USAGE_RENDERTARGET) ? 1 : (t->usage & USAGE_DEPTHSTENCIL) ? 2 : 0);
     stat.textures++;
   }
-  if (target) return t->gpu_id;   // its pixels are the GPU's
+  // a render target's pixels are the GPU's, but a level the title wrote since (UpdateTexture) is sent as any other
   for (u32 i = 0; i < t->levels; i++) {
     if (cube) for (u32 f = 0; f < 6; f++) { Surface9 *s = t->surfaces[f * t->levels + i]; if (s->dirty != s->gpu_dirty) { write_texture_at(t->gpu_id, i, f, s->desc.width, s->desc.height, 1, s->bits, s->pitch); s->gpu_dirty = s->dirty; } }
     else if (t->o.kind == K_TEXTURE) { Surface9 *s = t->surfaces[i]; if (s->dirty != s->gpu_dirty) { write_texture(t->gpu_id, i, s->desc.width, s->desc.height, 1, s->bits, s->pitch); s->gpu_dirty = s->dirty; } }
@@ -165,6 +164,8 @@ static u32 target(Surface9 *s, u32 *mip) {
     s->gpu_id = resource(2, format, s->desc.width, s->desc.height, 1, 1, (s->desc.usage & USAGE_DEPTHSTENCIL) ? 2 : 1);
     stat.textures++;
   }
+  // bytes the title put there itself (UpdateSurface, ColorFill, a lockable back buffer): sent before it is drawn on
+  if (s->dirty != s->gpu_dirty && !(s->desc.usage & USAGE_DEPTHSTENCIL)) { write_texture(s->gpu_id, 0, s->desc.width, s->desc.height, 1, s->bits, s->pitch); s->gpu_dirty = s->dirty; }
   return s->gpu_id;
 }
 void d3d9_gpu_release(Object9 *o) {
