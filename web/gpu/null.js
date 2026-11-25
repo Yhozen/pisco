@@ -113,7 +113,7 @@ export function startNull(memory, addr, { dir, log }) {
         const id = d.bindings[k], r = res.get(id);
         if (b.kind === GPU.BIND_UNIFORM) { if (d.uniformBytes < b.size) wrong(`a draw brings ${d.uniformBytes} bytes of uniforms, pipeline ${d.pipeline} needs ${b.size}`); }
         else if (b.kind === GPU.BIND_SAMPLER) { if (!samplers.has(id)) wrong(`a draw binds sampler ${id}, which does not exist`); }
-        else if (!r || r.dim !== (b.kind === GPU.BIND_TEXTURE_3D ? 3 : 2)) wrong(`a draw binds texture ${id} to a binding of kind ${b.kind}`);
+        else if (!r || r.dim !== (b.kind === GPU.BIND_TEXTURE_3D ? 3 : 2) || (b.kind === GPU.BIND_TEXTURE_CUBE && r.depth !== 6)) wrong(`a draw binds texture ${id} to a binding of kind ${b.kind}`);
         else if (id === target.colorId) wrong(`a draw samples texture ${id}, the pass's own target`);
       });
       if (d.vertexBuffers.length !== p.buffers.length || d.vertexBuffers.some(([id]) => res.get(id)?.dim !== 0)) wrong(`a draw gives ${d.vertexBuffers.length} vertex buffers, pipeline ${d.pipeline} reads ${p.buffers.length}`);

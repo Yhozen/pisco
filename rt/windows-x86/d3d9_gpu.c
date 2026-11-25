@@ -34,6 +34,7 @@
 #include <math.h>
 #include "d3d9.h"
 #include "d3d9_ffp.h"
+#include "d3d9_sm.h"
 #include "gpu_ring.h"
 
 enum { RS_ZENABLE = 7, RS_FILLMODE = 8, RS_SHADEMODE = 9, RS_ZWRITEENABLE = 14, RS_ALPHATESTENABLE = 15, RS_SRCBLEND = 19, RS_DESTBLEND = 20, RS_CULLMODE = 22, RS_ZFUNC = 23,
@@ -99,16 +100,18 @@ static void write_buffer(u32 id, u32 offset, const u8 *src, u32 bytes, u32 mode)
     at += n;
   }
 }
-static void write_texture(u32 id, u32 mip, u32 width, u32 height, u32 depth, const u8 *src, u32 pitch) {
+// (`layer`: the first array layer written, a cube map's face; or the first slice of a volume)
+static void write_texture_at(u32 id, u32 mip, u32 layer, u32 width, u32 height, u32 depth, const u8 *src, u32 pitch) {
   u32 rows = (4u << 20) / (pitch ? pitch : 1); if (!rows) rows = 1;
   for (u32 z = 0; z < depth; z++) for (u32 y = 0; y < height; y += rows) {
     u32 n = height - y < rows ? height - y : rows;
     u8 *p = rt_gpu_rec_begin(GPU_R_WRITE_TEXTURE, 36 + n * pitch); u32 *w = (u32 *)p;
-    w[0] = id; w[1] = mip; w[2] = 0; w[3] = y; w[4] = z; w[5] = width; w[6] = n; w[7] = 1; w[8] = pitch;
+    w[0] = id; w[1] = mip; w[2] = 0; w[3] = y; w[4] = layer + z; w[5] = width; w[6] = n; w[7] = 1; w[8] = pitch;
     memcpy(p + 36, src + (size_t)z * height * pitch + (size_t)y * pitch, (size_t)n * pitch); rt_gpu_rec_end_quiet();
     stat.texture_writes++; stat.texture_bytes += n * pitch;
   }
 }
+static void write_texture(u32 id, u32 mip, u32 width, u32 height, u32 depth, const u8 *src, u32 pitch) { write_texture_at(id, mip, 0, width, height, depth, src, pitch); }
 
 // A lock for writing: which bytes may change, and what the lock promised about the ones draws have read.
 // DISCARD lets the back end hand out new storage, so it is honoured only where nothing outside the lock can be
@@ -136,21 +139,22 @@ static u32 buffer(Buffer9 *b) {
 }
 // A texture with all its levels; the ones whose bytes changed are sent again. 0: a format not drawn with.
 static u32 texture(Texture9 *t) {
-  if (t->o.kind == K_CUBETEXTURE) { static int told; if (!told++) rt_log("Direct3D 9: a cube texture is not drawn with yet (T4)"); return 0; }
-  u32 format = dxgi_of(t->format); int color = t->format == FMT_A8R8G8B8 || t->format == FMT_X8R8G8B8;
-  if (!format || (!color && !(t->usage & USAGE_DEPTHSTENCIL))) return 0;   // the two colour formats, or a depth format used as one
+  u32 format = dxgi_of(t->format), cube = t->o.kind == K_CUBETEXTURE;
+  if (!format) return 0;   // a format without a number on the ring
   int target = (t->usage & (USAGE_RENDERTARGET | USAGE_DEPTHSTENCIL)) != 0;
   if (!t->gpu_id) {
-    t->gpu_id = resource(t->o.kind == K_VOLUMETEXTURE ? 3 : 2, format, t->width, t->height, t->depth, t->levels, (t->usage & USAGE_RENDERTARGET) ? 1 : (t->usage & USAGE_DEPTHSTENCIL) ? 2 : 0);
+    t->gpu_id = resource(t->o.kind == K_VOLUMETEXTURE ? 3 : 2, format, t->width, t->height, cube ? 6 : t->depth, t->levels, (t->usage & USAGE_RENDERTARGET) ? 1 : (t->usage & USAGE_DEPTHSTENCIL) ? 2 : 0);
     stat.textures++;
   }
   if (target) return t->gpu_id;   // its pixels are the GPU's
   for (u32 i = 0; i < t->levels; i++) {
-    if (t->o.kind == K_TEXTURE) { Surface9 *s = t->surfaces[i]; if (s->dirty != s->gpu_dirty) { write_texture(t->gpu_id, i, s->desc.width, s->desc.height, 1, s->bits, s->pitch); s->gpu_dirty = s->dirty; } }
+    if (cube) for (u32 f = 0; f < 6; f++) { Surface9 *s = t->surfaces[f * t->levels + i]; if (s->dirty != s->gpu_dirty) { write_texture_at(t->gpu_id, i, f, s->desc.width, s->desc.height, 1, s->bits, s->pitch); s->gpu_dirty = s->dirty; } }
+    else if (t->o.kind == K_TEXTURE) { Surface9 *s = t->surfaces[i]; if (s->dirty != s->gpu_dirty) { write_texture(t->gpu_id, i, s->desc.width, s->desc.height, 1, s->bits, s->pitch); s->gpu_dirty = s->dirty; } }
     else { Volume9 *v = t->volumes[i]; if (v->dirty != v->gpu_dirty) { write_texture(t->gpu_id, i, v->desc.width, v->desc.height, v->desc.depth, v->bits, v->row_pitch); v->gpu_dirty = v->dirty; } }
   }
   return t->gpu_id;
 }
+static u32 bind_kind(const Texture9 *t) { return t->o.kind == K_CUBETEXTURE ? GPU_BIND_TEXTURE_CUBE : t->o.kind == K_VOLUMETEXTURE ? GPU_BIND_TEXTURE_3D : GPU_BIND_TEXTURE_2D; }
 // A surface drawn into: a texture's level, or a texture of its own (the back buffer, a depth buffer)
 static u32 target(Surface9 *s, u32 *mip) {
   *mip = 0;
@@ -265,26 +269,28 @@ static u32 sampler(const u32 *st) {
   return k.id;
 }
 
-enum { MAX_VB = 4 };
+enum { MAX_VB = 4, MAX_ATTR = 16, MAX_SAMPLERS = 16 };
 typedef struct {
   u32 vs, fs, color_format, depth_format; s32 depth_bias; u32 slope;
-  u8 topology, cull, write_mask, blend, src, dst, op, src_a, dst_a, op_a, depth_compare, depth_write, bindings, buffers, attributes, texture_kind;
-  u16 uniform_bytes; u16 stride[MAX_VB]; u8 step, pad0;
-  struct { u8 location, buffer, format, pad; u16 offset; } attr[FFP_LOC_COUNT];
-  u16 pad1;
+  u8 topology, cull, write_mask, blend, src, dst, op, src_a, dst_a, op_a, depth_compare, depth_write, buffers, attributes, step, pad0;
+  u16 uniform_bytes, sampler_mask;        // sampler N: a texture at binding 1 + 2N (of kind kinds[N]) and its sampler at 2 + 2N
+  u16 stride[MAX_VB];
+  u8 kinds[MAX_SAMPLERS];
+  struct { u8 location, buffer, format, pad; u16 offset; } attr[MAX_ATTR];
 } PipelineKey;   // no hidden padding: a key is hashed and compared as its bytes
-_Static_assert(sizeof(PipelineKey) == 24 + 16 + 2 + 2 * MAX_VB + 2 + 6 * FFP_LOC_COUNT + 2, "PipelineKey has no hidden padding");
+_Static_assert(sizeof(PipelineKey) == 24 + 16 + 4 + 2 * MAX_VB + MAX_SAMPLERS + 6 * MAX_ATTR, "PipelineKey has no hidden padding");
+static u32 binding_count(const PipelineKey *k) { return 1 + 2 * (u32)__builtin_popcount(k->sampler_mask); }
 typedef struct { PipelineKey key; u32 hash, id; } Pipeline;
 static Pipeline *pipelines; static u32 pipeline_count, pipeline_cap;
 static u32 pipeline(const PipelineKey *k) {
   u32 h = 2166136261u; for (size_t i = 0; i < sizeof *k; i++) h = (h ^ ((const u8 *)k)[i]) * 16777619u;
   for (u32 i = 0; i < pipeline_count; i++) if (pipelines[i].hash == h && !memcmp(&pipelines[i].key, k, sizeof *k)) return pipelines[i].id;
-  u32 w[GPU_PIPELINE_WORDS + 3 * 3 + 2 * MAX_VB + 4 * FFP_LOC_COUNT], n = GPU_PIPELINE_WORDS, id = next_id++;
+  u32 w[GPU_PIPELINE_WORDS + 3 * (1 + 2 * MAX_SAMPLERS) + 2 * MAX_VB + 4 * MAX_ATTR], n = GPU_PIPELINE_WORDS, id = next_id++;
   u32 head[GPU_PIPELINE_WORDS] = {id, k->vs, k->fs, k->topology, k->cull, 1 /* the front face is the clockwise one */, k->color_format, k->write_mask, k->blend, k->src, k->dst, k->op, k->src_a, k->dst_a, k->op_a,
-    k->depth_format, k->depth_compare, k->depth_write, (u32)k->depth_bias, k->slope, k->bindings, k->buffers, k->attributes, 0};
+    k->depth_format, k->depth_compare, k->depth_write, (u32)k->depth_bias, k->slope, binding_count(k), k->buffers, k->attributes, 0};
   memcpy(w, head, sizeof head);
   w[n++] = 0; w[n++] = GPU_BIND_UNIFORM; w[n++] = k->uniform_bytes;
-  if (k->bindings == 3) { w[n++] = 1; w[n++] = k->texture_kind; w[n++] = 0; w[n++] = 2; w[n++] = GPU_BIND_SAMPLER; w[n++] = 0; }
+  for (u32 i = 0; i < MAX_SAMPLERS; i++) if (k->sampler_mask & (1u << i)) { w[n++] = 1 + 2 * i; w[n++] = k->kinds[i]; w[n++] = 0; w[n++] = 2 + 2 * i; w[n++] = GPU_BIND_SAMPLER; w[n++] = 0; }
   for (u32 i = 0; i < k->buffers; i++) { w[n++] = k->stride[i]; w[n++] = k->step; }
   for (u32 i = 0; i < k->attributes; i++) { w[n++] = k->attr[i].location; w[n++] = k->attr[i].buffer; w[n++] = k->attr[i].offset; w[n++] = k->attr[i].format; }
   rec(GPU_R_PIPELINE, w, n);
@@ -398,10 +404,171 @@ enum { DECL_FLOAT1 = 0, DECL_FLOAT2, DECL_FLOAT3, DECL_FLOAT4, DECL_D3DCOLOR };
 enum { USE_POSITION = 0, USE_BLENDWEIGHT, USE_BLENDINDICES, USE_NORMAL, USE_PSIZE, USE_TEXCOORD, USE_POSITIONT = 9, USE_COLOR = 10 };
 static const u8 float_format[4] = {DXGI_R32_FLOAT, DXGI_R32G32_FLOAT, DXGI_R32G32B32_FLOAT, DXGI_R32G32B32A32_FLOAT};
 static void skip(const char *why) { stat.skipped++; (void)why; }
+// ---- a draw, once its shaders, vertex layout and uniform block are known: the pass, the pipeline's own state, the
+// textures and samplers it reads, its buffers, then the record (whose uniform block `fill` writes) ----
+typedef struct { Texture9 *tex; const u32 *samp; } Bound;
+typedef void (*FillUniforms)(const Device9 *d, const void *ctx, u8 *block);
+static void ffp_fill(const Device9 *d, const void *ctx, u8 *block) { uniforms(d, (const FfpVertexKey *)ctx, (FfpUniforms *)block); }
+static void draw_with(Device9 *d, PipelineKey *pkp, const u8 *streams, const Bound *bound, u32 type, s32 base, u32 first, u32 primitives, int indexed, FillUniforms fill, const void *ctx) {
+  PipelineKey pk = *pkp; const State9 *s = &d->state;
+  if (!set_pass(d, 0, 0, 0, 0)) { skip("no target"); return; }
+  set_view(s);
+  u32 bind_ids[2 * MAX_SAMPLERS], nbind = 0;
+  for (u32 i = 0; i < MAX_SAMPLERS; i++) if (pk.sampler_mask & (1u << i)) {
+    u32 t = texture(bound[i].tex);
+    if (!t) { UNSURE_ONCE("Direct3D 9: a texture of format %u is not drawn with", bound[i].tex->format); skip("texture format"); return; }
+    if (t == pass.color || t == pass.depth) { UNSURE_ONCE("Direct3D 9: a draw samples the texture it draws into: left out"); skip("feedback"); return; }
+    bind_ids[nbind++] = t; bind_ids[nbind++] = sampler(bound[i].samp);
+  }
+  pk.color_format = pass.color_format; pk.depth_format = pass.depth_format;
+  pk.write_mask = (u8)(s->rs[RS_COLORWRITEENABLE] & 15);
+  if (s->rs[RS_ALPHABLENDENABLE]) {
+    u32 src = s->rs[RS_SRCBLEND], dst = s->rs[RS_DESTBLEND];
+    if (src == 12) { src = 5; dst = 6; } else if (src == 13) { src = 6; dst = 5; }   // D3DBLEND_BOTHSRCALPHA, BOTHINVSRCALPHA
+    if (src < 1 || src > 11 || dst < 1 || dst > 11 || s->rs[RS_BLENDOP] < 1 || s->rs[RS_BLENDOP] > 5) UNSURE_ONCE("Direct3D 9: blending with factors %u, %u (operation %u) is drawn without blending", src, dst, s->rs[RS_BLENDOP]);
+    else {
+      pk.blend = 1; pk.src = pk.src_a = (u8)src; pk.dst = pk.dst_a = (u8)dst; pk.op = pk.op_a = (u8)s->rs[RS_BLENDOP];
+      if (s->rs[RS_SEPARATEALPHABLENDENABLE] && s->rs[RS_SRCBLENDALPHA] >= 1 && s->rs[RS_SRCBLENDALPHA] <= 11 && s->rs[RS_DESTBLENDALPHA] >= 1 && s->rs[RS_DESTBLENDALPHA] <= 11) {
+        pk.src_a = (u8)s->rs[RS_SRCBLENDALPHA]; pk.dst_a = (u8)s->rs[RS_DESTBLENDALPHA]; pk.op_a = (u8)(s->rs[RS_BLENDOPALPHA] >= 1 && s->rs[RS_BLENDOPALPHA] <= 5 ? s->rs[RS_BLENDOPALPHA] : 1);
+      }
+    }
+  }
+  if (pk.depth_format) {
+    int z = s->rs[RS_ZENABLE] != 0;   // D3DZB_USEW (2) is drawn as a z buffer
+    pk.depth_compare = (u8)(z && s->rs[RS_ZFUNC] >= 1 && s->rs[RS_ZFUNC] <= 8 ? s->rs[RS_ZFUNC] : 8); pk.depth_write = z && s->rs[RS_ZWRITEENABLE];
+    if (type >= PT_TRIANGLELIST || type == PT_POINTLIST) {   // WebGPU biases triangles only
+      float bias = f32_of(s->rs[RS_DEPTHBIAS]) * 16777216.0f;   // depth units -> steps of a 24-bit depth buffer
+      pk.depth_bias = (s32)(bias < 0 ? bias - 0.5f : bias + 0.5f); pk.slope = s->rs[RS_SLOPESCALEDEPTHBIAS];
+    }
+  }
+  if (s->rs[RS_STENCILENABLE]) UNSURE_ONCE("Direct3D 9: the stencil test is on: drawn without it");
+  if (s->rs[RS_CLIPPLANEENABLE]) UNSURE_ONCE("Direct3D 9: user clip planes are on (0x%x): drawn without them", s->rs[RS_CLIPPLANEENABLE]);
+  if (s->rs[RS_FILLMODE] != 3) UNSURE_ONCE("Direct3D 9: fill mode %u is drawn solid", s->rs[RS_FILLMODE]);
+  if (s->rs[RS_SHADEMODE] == 1) UNSURE_ONCE("Direct3D 9: flat shading is drawn smooth");
+  static const u8 topology[7] = {0, 5 /* points: a strip of four vertices for each */, 2, 3, 4, 5, 4 /* fans: indexed lists */};
+  pk.topology = topology[type];
+  pk.cull = (u8)(type < PT_TRIANGLELIST ? 0 : s->rs[RS_CULLMODE] == 2 ? 1 : s->rs[RS_CULLMODE] == 3 ? 2 : 0);
+  pk.step = type == PT_POINTLIST;
+  u32 vb[2 * MAX_VB];
+  for (u32 i = 0; i < pk.buffers; i++) {
+    Buffer9 *b = s->streams[streams[i]].buffer;
+    if (!b) { skip("no vertex buffer"); return; }
+    pk.stride[i] = (u16)s->streams[streams[i]].stride;
+    vb[2 * i] = buffer(b); vb[2 * i + 1] = s->streams[streams[i]].offset;
+  }
+  u32 id = pipeline(&pk);
+
+  // ---- the draw: Direct3D's primitive as WebGPU's ----
+  u32 w[GPU_DRAW_WORDS + 2 * MAX_VB + 1 + 2 * MAX_SAMPLERS] = {id, 0, 0, 1, first, (u32)base, 0, 0, 0, pk.buffers, binding_count(&pk), pk.uniform_bytes}, n = GPU_DRAW_WORDS;
+  u32 count = type == PT_POINTLIST ? primitives : type == PT_LINELIST ? 2 * primitives : type == PT_LINESTRIP ? primitives + 1 : type == PT_TRIANGLELIST ? 3 * primitives : primitives + 2;
+  if (type == PT_POINTLIST) {
+    if (indexed) { UNSURE_ONCE("Direct3D 9: an indexed point list is not drawn"); skip("indexed points"); return; }
+    w[2] = 4; w[3] = primitives; w[4] = 0; w[6] = first;   // an instance for each point
+  } else if (type == PT_TRIANGLEFAN && !indexed) {
+    u32 fan = fan_indices(primitives);
+    if (!fan) { UNSURE_ONCE("Direct3D 9: a fan of %u triangles is not drawn", primitives); skip("fan"); return; }
+    w[1] = GPU_DRAW_INDEXED; w[2] = 3 * primitives; w[4] = 0; w[5] = first; w[7] = fan;   // the fan's first vertex is every index's base
+  } else if (indexed) {
+    Buffer9 *ib = s->indices; u32 wide = ib->format == FMT_INDEX32;
+    if (type == PT_TRIANGLEFAN) {
+      u32 list = indexed_fan(ib, first, primitives, &wide);
+      if (!list) { skip("fan indices"); return; }
+      w[2] = 3 * primitives; w[4] = 0; w[7] = list;
+    } else { w[2] = count; w[7] = buffer(ib); }
+    w[1] = GPU_DRAW_INDEXED | (wide ? GPU_DRAW_INDEX32 : 0);
+  } else w[2] = count;
+  for (u32 i = 0; i < pk.buffers; i++) { w[n++] = vb[2 * i]; w[n++] = vb[2 * i + 1]; }
+  w[n++] = 0; for (u32 i = 0; i < nbind; i++) w[n++] = bind_ids[i];
+  u8 *p = rt_gpu_rec_begin(GPU_R_DRAW, 4 * n + pk.uniform_bytes);
+  memcpy(p, w, 4 * n);
+  fill(d, ctx, p + 4 * n);   // the record's room is zeroed: what the shaders do not use stays 0
+  rt_gpu_rec_end_quiet();
+  stat.uniform_bytes += pk.uniform_bytes;
+}
+
+
+// ---- the shaders a title made: d3d9_sm.c's WGSL, made once for each bytecode and link key ----
+typedef struct { u64 hash; u32 count; SmLinkKey link; u32 id; SmInfo info; } SmShader;
+static SmShader *sm_shaders; static u32 sm_count, sm_cap;
+static int sm_shader(Shader9 *sh, const SmLinkKey *link, SmShader *out) {
+  if (!sh->hash) { u64 h = 0xcbf29ce484222325ull; const u8 *b = (const u8 *)sh->tokens; for (u32 i = 0; i < 4 * sh->count; i++) { h ^= b[i]; h *= 0x100000001b3ull; } sh->hash = h | 1; }
+  for (u32 i = 0; i < sm_count; i++) if (sm_shaders[i].hash == sh->hash && sm_shaders[i].count == sh->count && !memcmp(&sm_shaders[i].link, link, sizeof *link)) { *out = sm_shaders[i]; return out->id != 0; }
+  static char *text; enum { TEXT = 1 << 20 }; if (!text) text = malloc(TEXT);
+  SmShader e; memset(&e, 0, sizeof e); e.hash = sh->hash; e.count = sh->count; e.link = *link;
+  size_t len = sm_wgsl(sh->tokens, sh->count, link, &e.info, text, TEXT);
+  char name[16]; sm_version_name(sh->tokens[0], name, sizeof name);
+  if (len) { e.id = shader_record(text, len); if (d3d9_stats) rt_log("Direct3D 9 shader %s %016llx: %zu bytes of WGSL", name, (unsigned long long)sh->hash, len); }
+  else com_unsure("Direct3D 9: %s %016llx is not translated: %s", name, (unsigned long long)sh->hash, text);
+  if (sm_count == sm_cap) { sm_cap = sm_cap ? 2 * sm_cap : 64; sm_shaders = realloc(sm_shaders, sm_cap * sizeof *sm_shaders); }
+  sm_shaders[sm_count++] = e; *out = e; return e.id != 0;
+}
+// a declaration's element type -> the ring's vertex format, and how the shader takes it (UDEC3, DEC3N: none)
+static const struct { u8 dxgi, type; } decl_formats[17] = {
+  {41, SM_INPUT_FLOAT}, {16, SM_INPUT_FLOAT}, {6, SM_INPUT_FLOAT}, {2, SM_INPUT_FLOAT},   // FLOAT1 .. FLOAT4
+  {28, SM_INPUT_BGRA},                                                                    // D3DCOLOR
+  {30, SM_INPUT_UINT},                                                                    // UBYTE4
+  {38, SM_INPUT_SINT}, {14, SM_INPUT_SINT},                                               // SHORT2, SHORT4
+  {28, SM_INPUT_FLOAT}, {37, SM_INPUT_FLOAT}, {13, SM_INPUT_FLOAT}, {35, SM_INPUT_FLOAT}, {11, SM_INPUT_FLOAT},   // UBYTE4N, SHORT2N, SHORT4N, USHORT2N, USHORT4N
+  {0, 0}, {0, 0}, {34, SM_INPUT_FLOAT}, {10, SM_INPUT_FLOAT}};                           // UDEC3, DEC3N, FLOAT16_2, FLOAT16_4
+// the uniform block (d3d9_sm.h SmUniforms), as far as the vertex shader's constants go
+static void sm_fill(const Device9 *d, const void *ctx, u8 *block) {
+  const SmInfo *vi = (const SmInfo *)ctx; const State9 *s = &d->state; const Viewport9 *vp = &s->viewport; SmUniforms *u = (SmUniforms *)block;
+  float w = vp->width ? (float)vp->width : 1.0f, h = vp->height ? (float)vp->height : 1.0f;
+  u->fx.half_pixel[0] = 1.0f / w; u->fx.half_pixel[1] = -1.0f / h;   // as the fixed-function vertex stage moves it (see uniforms())
+  color_rgba(s->rs[RS_FOGCOLOR], u->fx.fog_color);
+  u->fx.misc[0] = (float)(s->rs[RS_ALPHAREF] & 255);
+  u->fx.point[0] = f32_of(s->rs[RS_POINTSIZE]); u->fx.point[1] = f32_of(s->rs[RS_POINTSIZE_MIN]); u->fx.point[2] = f32_of(s->rs[RS_POINTSIZE_MAX]); u->fx.point[3] = h;
+  memcpy(u->ps_f, s->ps_float, sizeof u->ps_f);
+  for (u32 i = 0; i < 16; i++) { memcpy(u->ps_i[i], s->ps_int[i], 16); u->ps_b[i][0] = s->ps_bool[i] != 0; memcpy(u->vs_i[i], s->vs_int[i], 16); u->vs_b[i][0] = s->vs_bool[i] != 0; }
+  memcpy(u->vs_f, s->vs_float, 16 * (size_t)vi->float_count);
+}
+static void draw_shaders(Device9 *d, u32 type, s32 base, u32 first, u32 primitives, int indexed) {
+  const State9 *s = &d->state; PipelineKey pk; memset(&pk, 0, sizeof pk);
+  Shader9 *vsh = s->vertex_shader, *psh = s->pixel_shader;
+  if (!vsh || !psh) { UNSURE_ONCE("Direct3D 9: a %s shader with the fixed-function %s stage is not drawn yet", vsh ? "vertex" : "pixel", vsh ? "pixel" : "vertex"); skip("one stage fixed"); return; }
+  if (type == PT_POINTLIST) { UNSURE_ONCE("Direct3D 9: a point list with a vertex shader is not drawn yet"); skip("shader points"); return; }
+  const Declaration9 *decl = s->declaration; if (!decl) { skip("no declaration"); return; }
+  // the vertex shader's inputs, by the usage it declared them with: the declaration's element of the same usage
+  SmLinkKey vl, pl; memset(&vl, 0, sizeof vl); memset(&pl, 0, sizeof pl);
+  SmShader vs, ps;
+  if (!sm_shader(vsh, &vl, &vs)) { skip("vertex shader"); return; }
+  u8 streams[MAX_VB];
+  for (u32 r = 0; r < 16; r++) if (vs.info.inputs & (1u << r)) {
+    const Element9 *e = 0;
+    for (u32 i = 0; i + 1 < decl->count && decl->elements[i].stream != 0xFF; i++)
+      if (decl->elements[i].usage == vs.info.usage[r] && decl->elements[i].usage_index == vs.info.usage_index[r]) { e = &decl->elements[i]; break; }
+    if (!e) { UNSURE_ONCE("Direct3D 9: a vertex shader reads v%u (usage %u, index %u), which the declaration does not have: not drawn", r, vs.info.usage[r], vs.info.usage_index[r]); skip("input"); return; }
+    if (e->type > 16 || !decl_formats[e->type].dxgi) { UNSURE_ONCE("Direct3D 9: a vertex element of type %u is not drawn", e->type); skip("element type"); return; }
+    vl.input_types[r] = decl_formats[e->type].type;
+    u32 slot = 0; while (slot < pk.buffers && streams[slot] != e->stream) slot++;
+    if (slot == pk.buffers) { if (slot == MAX_VB || e->stream >= STREAMS) { UNSURE_ONCE("Direct3D 9: a vertex declaration over more than %u streams is not drawn", MAX_VB); skip("streams"); return; } streams[pk.buffers++] = (u8)e->stream; }
+    pk.attr[pk.attributes].location = (u8)r; pk.attr[pk.attributes].buffer = (u8)slot; pk.attr[pk.attributes].format = decl_formats[e->type].dxgi; pk.attr[pk.attributes].offset = e->offset; pk.attributes++;
+  }
+  if (!sm_shader(vsh, &vl, &vs)) { skip("vertex shader"); return; }
+  // the pixel stage: fog and the alpha test after it, as Direct3D does them for shader model 2 and below
+  pl.fog = s->rs[RS_FOGENABLE] != 0;
+  if (s->rs[RS_ALPHATESTENABLE] && s->rs[RS_ALPHAFUNC] >= 1 && s->rs[RS_ALPHAFUNC] < 8) pl.alpha_test = (u8)s->rs[RS_ALPHAFUNC];
+  if (((psh->tokens[0] >> 8) & 0xFF) == 1)   // ps_1_x declares no samplers: the bound textures' kinds
+    for (u32 i = 0; i < 16; i++) if (s->textures[i]) pl.sampler_types[i] = s->textures[i]->o.kind == K_CUBETEXTURE ? SM_TEX_CUBE : s->textures[i]->o.kind == K_VOLUMETEXTURE ? SM_TEX_3D : SM_TEX_2D;
+  if (!sm_shader(psh, &pl, &ps)) { skip("pixel shader"); return; }
+  pk.vs = vs.id; pk.fs = ps.id;
+  Bound bound[MAX_SAMPLERS]; memset(bound, 0, sizeof bound);
+  for (u32 i = 0; i < MAX_SAMPLERS; i++) if (ps.info.samplers & (1u << i)) {
+    Texture9 *t = s->textures[i];
+    u32 want = ps.info.sampler_types[i] == SM_TEX_CUBE ? GPU_BIND_TEXTURE_CUBE : ps.info.sampler_types[i] == SM_TEX_3D ? GPU_BIND_TEXTURE_3D : GPU_BIND_TEXTURE_2D;
+    if (!t) { UNSURE_ONCE("Direct3D 9: a pixel shader samples s%u, which has no texture: not drawn", i); skip("no texture"); return; }
+    if (bind_kind(t) != want) { UNSURE_ONCE("Direct3D 9: s%u is a texture of another kind than the shader declares: not drawn", i); skip("texture kind"); return; }
+    pk.sampler_mask |= (u16)(1u << i); pk.kinds[i] = (u8)want; bound[i].tex = t; bound[i].samp = s->samp[i];
+  }
+  pk.uniform_bytes = (u16)SM_UNIFORM_BYTES(vs.info.float_count);
+  draw_with(d, &pk, streams, bound, type, base, first, primitives, indexed, sm_fill, &vs.info);
+}
+
 void d3d9_gpu_draw(Device9 *d, u32 type, s32 base, u32 first, u32 primitives, int indexed) {
   const State9 *s = &d->state;
   FfpVertexKey vk = {0}; FfpFragmentKey fk = {0}; PipelineKey pk; memset(&pk, 0, sizeof pk);
   stat.draws++;
+  if (s->vertex_shader || s->pixel_shader) { draw_shaders(d, type, base, first, primitives, indexed); return; }
 
   // ---- the fragment key: stage 0, the alpha test, fog ----
   const u32 *tss = s->tss[0];
@@ -505,81 +672,10 @@ void d3d9_gpu_draw(Device9 *d, u32 type, s32 base, u32 first, u32 primitives, in
   pk.vs = vertex_shader(&vk); pk.fs = fragment_shader(&fk);
   if (!pk.vs || !pk.fs) { skip("no shader"); return; }
 
-  // ---- the pass, then the pipeline's own state ----
-  if (!set_pass(d, 0, 0, 0, 0)) { skip("no target"); return; }
-  set_view(s);
-  u32 tex_id = 0, sampler_id = 0;
-  if (samples) {
-    tex_id = texture(tex);
-    if (tex_id == pass.color || tex_id == pass.depth) { UNSURE_ONCE("Direct3D 9: a draw samples the texture it draws into: left out"); skip("feedback"); return; }
-    sampler_id = sampler(s->samp[0]);
-  }
-  pk.color_format = pass.color_format; pk.depth_format = pass.depth_format;
-  pk.write_mask = (u8)(s->rs[RS_COLORWRITEENABLE] & 15);
-  if (s->rs[RS_ALPHABLENDENABLE]) {
-    u32 src = s->rs[RS_SRCBLEND], dst = s->rs[RS_DESTBLEND];
-    if (src == 12) { src = 5; dst = 6; } else if (src == 13) { src = 6; dst = 5; }   // D3DBLEND_BOTHSRCALPHA, BOTHINVSRCALPHA
-    if (src < 1 || src > 11 || dst < 1 || dst > 11 || s->rs[RS_BLENDOP] < 1 || s->rs[RS_BLENDOP] > 5) UNSURE_ONCE("Direct3D 9: blending with factors %u, %u (operation %u) is drawn without blending", src, dst, s->rs[RS_BLENDOP]);
-    else {
-      pk.blend = 1; pk.src = pk.src_a = (u8)src; pk.dst = pk.dst_a = (u8)dst; pk.op = pk.op_a = (u8)s->rs[RS_BLENDOP];
-      if (s->rs[RS_SEPARATEALPHABLENDENABLE] && s->rs[RS_SRCBLENDALPHA] >= 1 && s->rs[RS_SRCBLENDALPHA] <= 11 && s->rs[RS_DESTBLENDALPHA] >= 1 && s->rs[RS_DESTBLENDALPHA] <= 11) {
-        pk.src_a = (u8)s->rs[RS_SRCBLENDALPHA]; pk.dst_a = (u8)s->rs[RS_DESTBLENDALPHA]; pk.op_a = (u8)(s->rs[RS_BLENDOPALPHA] >= 1 && s->rs[RS_BLENDOPALPHA] <= 5 ? s->rs[RS_BLENDOPALPHA] : 1);
-      }
-    }
-  }
-  if (pk.depth_format) {
-    int z = s->rs[RS_ZENABLE] != 0;   // D3DZB_USEW (2) is drawn as a z buffer
-    pk.depth_compare = (u8)(z && s->rs[RS_ZFUNC] >= 1 && s->rs[RS_ZFUNC] <= 8 ? s->rs[RS_ZFUNC] : 8); pk.depth_write = z && s->rs[RS_ZWRITEENABLE];
-    if (type >= PT_TRIANGLELIST || type == PT_POINTLIST) {   // WebGPU biases triangles only
-      float bias = f32_of(s->rs[RS_DEPTHBIAS]) * 16777216.0f;   // depth units -> steps of a 24-bit depth buffer
-      pk.depth_bias = (s32)(bias < 0 ? bias - 0.5f : bias + 0.5f); pk.slope = s->rs[RS_SLOPESCALEDEPTHBIAS];
-    }
-  }
-  if (s->rs[RS_STENCILENABLE]) UNSURE_ONCE("Direct3D 9: the stencil test is on: drawn without it");
-  if (s->rs[RS_CLIPPLANEENABLE]) UNSURE_ONCE("Direct3D 9: user clip planes are on (0x%x): drawn without them", s->rs[RS_CLIPPLANEENABLE]);
-  if (s->rs[RS_FILLMODE] != 3) UNSURE_ONCE("Direct3D 9: fill mode %u is drawn solid", s->rs[RS_FILLMODE]);
-  if (s->rs[RS_SHADEMODE] == 1) UNSURE_ONCE("Direct3D 9: flat shading is drawn smooth");
-  static const u8 topology[7] = {0, 5 /* points: a strip of four vertices for each */, 2, 3, 4, 5, 4 /* fans: indexed lists */};
-  pk.topology = topology[type];
-  pk.cull = (u8)(type < PT_TRIANGLELIST ? 0 : s->rs[RS_CULLMODE] == 2 ? 1 : s->rs[RS_CULLMODE] == 3 ? 2 : 0);
-  pk.step = type == PT_POINTLIST;
   pk.uniform_bytes = (u16)FFP_UNIFORM_BYTES(vk.lighting ? vk.lights : 0);
-  pk.bindings = samples ? 3 : 1; pk.texture_kind = samples ? fk.texture : 0;
-  u32 vb[2 * MAX_VB];
-  for (u32 i = 0; i < pk.buffers; i++) {
-    Buffer9 *b = s->streams[streams[i]].buffer;
-    if (!b) { skip("no vertex buffer"); return; }
-    pk.stride[i] = (u16)s->streams[streams[i]].stride;
-    vb[2 * i] = buffer(b); vb[2 * i + 1] = s->streams[streams[i]].offset;
-  }
-  u32 id = pipeline(&pk);
-
-  // ---- the draw: Direct3D's primitive as WebGPU's ----
-  u32 w[GPU_DRAW_WORDS + 2 * MAX_VB + 3] = {id, 0, 0, 1, first, (u32)base, 0, 0, 0, pk.buffers, pk.bindings, pk.uniform_bytes}, n = GPU_DRAW_WORDS;
-  u32 count = type == PT_POINTLIST ? primitives : type == PT_LINELIST ? 2 * primitives : type == PT_LINESTRIP ? primitives + 1 : type == PT_TRIANGLELIST ? 3 * primitives : primitives + 2;
-  if (type == PT_POINTLIST) {
-    if (indexed) { UNSURE_ONCE("Direct3D 9: an indexed point list is not drawn"); skip("indexed points"); return; }
-    w[2] = 4; w[3] = primitives; w[4] = 0; w[6] = first;   // an instance for each point
-  } else if (type == PT_TRIANGLEFAN && !indexed) {
-    u32 fan = fan_indices(primitives);
-    if (!fan) { UNSURE_ONCE("Direct3D 9: a fan of %u triangles is not drawn", primitives); skip("fan"); return; }
-    w[1] = GPU_DRAW_INDEXED; w[2] = 3 * primitives; w[4] = 0; w[5] = first; w[7] = fan;   // the fan's first vertex is every index's base
-  } else if (indexed) {
-    Buffer9 *ib = s->indices; u32 wide = ib->format == FMT_INDEX32;
-    if (type == PT_TRIANGLEFAN) {
-      u32 list = indexed_fan(ib, first, primitives, &wide);
-      if (!list) { skip("fan indices"); return; }
-      w[2] = 3 * primitives; w[4] = 0; w[7] = list;
-    } else { w[2] = count; w[7] = buffer(ib); }
-    w[1] = GPU_DRAW_INDEXED | (wide ? GPU_DRAW_INDEX32 : 0);
-  } else w[2] = count;
-  for (u32 i = 0; i < pk.buffers; i++) { w[n++] = vb[2 * i]; w[n++] = vb[2 * i + 1]; }
-  w[n++] = 0; if (samples) { w[n++] = tex_id; w[n++] = sampler_id; }
-  u8 *p = rt_gpu_rec_begin(GPU_R_DRAW, 4 * n + pk.uniform_bytes);
-  memcpy(p, w, 4 * n);
-  uniforms(d, &vk, (FfpUniforms *)(p + 4 * n));   // the record's room is zeroed: what the key does not use stays 0
-  rt_gpu_rec_end_quiet();
-  stat.uniform_bytes += pk.uniform_bytes;
+  Bound bound[MAX_SAMPLERS] = {{0}};
+  if (samples) { pk.sampler_mask = 1; pk.kinds[0] = fk.texture == FFP_TEXTURE_3D ? GPU_BIND_TEXTURE_3D : GPU_BIND_TEXTURE_2D; bound[0].tex = tex; bound[0].samp = s->samp[0]; }
+  draw_with(d, &pk, streams, bound, type, base, first, primitives, indexed, ffp_fill, &vk);
 }
 
 // ---- the frame's end ----

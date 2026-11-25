@@ -38,13 +38,14 @@ export function startExplicit({ device, g, res, view, writeBuf, log, stats, tabl
     samplers.set(s.id, { id: s.id, gpu: device.createSampler(d) });
   }
   // a bind layout, shared by the pipelines that list the same bindings; its bind groups hang off it (and off textures)
+  const viewDim = (kind) => (kind === GPU.BIND_TEXTURE_3D ? '3d' : kind === GPU.BIND_TEXTURE_CUBE ? 'cube' : '2d');
   function layoutOf(bindings) {
     const sig = bindings.map((b) => `${b.binding}:${b.kind}:${b.size}`).join(',');
     let l = layouts.get(sig);
     if (!l) {
       const entries = bindings.map((b) => (b.kind === GPU.BIND_UNIFORM ? { binding: b.binding, visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT, buffer: { type: 'uniform', hasDynamicOffset: true, minBindingSize: b.size } }
         : b.kind === GPU.BIND_SAMPLER ? { binding: b.binding, visibility: GPUShaderStage.FRAGMENT, sampler: { type: 'filtering' } }
-        : { binding: b.binding, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float', viewDimension: b.kind === GPU.BIND_TEXTURE_3D ? '3d' : '2d' } }));
+        : { binding: b.binding, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float', viewDimension: viewDim(b.kind) } }));
       const group = device.createBindGroupLayout({ entries });
       l = { sig, bindings, group, pipeline: device.createPipelineLayout({ bindGroupLayouts: [group] }), plain: null };
       layouts.set(sig, l);
@@ -79,13 +80,16 @@ export function startExplicit({ device, g, res, view, writeBuf, log, stats, tabl
     }
     try { p.gpu = await device.createRenderPipelineAsync(desc); } catch (e) { log(`gpu: pipeline ${p.id}: ${e.message}`); p.gpu = null; }
   }
-  function bindGroup(p, tex, samp) {
-    const l = p.layout, cache = tex ? (tex.groups ??= new Map()) : null, key = tex ? `${l.sig}|${samp?.id}` : '';
+  // the resources of a draw's bindings, in the pipeline's order (null for the uniform block); the bind groups are
+  // cached on the first texture (its ids, and the samplers', make the key: ids are never used again)
+  function bindGroup(p, items) {
+    const l = p.layout, tex = items.find((x) => x && x.dim !== undefined) ?? null, cache = tex ? (tex.groups ??= new Map()) : null;
+    const key = tex ? `${l.sig}|${items.map((x) => x?.id ?? '').join(',')}` : '';
     let bg = tex ? cache.get(key) : l.plain;
     if (bg) return bg;
     if (!arena.gpu) { arena.cpu = new Uint8Array(arena.size); arena.gpu = device.createBuffer({ size: arena.size, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST }); }
-    const entries = l.bindings.map((b) => ({ binding: b.binding, resource: b.kind === GPU.BIND_UNIFORM ? { buffer: arena.gpu, offset: 0, size: b.size }
-      : b.kind === GPU.BIND_SAMPLER ? samp.gpu : view(tex, { format: tex.format, dim: b.kind === GPU.BIND_TEXTURE_3D ? '3d' : '2d', mip: 0, mips: tex.mips }) }));
+    const entries = l.bindings.map((b, i) => ({ binding: b.binding, resource: b.kind === GPU.BIND_UNIFORM ? { buffer: arena.gpu, offset: 0, size: b.size }
+      : b.kind === GPU.BIND_SAMPLER ? items[i].gpu : view(items[i], { format: items[i].format, dim: viewDim(b.kind), mip: 0, mips: items[i].mips }) }));
     bg = device.createBindGroup({ layout: l.group, entries }); n.bindGroups++;
     if (tex) cache.set(key, bg); else l.plain = bg;
     return bg;
@@ -159,24 +163,24 @@ export function startExplicit({ device, g, res, view, writeBuf, log, stats, tabl
     if (!p?.gpu) return skip('no pipeline');
     if (!target) return skip('no pass');
     if (p.color !== target.color.format || p.depth !== (target.depth?.format ?? null)) return skip('the pipeline is for other target formats');
-    let tex = null, samp = null;
-    for (let b = 0; b < p.bindings.length; b++) {
-      const kind = p.bindings[b].kind;
-      if (kind === GPU.BIND_SAMPLER) samp = samplers.get(d.bindings[b]); else if (kind !== GPU.BIND_UNIFORM) tex = res.get(d.bindings[b]);
+    const items = p.bindings.map((b, i) => (b.kind === GPU.BIND_UNIFORM ? null : b.kind === GPU.BIND_SAMPLER ? samplers.get(d.bindings[i]) : res.get(d.bindings[i])));
+    for (let i = 0; i < items.length; i++) {
+      const kind = p.bindings[i].kind;
+      if (kind === GPU.BIND_UNIFORM) continue;
+      if (!items[i] || (kind !== GPU.BIND_SAMPLER && items[i].dim === 0)) return skip('a binding is missing');
+      if (kind !== GPU.BIND_SAMPLER && (items[i] === target.color || items[i] === target.depth)) return skip('a draw samples its own target');
     }
-    if (p.bindings.length > 1 && (!tex || !samp || tex.dim === 0)) return skip('a binding is missing');
-    if (tex && (tex === target.color || tex === target.depth)) return skip('a draw samples its own target');
     const buffers = d.vertexBuffers.map(([id]) => res.get(id)), ib = d.indexed ? res.get(d.indexBuffer) : null;
     if (buffers.length !== p.buffers.length || buffers.some((b) => !b || b.dim !== 0) || (d.indexed && (!ib || ib.dim !== 0))) return skip('a buffer is missing');
     const size = Math.max(d.uniformBytes, p.uniformSize);
     let off = Math.ceil(arena.used / align) * align;
     if (arena.gpu && off + size > arena.size) { flush(); off = 0; }
-    const bg = bindGroup(p, tex, samp);
+    const bg = bindGroup(p, items);
     if (!pass) open();
     g.refresh(); arena.cpu.set(g.u8.subarray(d.uniforms, d.uniforms + d.uniformBytes), off); arena.used = off + size;
     if (current !== p) { pass.setPipeline(p.gpu); current = p; }
     pass.setBindGroup(0, bg, [off]);
-    if (tex) used.add(tex);
+    for (let i = 0; i < items.length; i++) if (items[i] && p.bindings[i].kind !== GPU.BIND_SAMPLER) used.add(items[i]);
     for (let s = 0; s < buffers.length; s++) { pass.setVertexBuffer(s, buffers[s].gpu, d.vertexBuffers[s][1]); used.add(buffers[s]); }
     n.draws++;
     if (d.indexed) { pass.setIndexBuffer(ib.gpu, d.index32 ? 'uint32' : 'uint16', d.indexOffset); used.add(ib); pass.drawIndexed(d.count, d.instances, d.first, d.baseVertex, d.firstInstance); }

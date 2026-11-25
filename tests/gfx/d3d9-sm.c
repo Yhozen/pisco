@@ -94,6 +94,8 @@ int main(int argc, char **argv) {
   OP(a, M3x3, D(TEXCRDOUT, 2, 7), S(INPUT, 1), S(CONST, 20)); OP(a, M3x2, D(TEXCRDOUT, 3, 3), S(INPUT, 1), S(CONST, 24));
   OP(a, MOV, D(RASTOUT, 1, 1), Ss(TEMP, 11, WWWW)); OP(a, MOV, D(RASTOUT, 2, 1), Ss(CONST, 90, YYYY));
   end(a); run(dir, "vs_1_1-arith", a, 0);
+  memset(&link, 0, sizeof link); link.input_types[3] = SM_INPUT_UINT; link.input_types[2] = SM_INPUT_SINT;   // UBYTE4 and SHORT4 inputs
+  run(dir, "vs_1_1-arith-integer-inputs", a, &link);
 
   // vs_2_0: def'd integers and booleans, loops with aL indexing, rep, if / else, ifc, break, call, callnz, the new arithmetic
   begin(a, 0, 2, 0);

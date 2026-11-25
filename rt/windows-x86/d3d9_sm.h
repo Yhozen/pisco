@@ -25,7 +25,9 @@ typedef struct SmLinkKey {
   uint8_t alpha_test;      // pixel stage: 0 off, else D3DCMP_* (1 never ... 8 always) against U.misc.x (0 to 255)
   uint8_t sampler_types[16]; // pixel stage: SM_TEX_* for each sampler a ps_1_x shader reads (it declares none)
   uint8_t point;           // vertex stage: a point list, drawn as quads (the size from oPts or U.point.x)
+  uint8_t input_types[16]; // vertex stage: how vN arrives (SM_INPUT_*): an integer vertex format (UBYTE4, SHORT2) gives integers
 } SmLinkKey;
+enum { SM_INPUT_FLOAT = 0, SM_INPUT_UINT = 1, SM_INPUT_SINT = 2, SM_INPUT_BGRA = 3 };   // BGRA: D3DCOLOR's bytes as unorm8x4, put in order
 enum { SM_TEX_NONE = 0, SM_TEX_2D = 2, SM_TEX_CUBE = 3, SM_TEX_3D = 4 };   // D3DSAMPLER_TEXTURE_TYPE >> 27
 
 // the uniform block of binding 0 (the WGSL struct U, member for member)

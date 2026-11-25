@@ -602,13 +602,14 @@ size_t sm_wgsl(const uint32_t *tk, size_t count, const SmLinkKey *link, SmInfo *
   if (in_main || in_fn) put(&t, "}\n");
   if (!pixel) {
     put(&t, "struct VIn {\n");
-    int any = 0; for (int r = 0; r < 16; r++) if (info->inputs & (1u << r)) { put(&t, "  @location(%d) v%d: vec4f,\n", r, r); any = 1; }
+    static const char *const input_type[4] = {"vec4f", "vec4u", "vec4i", "vec4f"};
+    int any = 0; for (int r = 0; r < 16; r++) if (info->inputs & (1u << r)) { put(&t, "  @location(%d) v%d: %s,\n", r, r, input_type[link->input_types[r] < 4 ? link->input_types[r] : 0]); any = 1; }
     if (!any) put(&t, "  @builtin(vertex_index) index: u32,\n");
     put(&t, "}\nstruct VOut {\n  @builtin(position) position: vec4f,\n  @location(0) diffuse: vec4f,\n  @location(1) specular: vec4f,\n"
             "  @location(2) tex: vec4f,\n  @location(3) fog: f32,\n");
     for (int k = 1; k < 8; k++) put(&t, "  @location(%d) tex%d: vec4f,\n", (int)tex_loc((uint32_t)k), k);
     put(&t, "}\n@vertex fn main(vin: VIn) -> VOut {\n");
-    for (int r = 0; r < 16; r++) if (info->inputs & (1u << r)) put(&t, "  v%d = vin.v%d;\n", r, r);
+    for (int r = 0; r < 16; r++) if (info->inputs & (1u << r)) put(&t, "  v%d = vec4f(vin.v%d)%s;\n", r, r, link->input_types[r] == SM_INPUT_BGRA ? ".zyxw" : "");
     put(&t, "  shader_main();\n  var o: VOut;\n  o.position = vec4f(oPos.xy + u.fx.half_pixel.xy * oPos.w, oPos.zw);\n"
             "  o.diffuse = clamp(oD0, vec4f(0.0), vec4f(1.0));\n  o.specular = clamp(oD1, vec4f(0.0), vec4f(1.0));\n  o.tex = oT0;\n"
             "  o.fog = clamp(oFog.x, 0.0, 1.0);\n");

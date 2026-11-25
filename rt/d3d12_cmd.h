@@ -79,6 +79,7 @@
 #define GPU_BIND_TEXTURE_2D 2
 #define GPU_BIND_TEXTURE_3D 3
 #define GPU_BIND_SAMPLER 4
+#define GPU_BIND_TEXTURE_CUBE 5
 // buffer id, offset, bytes, mode (GPU_WRITE_*), then the bytes
 #define GPU_R_WRITE_BUFFER 13
 // the bytes replace what earlier draws read: those draws still see the old bytes

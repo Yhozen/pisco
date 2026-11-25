@@ -84,7 +84,7 @@ typedef struct Declaration9 { Object9 o; u32 count, fvf; Element9 *elements;   /
                               struct Declaration9 *next_fvf; } Declaration9;
 typedef struct SwapChain9 { Object9 o; } SwapChain9;
 // a vertex or pixel shader: its bytecode (d3d9_sm.c translates it for a draw), from the version token to the end token
-typedef struct Shader9 { Object9 o; u32 *tokens; u32 count; } Shader9;
+typedef struct Shader9 { Object9 o; u32 *tokens; u32 count; u64 hash; } Shader9;   // hash: of the tokens (d3d9_gpu.c, once)
 
 // ---- the state a state block can hold ----
 enum { RS_COUNT = 256, TSS_COUNT = 33, STAGES = 8, SAMP_COUNT = 14, SAMPLERS = 21, STREAMS = 16, CLIP_PLANES = 8,
