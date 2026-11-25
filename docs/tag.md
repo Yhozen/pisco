@@ -207,3 +207,9 @@ temporary files, `GetFullPathNameA`, `MoveFileA`, `GlobalMemoryStatus`, `Interlo
   `Direct3DCreate9` are Wine's, step for step: `tools/oracle-wine/trace-diff.py recipes/tag/traces/start.txt
   <our SW_TRACE=2 log> --image 400000-570fff --until Direct3DCreate9` (699 steps; `HeapSize` had to answer the
   size asked for, as the CRT's `atexit` table grows on it).
+- **T2, the main loop without a screen.** In Node, on the virtual clock and the null GPU back end, in strict mode,
+  `menu-to-level1` plays to its end: menu, start, the paint splash, level 1 and its tooltips (4340 frames, 673,707
+  draws, 13 pipelines, no inconsistent record). The 46 bytecodes the lifted D3DX compiles are Wine's byte for
+  byte. Against Wine's `+d3d9` trace (`d3d9-compare.py`): the same 76 methods, 96 counted arguments with the same
+  sets of values; textures made and locked differ in number only as long phases do (the same 86 texture files are
+  opened, `SW_FILES=1`). FMOD Ex came here, not in T5: strict mode needs `FMOD_System_Create`.
