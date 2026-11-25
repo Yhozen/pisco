@@ -60,7 +60,7 @@ static u32 bits_of(float f) { u32 v; memcpy(&v, &f, 4); return v; }
 static void color_rgba(u32 c, float out[4]) { out[0] = (float)((c >> 16) & 255) / 255.0f; out[1] = (float)((c >> 8) & 255) / 255.0f; out[2] = (float)(c & 255) / 255.0f; out[3] = (float)(c >> 24) / 255.0f; }
 
 static u32 next_id = 1;
-static struct { u64 draws, skipped, passes, buffer_writes, buffer_bytes, texture_writes, texture_bytes, uniform_bytes; u32 buffers, textures; } stat;
+static struct { u64 draws, skipped, passes, readbacks, buffer_writes, buffer_bytes, texture_writes, texture_bytes, uniform_bytes; u32 buffers, textures; } stat;
 static void rec(u32 op, const u32 *w, u32 n) { u8 *p = rt_gpu_rec_begin(op, 4 * n); memcpy(p, w, 4 * n); rt_gpu_rec_end_quiet(); }
 
 // ---- resources ----
@@ -174,6 +174,22 @@ void d3d9_gpu_release(Object9 *o) {
   case K_VERTEXBUFFER: case K_INDEXBUFFER: destroy(((Buffer9 *)o)->gpu_id); break;
   default: break;
   }
+}
+
+// GetRenderTargetData: the level (and face) the surface is of, read back into `dst` once everything drawn before has
+// run. The back end writes the rows (bytes a row: `pitch`); without pixels (Node's null back end) it leaves them.
+int d3d9_gpu_read(Surface9 *s, u8 *dst, u32 pitch) {
+  u32 id = 0, layer = 0;
+  if (s->o.container) {
+    Texture9 *t = (Texture9 *)s->o.container;
+    if (t->o.kind == K_VOLUMETEXTURE || !t->gpu_id) return 0;
+    if (t->o.kind == K_CUBETEXTURE) for (u32 f = 0; f < 6; f++) if (t->surfaces[f * t->levels + s->level] == s) layer = f;
+    id = t->gpu_id;
+  } else id = s->gpu_id;
+  if (!id || !dxgi_of(s->desc.format)) return 0;
+  u32 w[7] = {id, s->o.container ? s->level : 0, layer, s->desc.width, s->desc.height, pitch, (u32)(uptr)dst};
+  rec(GPU_R_READ_TEXTURE, w, 7); rt_gpu_drain(); stat.readbacks++;
+  return 1;
 }
 
 // ---- passes ----
@@ -706,7 +722,7 @@ void d3d9_gpu_shot(const char *name) {
 }
 void d3d9_gpu_stats(void) {
   if (!rt_gpu_ring) return;
-  rt_log("== Direct3D 9 on the GPU: %u vertex shaders, %u fragment shaders, %u pipelines, %u samplers; %llu draws (%llu left out) in %llu passes; %u buffers, %llu writes, %llu bytes; %u textures, %llu writes, %llu bytes; %llu bytes of uniforms",
-         vertex_shader_count, fragment_shader_count, pipeline_count, sampler_count, stat.draws, stat.skipped, stat.passes, stat.buffers, stat.buffer_writes, stat.buffer_bytes, stat.textures, stat.texture_writes, stat.texture_bytes, stat.uniform_bytes);
+  rt_log("== Direct3D 9 on the GPU: %u vertex shaders, %u fragment shaders, %u pipelines, %u samplers; %llu draws (%llu left out) in %llu passes; %u buffers, %llu writes, %llu bytes; %u textures, %llu writes, %llu bytes; %llu bytes of uniforms; %llu read-backs",
+         vertex_shader_count, fragment_shader_count, pipeline_count, sampler_count, stat.draws, stat.skipped, stat.passes, stat.buffers, stat.buffer_writes, stat.buffer_bytes, stat.textures, stat.texture_writes, stat.texture_bytes, stat.uniform_bytes, stat.readbacks);
 }
 void d3d9_gpu_finish(void) { rt_gpu_drain(); }

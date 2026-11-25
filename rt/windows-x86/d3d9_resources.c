@@ -372,14 +372,14 @@ IMP(d3d9, IDirect3DDevice9_UpdateTexture) {
   RET(D3D_OK);
 }
 // GetRenderTargetData(render target, system-memory surface of its size and format): the target's pixels into the
-// surface. Here they are the bytes the runtime holds for the target (what the title wrote, or zeros): reading the
-// GPU's back is T4's (docs/tag.md: Tag reads a 512x512 target back each frame).
+// surface, read back from the GPU (the title waits for them). With Node's null back end, which has no pixels, they
+// are the bytes the runtime holds for the target (what the title wrote, or zeros).
 IMP(d3d9, IDirect3DDevice9_GetRenderTargetData) {
   STAT(device_GetRenderTargetData); Surface9 *a = (Surface9 *)GP(ARG(1)), *b = (Surface9 *)GP(ARG(2));
   if (!a || !b || a->o.kind != K_SURFACE || b->o.kind != K_SURFACE || !(a->desc.usage & USAGE_RENDERTARGET) || b->desc.pool != POOL_SYSTEMMEM
       || a->desc.width != b->desc.width || a->desc.height != b->desc.height || a->desc.format != b->desc.format || a->desc.multisample) { RET(D3DERR_INVALIDCALL); return; }
-  { static int told; if (!told++) rt_log("Direct3D 9: GetRenderTargetData gives the runtime's copy of the target, not the GPU's pixels (T4)"); }
-  memcpy(b->bits, a->bits, a->size < b->size ? a->size : b->size); b->dirty++;
+  memcpy(b->bits, a->bits, a->size < b->size ? a->size : b->size);   // what a back end without pixels leaves
+  d3d9_gpu_read(a, b->bits, b->pitch); b->dirty++;
   RET(D3D_OK);
 }
 // ColorFill(surface, RECT * or null, colour): the 32-bit and 16-bit RGB formats

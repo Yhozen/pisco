@@ -44,6 +44,7 @@ export const GPU = {
   DRAW_WORDS: 12,
   DRAW_INDEXED: 1,
   DRAW_INDEX32: 2,
+  R_READ_TEXTURE: 18,
   L_CLEAR_RTV: 1,
   L_CLEAR_DSV: 2,
   L_SET_RTS: 3,

@@ -94,6 +94,12 @@ export function startNull(memory, addr, { dir, log }) {
       if (mip >= r.mips || w[2] + w[5] > side(r.width) || w[3] + w[6] > side(r.height) || w[4] + w[7] > (r.dim === 3 ? side(r.depth) : r.depth || 1) || w[8] < 4 * w[5]) wrong(`a write to texture ${w[0]} level ${mip} outside it`);
       break;
     }
+    case GPU.R_READ_TEXTURE: {   // no pixels here: the guest's bytes stay as they are
+      const r = res.get(w[0]), mip = w[1], side = (v) => Math.max(1, v >> mip); count.readbacks = (count.readbacks || 0) + 1; trace(`read texture ${w[0]} level ${mip} layer ${w[2]} ${w[3]}x${w[4]}`);
+      if (!r || r.dim !== 2) { wrong(`a read of texture ${w[0]}, which is no 2D texture`); break; }
+      if (mip >= r.mips || w[2] >= (r.depth || 1) || w[3] !== side(r.width) || w[4] !== side(r.height) || w[5] < w[3]) wrong(`a read of texture ${w[0]} that is not one whole level of it`);
+      break;
+    }
     case GPU.R_PASS: {
       const p = readPass(g, at), c = res.get(p.color), d = p.depth ? res.get(p.depth) : null; count.passes++; target = null;
       trace(`pass colour ${p.color} level ${p.mip} depth ${p.depth}${p.clearColor ? ' clear colour' : ''}${p.clearDepth != null ? ' clear depth' : ''}`);

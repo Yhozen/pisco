@@ -170,6 +170,7 @@ void d3d9_gpu_draw(Device9 *d, u32 type, s32 base, u32 first, u32 primitives, in
 void d3d9_gpu_present(Device9 *d);                 // the back buffer goes to the screen
 void d3d9_gpu_buffer_locked(Buffer9 *b, u32 offset, u32 size, u32 flags);   // a lock for writing: what it may change
 void d3d9_gpu_release(Object9 *o);                 // the object is going: so is what it has on the GPU
+int d3d9_gpu_read(Surface9 *s, u8 *dst, u32 pitch);   // a render target's pixels from the GPU into `dst` (0: it has none there)
 // d3d9_resources.c: the device's buffer for a UP draw's vertices (0) or indices (1), holding `bytes` from `src`
 Buffer9 *d3d9_up_buffer(Device9 *d, int which, const void *src, u32 bytes, u32 format);
 void d3d9_gpu_shot(const char *name);              // a session's checkpoint: the host saves the frame presented last

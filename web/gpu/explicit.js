@@ -13,12 +13,12 @@
 import { GPU } from './cmd.gen.js';
 import { readShader, readSampler, readPipeline, readPass, readViewport, readDraw } from './records.js';
 
-export function startExplicit({ device, g, res, view, writeBuf, log, stats, tables }) {
+export function startExplicit({ device, g, res, view, writeBuf, log, stats, tables, texelBytes }) {
   const { FORMATS, VERTEX_FORMATS, BLEND, BLEND_OP, COMPARE, TOPOLOGY, ADDRESS } = tables;
   const shaders = new Map(), samplers = new Map(), pipelines = new Map(), layouts = new Map();
   const align = device.limits.minUniformBufferOffsetAlignment;
   const arena = { size: 4 << 20, used: 0, cpu: null, gpu: null };
-  const n = stats.explicit = { shaders: 0, pipelines: 0, passes: 0, draws: 0, submits: 0, renames: 0, orderedFlushes: 0, bufferWrites: 0, textureWrites: 0, bindGroups: 0, skipped: {} };
+  const n = stats.explicit = { shaders: 0, pipelines: 0, passes: 0, draws: 0, submits: 0, renames: 0, orderedFlushes: 0, bufferWrites: 0, textureWrites: 0, readbacks: 0, bindGroups: 0, skipped: {} };
   const skip = (why) => { n.skipped[why] = (n.skipped[why] || 0) + 1; };
   let enc = null, pass = null, target = null, viewport = null, current = null, retired = [];
   const used = new Set();   // what the open encoder's passes read or draw into: not to be written or destroyed under it
@@ -157,6 +157,22 @@ export function startExplicit({ device, g, res, view, writeBuf, log, stats, tabl
     device.queue.writeTexture(dst, src.slice(), layout, size);
   }
 
+  // a level of a texture back into guest memory: what was recorded runs first; the ring moves on once the bytes are there
+  async function readTexture(at) {
+    const w = g.u32, i = at >>> 2, r = res.get(w[i]), mip = w[i + 1], layer = w[i + 2], width = w[i + 3], height = w[i + 4], dstPitch = w[i + 5], dst = w[i + 6];
+    if (!r || r.dim !== 2) return skip('a read of a texture that does not exist');
+    flush();
+    const bpp = texelBytes(r.format), row = width * bpp, pitch = Math.ceil(row / 256) * 256;
+    const rb = device.createBuffer({ size: pitch * height, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ }), e = device.createCommandEncoder();
+    e.copyTextureToBuffer({ texture: r.gpu, mipLevel: mip, origin: { x: 0, y: 0, z: layer } }, { buffer: rb, bytesPerRow: pitch }, { width, height });
+    device.queue.submit([e.finish()]); n.submits++;
+    await rb.mapAsync(GPUMapMode.READ); n.readbacks++;
+    const src = new Uint8Array(rb.getMappedRange()); g.refresh();
+    const n8 = Math.min(row, dstPitch);
+    for (let y = 0; y < height; y++) new Uint8Array(g.buf, (dst >>> 0) + y * dstPitch, n8).set(src.subarray(y * pitch, y * pitch + n8));
+    rb.unmap(); rb.destroy();
+  }
+
   // ---- draws ----
   function draw(at) {
     const d = readDraw(g, at), p = pipelines.get(d.pipeline);
@@ -199,6 +215,7 @@ export function startExplicit({ device, g, res, view, writeBuf, log, stats, tabl
       case GPU.R_PASS: beginPass(at); break;
       case GPU.R_VIEWPORT: viewport = readViewport(g, at); applyViewport(); break;
       case GPU.R_DRAW: draw(at); break;
+      case GPU.R_READ_TEXTURE: return readTexture(at);
       default: break;
       }
       return undefined;

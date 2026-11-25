@@ -4,7 +4,7 @@
 // WebGPU, null.js checks them. `g` is the guest's memory (ring.js), `at` a record's first payload byte.
 import { GPU } from './cmd.gen.js';
 
-export const isExplicit = (op) => op >= GPU.R_SHADER && op <= GPU.R_DRAW;
+export const isExplicit = (op) => op >= GPU.R_SHADER && op <= GPU.R_READ_TEXTURE;
 
 export function readShader(g, at) {
   g.refresh();

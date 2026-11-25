@@ -172,7 +172,7 @@ export async function startBackend({ memory, ring: ringAddr, device, canvas, dir
     }
   };
 
-  const explicit = startExplicit({ device, g, res, view, writeBuf, log, stats, tables: { FORMATS, VERTEX_FORMATS, BLEND, BLEND_OP, COMPARE, TOPOLOGY, ADDRESS } });
+  const explicit = startExplicit({ device, g, res, view, writeBuf, log, stats, tables: { FORMATS, VERTEX_FORMATS, BLEND, BLEND_OP, COMPARE, TOPOLOGY, ADDRESS }, texelBytes });
 
   // ---- shaders and pipelines ----
   const shader = (digest) => {

@@ -109,6 +109,11 @@
 #define GPU_DRAW_WORDS 12
 #define GPU_DRAW_INDEXED 1
 #define GPU_DRAW_INDEX32 2
+// A texture's pixels back into guest memory (Direct3D 9's GetRenderTargetData): texture id, mip level, layer,
+// width, height, bytes a row in guest memory, guest address. Everything recorded before it has run when the back
+// end moves past it, and the bytes are there: the writer waits with rt_gpu_drain. A back end without pixels (null)
+// leaves the bytes as they are.
+#define GPU_R_READ_TEXTURE 18
 
 // ---- command list words: [u16 op | u16 words of payload << 16][payload] ----
 #define GPU_L_CLEAR_RTV 1
