@@ -4,3 +4,10 @@
 # tools/build-title.sh puts them in front of the table tools/stdcall-sizes.sh makes from the import libraries.
 # D3DX calls DebugSetMute(BOOL) and removes the argument itself (push, call, pop ecx).
 d3d9.dll!DebugSetMute 0
+# kernel32's interlocked functions: the import library leaves them out (the SDK's headers make them intrinsics), but
+# 32-bit code built without the intrinsic (D3DX) calls the exports, stdcall
+kernel32.dll!InterlockedCompareExchange 12
+kernel32.dll!InterlockedExchange 8
+kernel32.dll!InterlockedExchangeAdd 8
+kernel32.dll!InterlockedIncrement 4
+kernel32.dll!InterlockedDecrement 4
