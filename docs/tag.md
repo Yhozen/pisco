@@ -200,6 +200,17 @@ temporary files, `GetFullPathNameA`, `MoveFileA`, `GlobalMemoryStatus`, `Interlo
   `cmp`, `abs`, `frc`; vertex inputs include no tangent or binormal in the session's shaders.
 - T4: R32F render targets, a cube texture, `DrawPrimitiveUP`; no point sprites, no DXT, no `StretchRect`.
 
+## Play it
+
+```sh
+target/release/pisco build recipes/tag --source ~/Downloads/Tag_setup.exe     # -> out/images/tag
+node tools/serve.mjs 8000 web out/images/tag    # then http://127.0.0.1:8000/browser/index.html?image=/files/0/
+```
+
+In a desktop browser with WebGPU: click the page to give it the mouse (Pointer Lock), WASD to move, the mouse to
+look, the left button to paint and the right button to erase once a gun is taken (level 2).
+`TAG.ini` (full screen, 1024x768, the frame cap) is kept in the browser's storage between visits.
+
 ## Progress
 
 - **T1, lift and start.** `pisco build recipes/tag` lifts `Tag.exe` with `d3dx9_35.dll` from the installer's cab

@@ -148,13 +148,21 @@ exception is thrown), MMX and 3DNow (the virtual CPU still reports MMX and SSE t
 per title comes with M2), `fbld` / `fbstp`, the x87 tag
 word, 80-bit precision, and every import beyond the four the two test titles call.
 
-### Next: Tag: The Power of Paint (2008)
+### Tag: The Power of Paint (2008), the second title
 
-DigiPen's game draws everything through 16 D3DX effects compiled at run time to 23 `vs_2_a` and 23 `ps_2_a` shaders,
-and plays its sound through FMOD Ex. What it needs, in order: its census and the Wine oracle with Microsoft's own
-`d3dx9_35.dll` (T0); lifting the exe with that DLL and the imports by ordinal and by C++ name (T1); the main loop on
-the null GPU (T2); a Direct3D 9 shader translator, vs/ps 1.1 to 2.x to WGSL (T3); its pixels (T4); FMOD Ex, input,
-saves (T5); playable from `pisco build` (T6).
+DigiPen's game draws everything through 16 D3DX effects compiled at run time, and plays its sound through FMOD Ex.
+Built by `pisco build recipes/tag` from the installer, with Microsoft's `d3dx9_35.dll` from the installer's cab
+lifted beside the exe. Measured ([docs/tag.md](tag.md) has each milestone):
+
+- start-up: the same calls as under Wine up to `Direct3DCreate9` (699 steps);
+- D3DX's HLSL compiler, as lifted code, writes the same 46 bytecodes as under Wine; the Direct3D 9 shader translator
+  (vs/ps 1.1 to 2.x to WGSL) takes all of them;
+- `menu-to-level1` in Node, strict: the same 76 Direct3D methods as Wine's trace, 96 counted arguments with the same
+  values; in headless Chrome, level 1 within 1.4 of 255 of Wine's screenshots on average (`tests/run.sh tag`);
+- `level2-paint` in Node, strict: level 2, the gun, paint and erase; FMOD Ex's first 531 loads, plays and settings as
+  Wine's; `TAG.ini` kept and read back (`tests/run.sh tagplay`).
+
+Still to do: playing it by hand on a real GPU (T6 of [the plan](plan.md)); the later levels.
 
 ## Known limits
 

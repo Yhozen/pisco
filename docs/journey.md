@@ -471,6 +471,29 @@ the next title is a Windows x86 one (Tag: The Power of Paint).
   tests became `tests/run.sh st` and `pbr`, which say why they skip when the samples or SDKs are not there.
 - **Per-title workarounds are recipe options**: Narbacular Drop's heap fill is `[quirks] heap_fill = 0xCD`.
 
+### 3.23 Tag: The Power of Paint, a title whose shaders are compiled while it runs (2026-11-25)
+
+Tag hands 16 HLSL effects to Microsoft's D3DX at start-up. D3DX comes from the installer's cab and is lifted
+beside the exe like any other code; its compiler, run as lifted x87 code, writes the same 46 bytecodes as under
+Wine, and a Direct3D 9 shader translator (`rt/windows-x86/d3d9_sm.c`) turns them into WGSL. What the comparison with
+Wine found along the way was rarely where we looked first:
+
+- 32-bit `GetSystemInfo` was written with the 64-bit layout, 12 bytes too long: it overwrote a saved EBP, and D3DX's
+  preprocessor failed far from the cause.
+- `HeapSize` answered malloc's rounded-up size; the CRT grows its `atexit` table when `HeapSize` says it is full,
+  so the start-up's calls differed from Wine's until it answered the size asked for.
+- Every translated shader carried `bitcast<f32>(0x7f800000u)` for `log 0`. naga accepts it; Chrome's Tint refuses a
+  constant expression that is not finite, so in Chrome no title shader compiled at all.
+- With the shaders running, every wall was flat grey. The guess was the lighting; the shader, run on the CPU from
+  its WGSL, was right. The cause was a texture: each wall's paint map is a render target the game fills from a
+  system-memory copy with `UpdateTexture`, and bytes written into a render target never reached the GPU.
+- FMOD Ex: Tag's `fmodex.dll` keeps a finished channel's handle valid and names a sound by its file name without
+  folders. Our first FMOD Ex, written from the documentation, did neither, and the game polled dead channels and
+  loaded sounds again.
+
+The plan's save check, "AutoSave.xml survives a reload", rested on a census line that was wrong: `AutoSave.xml` is a
+level shipped with the game and never written. What Tag writes is `TAG.ini`.
+
 ## 4. Roadblocks
 
 ### Resolved

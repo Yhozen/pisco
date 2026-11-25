@@ -37,7 +37,7 @@ for (const rt of Object.keys(RUNTIMES)) {
 const impls = new Map([...implsOf['windows-x64'], ...implsOf['xbox-series']]); // D3D12's methods: both 64-bit runtimes
 // the runtime each title is built for (its recipe's base)
 const TITLE_RUNTIME = { 'Doom (our console title)': 'xbox-series', "XCL's console test title": 'xbox-series', 'Stockfish 19 (official build)': 'windows-x64',
-  'SimpleTriangleDesktop (clang-cl)': 'windows-x64', 'SimpleTriangleDesktop (MSVC)': 'windows-x64', 'SimplePBR (clang-cl)': 'windows-x64', 'Narbacular Drop': 'windows-x86' };
+  'SimpleTriangleDesktop (clang-cl)': 'windows-x64', 'SimpleTriangleDesktop (MSVC)': 'windows-x64', 'SimplePBR (clang-cl)': 'windows-x64', 'Narbacular Drop': 'windows-x86', 'Tag: The Power of Paint': 'windows-x86' };
 const dataImports = new Set(['msvcrt.dll!__initenv', 'msvcrt.dll!_commode', 'msvcrt.dll!_fmode']);
 // rt/process.c's find_import, in JavaScript, against one runtime's functions
 function resolves(full, rt) {
@@ -80,11 +80,16 @@ if (argv.includes('--refresh')) {
     'SimpleTriangleDesktop (MSVC)': 'out/st-boat-msvc/title.c',
     'SimplePBR (clang-cl)': 'out/pbr/title.c',                    // tests/gfx/pbr.sh
     'Narbacular Drop': 'out/nd/title.c',                          // tests/run.sh nd
+    'Tag: The Power of Paint': 'out/pc-tag/lift/*/title.c',       // tests/run.sh tag (pisco build's cache: the newest lift)
   };
   const old = fs.existsSync(dataPath) ? JSON.parse(fs.readFileSync(dataPath, 'utf8')) : {};
   const data = { updated: new Date().toISOString().slice(0, 10), titles: old.titles || {}, xcl: old.xcl || [], ladder: old.ladder, facts: old.facts };
   for (const [name, file] of Object.entries(titles)) {
-    const f = path.isAbsolute(file) ? file : path.join(root, file);
+    let f = path.isAbsolute(file) ? file : path.join(root, file);
+    if (f.includes('*')) {   // a folder per lift: the newest one's
+      const [head, tail] = f.split('*'), dirs = fs.existsSync(head) ? fs.readdirSync(head).map((d) => head + d + tail).filter((p) => fs.existsSync(p)) : [];
+      f = dirs.sort((a, b) => fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs)[0] ?? f;
+    }
     if (!fs.existsSync(f)) { console.log(`progress: ${name}: ${file} not built, kept from before`); continue; }
     const c = fs.readFileSync(f, 'utf8');
     const names = JSON.parse('[' + c.match(/import_names\[\]=\{(.*?)0\};/)[1].replace(/,$/, '') + ']');

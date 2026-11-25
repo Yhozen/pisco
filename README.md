@@ -16,7 +16,7 @@ that each imitate one system; a title image names the one it is built FROM ([the
 |---|---|---|---|
 | **Xbox Series** (`base/xbox-series`) | the GDK's console build: kernelx, XMem, XGameRuntime, D3D12.X, DirectStorage, XAudio2 | Doom as a console title; XCL's console test title, 50/50 | Minecraft (Bedrock), the Xbox Series build |
 | **Windows x64** (`base/windows-x64`) | 64-bit Windows desktop: DXGI, D3D12, the PC GDK, the MSVC runtimes | Stockfish 19 (official build), Microsoft's SimpleTriangleDesktop and SimplePBR | desktop D3D12 titles |
-| **Windows x86** (`base/windows-x86`) | 32-bit Windows desktop of the 2000s: Win32, GDI, Direct3D 9, DirectInput, FMOD | Narbacular Drop (2005), playable in a desktop browser | Tag: The Power of Paint (2008, shader model 2), next |
+| **Windows x86** (`base/windows-x86`) | 32-bit Windows desktop of the 2000s: Win32, GDI, Direct3D 9, DirectInput, FMOD | Narbacular Drop (2005), playable in a desktop browser; Tag: The Power of Paint (2008, shader model 2) to its second level, checked in headless Chrome | 32-bit Direct3D 9 games of the 2000s |
 
 Running Minecraft through the Xbox Series runtime is where the project started; it is now that runtime's goal, one
 among several. Nothing of a title is in this repository: you bring your own copy.
@@ -25,6 +25,11 @@ Narbacular Drop, built from your own installer into a title image, runs at 100 t
 an M1 MacBook Pro, with its sound, mouse-look under Pointer Lock, both portals and its saved options. Scripted
 sessions check it against Wine screen by screen and call by call, in Node and in headless Chrome
 ([status](docs/status.md), [the game's page](docs/narbacular-drop.md)).
+
+Tag: The Power of Paint, DigiPen's paint-gun game, is built the same way, with Microsoft's own D3DX from its
+installer lifted beside it: its 16 effects compile at run time to the same 46 shaders as under Wine, translated to
+WGSL, and in headless Chrome its first level is within 1.4 of 255 of Wine's screenshots on average; it plays into
+its second level, paints and erases, with FMOD Ex's calls as Wine's ([the game's page](docs/tag.md)).
 
 Licence: GPL-2.0-or-later for our own code; code from other projects keeps its own licence (the shader tools
 from [XCL](https://github.com/ivall/xcl) are GPL-2.0-only). See [LICENSING.md](LICENSING.md).
@@ -112,6 +117,7 @@ target/release/pisco build recipes/narbacular-drop --source ~/Downloads/narbacul
 target/release/pisco run out/images/narbacular-drop --session recipes/narbacular-drop/sessions/menu-to-level.json
 target/release/pisco run out/images/narbacular-drop --chrome          # headless Chrome; in a browser of your own:
 node tools/serve.mjs 8000 web out/images/narbacular-drop           # then http://127.0.0.1:8000/browser/index.html?image=/files/0/
+target/release/pisco build recipes/tag --source ~/Downloads/Tag_setup.exe                          # -> out/images/tag, the same way
 target/release/pisco inspect out/images/narbacular-drop               # its layers, config and registry
 target/release/pisco census <a title's .exe>                          # what the base and its libraries answer for
 ```
