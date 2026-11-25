@@ -12,8 +12,11 @@ titles, its own next steps and its own goal:
 ## Shared: the recompiler, the core runtime, the packages
 
 - **Gate A (CPU and OS layer on synthetic titles): passed** in Node and headless Chrome — our own titles
-  (Rust, C++ with libc++/libunwind, a multi-image title with a DLL) and XCL's console test title (28 of its
-  50 checks: all CPU-side ones but 3 that need XCL's above-4-GiB memory layout).
+  (Rust, C++ with libc++/libunwind, a multi-image title with a DLL) and XCL's console test title (46 of its
+  50 checks in Node, where the 4 that read pixels back cannot pass; all 50 in Chrome, below).
+- **A real 64-bit Windows program** (Stockfish 19's official build, MinGW-compiled, 103 MB) runs bit-exactly:
+  `bench` searches 2,497,913 nodes, the signature published with the release, at ~106 k nodes/s in Node and
+  ~111 k in Chrome.
 - wasm32 vs wasm64 measured (`docs/memory.md`).
 - **Title images**: `pisco build` makes an image FROM one base per runtime (`bases/`), the only list of the
   runtime's files; one title of each base is built twice with empty caches to equal digests (`tests/run.sh images`).
@@ -166,7 +169,10 @@ Still to do: playing it by hand on a real GPU (T6 of [the plan](plan.md)); the l
 
 ## Known limits
 
-- Exceptions resume only at landing pads the lifter found (GCC/LLVM LSDA, C scope tables); MSVC funclets not yet.
+- 64-bit exceptions resume at the landing pads the lifter finds: GCC / LLVM LSDA, C scope tables, MSVC FH3 catch
+  and cleanup funclets and catch continuations. FH4 tables are not read. 32-bit titles have no exception
+  dispatch yet.
+- AVX and later instructions trap where they are; titles never reach them, since CPUID does not report AVX.
 - x87 is emulated with doubles (no 80-bit precision).
 - Memory protection, guard pages and write watches do not exist; the VFS keeps S:\ and (Windows desktop titles) what a
   title writes in its own folder, not deletions of its own files.

@@ -538,7 +538,7 @@ level shipped with the game and never written. What Tag writes is `TAG.ini`.
 ### Open
 | # | Roadblock | Why it matters | Plan |
 |---|---|---|---|
-| O1 | **Graphics beyond Doom's and XCL's checks** | D3D12.X → WebGPU works for Doom and XCL's checks (depth, index buffers, derived pipelines, queries, UMA memory, copies); vertex / constant buffers with real data, many descriptors, compute and DXGI swap chains are written but untested | SimpleTriangleDesktop then SimplePBR (the ladder's steps 1–2) |
+| O1 | **Graphics beyond the ladder** | D3D12 / D3D12.X → WebGPU works for Doom, XCL's checks, SimpleTriangleDesktop and SimplePBR (vertex, index and constant buffers, descriptor tables, BC textures, DXGI swap chains); compute, raytracing (WebGPU has none) and Minecraft's own patterns are untested | Minecraft's census, then its first frames |
 | O2 | **Shader translation** RDNA2 → WGSL | the console ships GPU machine code, not portable shaders | the census tells which stages and instructions Minecraft needs; XCL's HLSL emitter is the reference; mesh/NGG programs may need compute + indirect draws |
 | O3 | **WebGPU limits** | no mesh shaders, no bindless heaps (XCL saw Minecraft use eight heaps of 73,727 descriptors), no 64-bit integers, no shared memory | per-draw bindings traced from each shader (VIctory's approach), compute emulation where needed; decided after the shader census |
 | O4 | MSVC C++ exceptions | FH3 works with the real vcruntime (§3.20); FH4, which current `cl.exe` emits and Minecraft likely uses, is untested | build an FH4 test title with `cl.exe` (on the MSVC build machine) |
