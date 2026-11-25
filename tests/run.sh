@@ -65,11 +65,15 @@ build() {
   "$CXX" -O2 -static -shared fixtures/dll/lib.cpp -o fixtures/dll/game/gamelib.dll -Wl,--out-implib,fixtures/dll/game/libgamelib.a || return 1
   "$CXX" -O2 -static fixtures/dll/main.cpp -o fixtures/dll/game/title.exe -Lfixtures/dll/game -lgamelib || return 1
   (cd fixtures/hello && cargo build -q --release --target i686-pc-windows-msvc) || return 1
+  # the exe and its DLL again as 32-bit programs (several 32-bit images lifted together)
+  local CXX32=$MINGW/bin/i686-w64-mingw32-clang++; mkdir -p fixtures/dll/game32
+  "$CXX32" -O2 -static -shared fixtures/dll/lib.cpp -o fixtures/dll/game32/gamelib.dll -Wl,--out-implib,fixtures/dll/game32/libgamelib.a || return 1
+  "$CXX32" -O2 -static fixtures/dll/main.cpp -o fixtures/dll/game32/title.exe -Lfixtures/dll/game32 -lgamelib || return 1
   fixtures/x87/build.sh out/x87 > /dev/null || return 1
   fixtures/crt32/build.sh out/crt32 > /dev/null || return 1
   # the MSVC-ABI exceptions title, when clang-cl is there (tests/gfx/st.sh runs it)
   local msvc=""; if command -v clang-cl > /dev/null && command -v lld-link > /dev/null; then fixtures/msvc/build.sh || return 1; msvc=", msvc's eh"; fi
-  echo "built hello threads bench cxx dll$msvc, and hello, x87 and crt32 as 32-bit programs"
+  echo "built hello threads bench cxx dll$msvc, and hello, dll, x87 and crt32 as 32-bit programs"
 }
 win32() {
   local ok=0 exe=fixtures/hello/target/i686-pc-windows-msvc/release/hello.exe out pass
@@ -80,6 +84,11 @@ win32() {
   SW_STRICT=1 node web/run-node.mjs out/x87/wasm/title.wasm out/x87/x87.exe > out/x87/got.txt 2>&1
   if cmp -s out/x87/got.txt fixtures/x87/expected.txt; then echo "x87: $(wc -l < fixtures/x87/expected.txt) lines equal what it prints under Wine"
   else echo "x87: differs from what it prints under Wine (< ours, > Wine):"; diff out/x87/got.txt fixtures/x87/expected.txt | head -12; ok=1; fi
+  # the 32-bit exe and its DLL: all but the last check (a C++ exception thrown in the DLL: mingw's DWARF unwinding
+  # for 32-bit code is not dispatched yet; MSVC's, which Windows games use, is T1's)
+  tools/build-title.sh fixtures/dll/game32/title.exe out/dll32 > out/dll32.build.log 2>&1 || { echo "dll32: build failed (out/dll32.build.log)"; return 1; }
+  out=$(SW_STRICT=1 timeout 120 node web/run-node.mjs out/dll32/title.wasm fixtures/dll/game32/title.exe 2>&1); pass=$(grep -c '^\[PASS\]' <<<"$out")
+  echo "dll32: $pass passed, the exception across the DLL not yet (32-bit DWARF unwinding)"; [ "$pass" = 6 ] || { tail -3 <<<"$out"; ok=1; }
   tools/build-title.sh out/crt32/crt32.exe out/crt32/wasm > out/crt32.build.log 2>&1 || { echo "crt32: build failed (out/crt32.build.log)"; return 1; }
   SW_STRICT=1 node web/run-node.mjs out/crt32/wasm/title.wasm out/crt32/crt32.exe > out/crt32/got.txt 2>&1
   if cmp -s out/crt32/got.txt fixtures/crt32/expected.txt; then echo "crt32: $(wc -l < fixtures/crt32/expected.txt) lines (msvcrt.dll maths and printf, SList) equal what it prints under Wine"
@@ -152,7 +161,7 @@ for s in ${*:-build layout node bench win32 ffp sm gdi}; do case $s in
   layout) step layout tests/layout.sh ;;
   node)   LINES_SHOWN=8 step node tests/regress.sh ;;
   bench)  step bench bench ;;
-  win32)  LINES_SHOWN=3 step win32 win32 ;;
+  win32)  LINES_SHOWN=4 step win32 win32 ;;
   chrome) LINES_SHOWN=5 step chrome chrome ;;
   nd)     if [ -f "$ND/Narbacular Drop.exe" ]; then LINES_SHOWN=3 step nd nd; else echo "skip  nd: the game is not installed (ND=$ND)"; fi ;;
   ffp)    if command -v naga > /dev/null; then step ffp tests/gfx/d3d9-ffp.sh; else echo "skip  ffp: naga is not installed (tools/setup-toolchain.sh naga)"; fi ;;

@@ -179,6 +179,11 @@ u32 rt_wait(Cpu *c, u32 n, const u64 *handles, int all, u32 ms);
 // ---- imports ----
 typedef void (*ImportFn)(Cpu *c);
 #define IMP(dll, name) void imp_##dll##_##name(Cpu *c)
+// ALIAS(dll, "imported name", fn, bytes): an import that is not a C identifier (by ordinal, "#23"; a C++ method,
+// "?createSound@System@FMOD@@QAG..."; a name with other characters) is answered by IMP(dll, fn), which removes
+// `bytes` of arguments from a 32-bit guest's stack (-1: as the import libraries say for fn). tools/gen-imports.sh
+// collects them into the module's alias table; `pisco census` and the progress map read them as well.
+#define ALIAS(dll, name, fn, bytes) extern const int rt_alias_unused_
 // a data import: the IAT slot gets the address `rt_data_import` returns
 u64 rt_data_import(const char *name);
 u64 rt_dynamic_import(const char *dll, const char *name); // GetProcAddress

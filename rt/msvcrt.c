@@ -277,7 +277,7 @@ IMP(msvcrt, exit) { u32 code = (u32)ARG(0); run_atexit(c); rt_exit_process(code)
 IMP(msvcrt, _exit) { rt_exit_process((u32)ARG(0)); }
 IMP(msvcrt, _cexit) { run_atexit(c); }
 IMP(msvcrt, _amsg_exit) { rt_fatal("runtime error R60%02llu", ARG(0)); }
-IMP(msvcrt, abort) { rt_fatal("abort() called from 0x%llx", MP(R[RSP])); }
+IMP(msvcrt, abort) { rt_fatal("abort() called from 0x%llx", (u64)MP(R[RSP])); }
 IMP(msvcrt, _assert) { rt_fatal("assertion failed: %s (%s:%u)", GSTR(ARG(0)), GSTR(ARG(1)), (u32)ARG(2)); }
 IMP(msvcrt, signal) { RET(0); }
 IMP(msvcrt, _errno) { RET(THREAD(c)->teb + TEB_ERRNO); }
@@ -285,7 +285,7 @@ IMP(msvcrt, __iob_func) { RET(iob); }
 IMP(msvcrt, _beginthreadex) { u32 tid = 0; u64 h = rt_create_thread(c, ARG(1), ARG(2), ARG(3), (ARG(4) & 4) != 0, &tid); if (ARG(5)) M32(ARG(5)) = tid; RET(h); }
 IMP(msvcrt, _endthreadex) { rt_thread_exit(c, (u32)ARG(0)); }
 IMP(msvcrt, _setjmp) { RET(0); } // longjmp is not supported yet: a setjmp that only ever returns once
-IMP(msvcrt, longjmp) { rt_fatal("longjmp is not implemented yet (from 0x%llx)", MP(R[RSP])); }
+IMP(msvcrt, longjmp) { rt_fatal("longjmp is not implemented yet (from 0x%llx)", (u64)MP(R[RSP])); }
 
 // ---- memory ----
 IMP(msvcrt, malloc) { RET((uptr)calloc(1, ARG(0) ? ARG(0) : 1)); } // zeroed, as fresh pages from the system are: titles that read memory they never wrote see what they would natively
@@ -562,3 +562,27 @@ IMP(msvcrt, iswlower) { u32 ch = (u16)ARG(0); RET(ch < 128 && islower((int)ch));
 IMP(msvcrt, iswpunct) { u32 ch = (u16)ARG(0); RET(ch < 128 && ispunct((int)ch)); }
 IMP(msvcrt, iswxdigit) { u32 ch = (u16)ARG(0); RET(ch < 128 && isxdigit((int)ch)); }
 IMP(msvcrt, iswprint) { u32 ch = (u16)ARG(0); RET(ch >= 32 && ch != 127); }
+
+// ---- the floating-point control word, in the C runtime's own bit layout (float.h's _MCW_*), on the x87's ----
+static u32 cw_from_fcw(u16 f) {
+  u32 c = 0;
+  if (f & 0x01) c |= 0x10; if (f & 0x02) c |= 0x80000; if (f & 0x04) c |= 0x08; if (f & 0x08) c |= 0x04; if (f & 0x10) c |= 0x02; if (f & 0x20) c |= 0x01;
+  c |= (u32)((f >> 10) & 3) << 8;                                          // rounding: near, down, up, chop in both
+  u32 pc = (f >> 8) & 3; c |= pc == 0 ? 0x20000 : pc == 2 ? 0x10000 : 0;   // precision: _PC_24, _PC_53, _PC_64
+  return c;
+}
+static u16 fcw_from_cw(u32 c, u16 f) {
+  f &= (u16)~0x0F3F;
+  if (c & 0x10) f |= 0x01; if (c & 0x80000) f |= 0x02; if (c & 0x08) f |= 0x04; if (c & 0x04) f |= 0x08; if (c & 0x02) f |= 0x10; if (c & 0x01) f |= 0x20;
+  f |= (u16)(((c >> 8) & 3) << 10);
+  u32 pc = c & 0x30000; f |= (u16)((pc == 0x20000 ? 0 : pc == 0x10000 ? 2 : 3) << 8);
+  return f;
+}
+static u32 control87(Cpu *c, u32 value, u32 mask) {
+  u32 cw = (cw_from_fcw(c->fcw) & ~mask) | (value & mask);
+  c->fcw = fcw_from_cw(cw, c->fcw);
+  return cw_from_fcw(c->fcw);
+}
+IMP(msvcrt, _control87) { RET(control87(c, (u32)ARG(0), (u32)ARG(1))); }
+IMP(msvcrt, _controlfp) { RET(control87(c, (u32)ARG(0), (u32)ARG(1) & ~0x80000u)); } // not the denormal mask
+IMP(msvcrt, _controlfp_s) { u32 v = control87(c, (u32)ARG(1), (u32)ARG(2) & ~0x80000u); if (ARG(0)) M32(ARG(0)) = v; RET(0); }

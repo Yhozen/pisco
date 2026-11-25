@@ -667,3 +667,17 @@ IMP(kernel32, CloseThreadpoolWork) {} // kept: a callback still running may name
 IMP(kernel32, TrySubmitThreadpoolCallback) { TpRun *r = calloc(1, sizeof *r); r->cb = ARG(0); r->ctx = ARG(1); r->simple = 1; rt_spawn_native(tp_main, r); RET(1); }
 IMP(kernel32, CallbackMayRunLong) { RET(1); }
 IMP(kernel32, FreeLibraryWhenCallbackReturns) {} // modules are never unloaded here
+
+// ---- psapi (kernel32's K32 names): the lifted images, for code that looks for its modules' unwind tables ----
+IMP(kernel32, K32EnumProcessModules) { // (process, modules[], bytes, &needed)
+  u64 out = ARG(1); u32 cap = (u32)ARG(2) / PTR_SIZE;
+  for (unsigned i = 0; i < rt_module_count && i < cap; i++) MP(out + PTR_SIZE * i) = rt_modules[i].base;
+  if (ARG(3)) M32(ARG(3)) = rt_module_count * PTR_SIZE;
+  RET(1);
+}
+IMP(kernel32, K32GetModuleInformation) { // (process, module, MODULEINFO* {base, size, entry}, bytes)
+  const ModuleDef *m = rt_module_of(ARG(1));
+  if (!m || ARG(3) < 3u * PTR_SIZE) { SET_LAST_ERROR(87); RET(0); return; }
+  u64 mi = ARG(2); MP(mi) = m->base; M32(mi + PTR_SIZE) = (u32)m->size; MP(mi + 2 * PTR_SIZE) = m->entry;
+  RET(1);
+}

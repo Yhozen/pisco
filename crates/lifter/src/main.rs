@@ -1898,7 +1898,9 @@ fn lift() {
             next = after(img);
         }
     } else {
-        let mut next = first.unwrap_or(if mods[0].1.base >= 0x1_0000_0000 || mods.len() > 1 { 0x1000_0000 } else { mods[0].1.base });
+        // 64-bit: several images start at 0x10000000, above the runtime's data; a 32-bit exe keeps its own base (its
+        // layout leaves the runtime room below and above the images: tools/build-title.sh)
+        let mut next = first.unwrap_or(if mods[0].1.base >= 0x1_0000_0000 || (mods.len() > 1 && bits == 64) { 0x1000_0000 } else { mods[0].1.base });
         for (name, img) in mods.iter_mut() {
             let from = img.base;
             img.rebase(next).unwrap_or_else(|e| panic!("{name}: {e}"));

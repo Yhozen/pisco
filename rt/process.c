@@ -75,7 +75,16 @@ static unsigned import_total; // the image's imports, then GetProcAddress result
 typedef struct { const char *name; int bytes; } StdcallDef;
 extern const StdcallDef rt_stdcall_table[]; extern const unsigned rt_stdcall_table_count;
 static short import_pop[8192];
+// ALIAS(...) in the runtime's sources (imports.gen.c): an import by ordinal or by a name that is no C identifier
+typedef struct { const char *name, *target; int bytes; } AliasDef;
+extern const AliasDef rt_alias_table[]; extern const unsigned rt_alias_table_count;
+static const AliasDef *alias_of(const char *full) {
+  for (unsigned k = 0; k < rt_alias_table_count; k++) if (!strcmp(rt_alias_table[k].name, full)) return &rt_alias_table[k];
+  return 0;
+}
 static int stdcall_bytes(const char *full) {
+  const AliasDef *al = alias_of(full);
+  if (al) { if (al->bytes >= 0) return al->bytes; full = al->target; }
   for (unsigned k = 0; k < rt_stdcall_table_count; k++) if (!strcmp(rt_stdcall_table[k].name, full)) return rt_stdcall_table[k].bytes;
   const char *at = strrchr(full, '@');
   if (at && at[1] >= '0' && at[1] <= '9') return atoi(at + 1);
@@ -88,12 +97,11 @@ static ImportFn find_exact(const char *full) {
 }
 // "dll!name". API sets resolve to the DLL behind them; ucrtbase falls back to msvcrt's functions, and
 // kernelbase / ntdll to kernel32's.
-// imports by ordinal (from the SDK's import libraries)
-static const struct { const char *ord, *name; } ordinals[] = {{"d3d12.dll!#101", "d3d12.dll!D3D12CreateDevice"}, {"d3d12.dll!#102", "d3d12.dll!D3D12GetDebugInterface"}};
 static ImportFn find_import(const char *full) {
   ImportFn f = find_exact(full);
   if (f) return f;
-  for (unsigned i = 0; i < sizeof ordinals / sizeof *ordinals; i++) if (!strcmp(full, ordinals[i].ord)) return find_exact(ordinals[i].name);
+  const AliasDef *al = alias_of(full);   // by ordinal, or by a C++ name (ALIAS in the runtime's sources)
+  if (al) return find_exact(al->target);
   const char *bang = strchr(full, '!');
   if (!bang) return 0;
   char alt[200];
@@ -105,6 +113,8 @@ static ImportFn find_import(const char *full) {
     snprintf(alt, sizeof alt, "msvcrt.dll!%s", name); if ((f = find_exact(alt))) return f;
   }
   if (core) { snprintf(alt, sizeof alt, "kernel32.dll!%s", name); if ((f = find_exact(alt))) return f; }
+  // psapi.dll's functions are kernel32's, named K32...
+  if (!strncmp(full, "psapi.dll!", 10)) { snprintf(alt, sizeof alt, "kernel32.dll!K32%s", name); if ((f = find_exact(alt))) return f; }
   // the console's DLLs: kernelx is kernel32 with additions, xmem's functions are kernelx's
   if (!strncmp(full, "xmem.dll!", 9)) { snprintf(alt, sizeof alt, "kernelx.dll!%s", name); if ((f = find_exact(alt))) return f; }
   if (!strncmp(full, "kernelx.dll!", 12) || !strncmp(full, "xmem.dll!", 9) || strstr(full, "legacy.dll!")) {

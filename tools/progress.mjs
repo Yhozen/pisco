@@ -29,7 +29,9 @@ for (const rt of Object.keys(RUNTIMES)) {
   for (const f of new Set(baseFiles(rt))) {
     const src = fs.readFileSync(path.join(root, f), 'utf8');
     for (const x of src.matchAll(/^IMP\((\w+), *(\w+)\) *\{(.*)$/gm)) m.set(`${x[1]}.dll!${x[2]}`, !/^\s*RET\((E_NOTIMPL|0x80004001u?)\);\s*\}/.test(x[3]));
+    for (const x of src.matchAll(/^ALIAS\((\w+), *"([^"]*)", *(\w+), *-?\d+\)/gm)) m.set(`${x[1]}.dll!${x[2]}`, `${x[1]}.dll!${x[3]}`); // resolved below
   }
+  for (const [k, v] of m) if (typeof v === 'string') m.set(k, m.get(v) === true); // an alias does what its target does
   implsOf[rt] = m;
 }
 const impls = new Map([...implsOf['windows-x64'], ...implsOf['xbox-series']]); // D3D12's methods: both 64-bit runtimes

@@ -207,6 +207,17 @@ pub fn implemented(root: &Path, files: &[String]) -> R<Vec<String>> {
                 if ok(dll, false) && ok(name, true) { out.push(format!("{dll}.dll!{name}")); }
             }
         }
+        // ALIAS(dll, "imported name", fn, bytes): an import by ordinal or by a C++ name, answered by IMP(dll, fn)
+        let mut rest = text.as_str();
+        while let Some(i) = rest.find("ALIAS(") {
+            rest = &rest[i + 6..];
+            let (Some(q1), Some(comma)) = (rest.find('"'), rest.find(',')) else { continue };
+            if comma > q1 { continue; }
+            let dll = rest[..comma].trim();
+            let Some(q2) = rest[q1 + 1..].find('"') else { continue };
+            let name = &rest[q1 + 1..q1 + 1 + q2];
+            if !dll.is_empty() && dll.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_') && !name.is_empty() { out.push(format!("{dll}.dll!{name}")); }
+        }
     }
     out.sort(); out.dedup();
     Ok(out)

@@ -130,9 +130,9 @@ IMP(ucrtbase, __stdio_common_vsnwprintf_s) { // (options, buffer, count, max, fo
 IMP(ucrtbase, _set_fmode) { init_globals(); M32(fmode) = (u32)ARG(0); RET(0); }
 IMP(ucrtbase, __setusermatherr) {}
 IMP(ucrtbase, _query_app_type) { RET(1); }
-IMP(ucrtbase, terminate) { rt_fatal("terminate() called from 0x%llx", MP(R[RSP])); }
-IMP(ucrtbase, _invalid_parameter_noinfo) { rt_fatal("CRT invalid parameter (from 0x%llx)", MP(R[RSP])); }
-IMP(ucrtbase, _invalid_parameter_noinfo_noreturn) { rt_fatal("CRT invalid parameter (from 0x%llx)", MP(R[RSP])); }
+IMP(ucrtbase, terminate) { rt_fatal("terminate() called from 0x%llx", (u64)MP(R[RSP])); }
+IMP(ucrtbase, _invalid_parameter_noinfo) { rt_fatal("CRT invalid parameter (from 0x%llx)", (u64)MP(R[RSP])); }
+IMP(ucrtbase, _invalid_parameter_noinfo_noreturn) { rt_fatal("CRT invalid parameter (from 0x%llx)", (u64)MP(R[RSP])); }
 
 // ---- strings, numbers, files Doom-era C code asks for ----
 #include <ctype.h>

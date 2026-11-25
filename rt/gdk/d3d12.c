@@ -161,6 +161,9 @@ IMP(d3d12, Object_SetName) { RET(S_OK); }
 IMP(d3d12, Object_GetDevice) { Obj *o = d3d12_obj(ARG(0)); Device *d = the_device[o && o->console]; RET(d ? d3d12_give(&d->o, ARG(1), ARG(2)) : E_INVALIDARG); if (d) d->o.refs++; }
 
 // ---- device creation ----
+// d3d12.lib imports these two by ordinal
+ALIAS(d3d12, "#101", D3D12CreateDevice, -1);
+ALIAS(d3d12, "#102", D3D12GetDebugInterface, -1);
 Device *d3d12_device(int console) {
   if (!the_device[console]) {
     the_device[console] = obj_new(C_DEVICE, sizeof(Device), console);
