@@ -1,4 +1,4 @@
-# Status and next steps (2026-11-24)
+# Status and next steps (2026-11-25)
 
 ## Done
 
@@ -43,14 +43,24 @@ Wine at run time). Wine is the oracle it is compared with. What the game needs, 
 | M4 | Pixels: Direct3D 9 on WebGPU | checkpoint screenshots match Wine's in headless Chrome | **done** (2026-11-24): in headless Chrome (WebGPU on SwiftShader) the session plays to its end in strict mode and a PNG is saved at each of its 13 checkpoints (`tests/run.sh ndgfx`). The eight still screens equal Wine's to one level in 255 once Wine's D3DX runs the code ours runs; the menu and the level differ from Wine's by less than two of Wine's own runs differ from each other. Second part: GDI draws text with Liberation Sans (built in, OFL) through stb_truetype, measured and drawn as Wine's GDI does (`tests/run.sh gdi`: every metric, ABC width, advance and placement equal), so D3DX's level title and hint appear where Wine has them, and the level's frames make Wine's Direct3D calls (73 kinds of frame identical, covering 11,851 of Wine's 11,857 frames). Left: Wine's TrueType hinting (glyph edges differ by up to half a pixel) ([narbacular-drop.md](narbacular-drop.md)) |
 | M5 | Input, sound, persistence | a scripted session places portals; music in the captured video; files survive a reload | **done** (2026-11-24): the oracle has a sound device (a PipeWire null sink, recorded). FMOD 3 plays on XAudio2's mixer, factored out (`rt/mixer.c`), with WAV, Ogg Vorbis (stb_vorbis) and MP3 (minimp3) read through the game's own file functions; on the virtual clock the mix is the same on every run (`SW_AUDIO_WAV`). Against Wine's `+snoop`: the same functions, the first 177 non-per-frame calls identical with their results (channel handles included) up to the game's first random choice of a sound, per-frame calls equal phase by phase, sounds started by family equal but for footsteps and torch pops, whose times are random; the first level's loudness within 0.4 dB of Wine's recording. The page feeds the keyboard (scan codes) and the mouse under Pointer Lock. `level1-portals` places both portals and walks out of the cage, in Node and in Chrome (its level views within 1-2 levels in 255 of Wine's on average); `system.opt`, written on Quit, survives a rerun (`SW_SAVES`) and a reload (OPFS), equal to Wine's to the byte (`tests/run.sh ndplay`). Video with sound: `recipes/narbacular-drop/video.sh` (108 s, its audio track at -26.4 dB mean, -2.5 dB peak) ([narbacular-drop.md](narbacular-drop.md)) |
 | M6 | Recipes and images | `sw build` + `sw run` from a clean checkout; identical digests on a second build | **done** (2026-11-25): `sw` (`crates/sw`) builds a recipe and the user's installer (sha256-checked, extracted with innoextract) into an OCI image layout with our own media types: the base's layer, one per library, the game's, the module, and a config with the exe, display, CPU, DLL choices and registry ([images.md](images.md)). Two builds with empty caches give the same manifest digest, for hello32 and Narbacular Drop; hello32 (FROM the same base) shares its base layer blob; a registry-only change rebuilds in about a second with nothing lifted, compiled or linked, the same module blob; the registry reaches advapi32 at run time from the config. `sw run` plays menu-to-level in Node with the 13 checkpoints of `tests/run.sh nd`, and in headless Chrome with the still screens within 0.11 of 255 of the oracle's (`tests/run.sh images`). The installer's files equal the Wine install's but for `fmod.dll` (the oracle's is UPX-unpacked) |
-| M7 | Playable in the browser | a full playthrough by hand on a real GPU | |
+| M7 | Playable in the browser | a full playthrough by hand on a real GPU | **done as a proof of concept** (2026-11-25): the image of M6, served by `tools/serve.mjs` and opened in Chrome on an M1 MacBook Pro, is played by hand: "so smooth", and mouse-look under Pointer Lock feels right. Measured with the page's `&stats=1` counter (the title's own presents a 3 s interval, not capped at the display's rate): 294 to 355 frames a second in lighter views (142 to 184 draws a frame), 103 to 174 in the heaviest (318 to 322 draws a frame), against 10 to 20 on the test machine's SwiftShader; no WebGPU error and no draw left out over 4.4 M draws. A full playthrough and a scripted level 1 were dropped from the milestone: a playable game was the proof of concept asked for. Not checked by hand: Esc and a re-click under Pointer Lock, the later levels |
 
 Decided by the census: no x86 exception dispatch, no shader translation, no clip planes or stencil for the
 first level; gdi32 text is needed (memory DCs, DIB sections, a real font); Uniscribe is not (D3DX falls back
 to GDI). The runtime's stack sits where the game's fixed image must load (`0x400000`), so the 32-bit profile
 needs its own memory layout.
 
-What Windows desktop titles have since M5: FMOD 3 (`rt/win32/fmod3.c`: samples, streams, channels as FMOD numbers them,
+What is left for Narbacular Drop, none of it needed to play: a scripted Quit from the pause menu (its items take a
+click in a band a few pixels high, and a fast scripted move lands differently on Wine's clock and ours; the scripted
+check quits from the main menu; by hand it was not tried), ADPCM WAVs, Doppler and reverb, deleting the game's own files across
+runs, Wine's TrueType hinting (glyph edges differ by up to half a pixel), bold faces and other font families, a full
+playthrough by hand and a recording of one. The installer's `fmod.dll` is never run: the runtime's FMOD answers.
+
+What Windows desktop titles have since M6: a recipe `FROM` a base (`bases/win32-x86/1`) with named libraries, built
+by `sw` into a title image whose layers make the C: drive and whose config gives the registry to advapi32
+([images.md](images.md)); both hosts run an image (`web/image.mjs`).
+
+What they had after M5: FMOD 3 (`rt/win32/fmod3.c`: samples, streams, channels as FMOD numbers them,
 3D with several listeners) on the runtime's one sound output (`rt/mixer.c`, shared with XAudio2; mixed on the title's
 thread under a virtual clock), sound files decoded by `rt/win32/audio_decode.c`; input from the page (keyboard,
 Pointer Lock mouse) through a ring `rt/win32/input.c` drains when DirectInput reads; a writable top layer over the

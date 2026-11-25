@@ -1,4 +1,4 @@
-# Narbacular Drop: the first Windows PC title (2026-11-24)
+# Narbacular Drop: the first Windows PC title (2026-11-25)
 
 What the game is made of and what it asks Windows for, measured before any code was written for it. The plan
 these facts feed is in [status.md](status.md); how the measurements are taken is in
@@ -496,6 +496,27 @@ The recipe now sets the three registry values the oracle's plain screenshots are
 from them: D3DX opens the key 19 times and reads `DisableMMX` 16 times. The sessions' recorded checkpoints
 (frames and Direct3D calls) are unchanged, and `nd`, `ndgfx` and `ndplay` pass as before (the virtual CPU had
 already taken D3DX off those paths). The calls up to `Direct3DCreate9` stay Wine's: the key is first opened after it.
+
+## Played by hand (M7)
+
+The image M6's checks ran on (49 MB) was copied to an M1 MacBook Pro, served with `node tools/serve.mjs 8642 web
+<image>` and opened in Chrome (`/browser/index.html?image=/files/0/`; `&stats=1` adds the frame counter). The game
+is played by hand there: mouse-look under Pointer Lock feels right ("so smooth"). The page's `gpu stats` lines,
+logged every 3 s, count the game's own presents, which nothing caps at the display's refresh rate:
+
+| Views | Presents in 3 s | Frames a second | Draws a frame |
+|---|---|---|---|
+| lighter | 881 to 1,065 | 294 to 355 | 142 to 184 |
+| heaviest seen | 308 to 522 | 103 to 174 | 318 to 322 |
+
+No WebGPU error and no draw left out over more than 4.4 million draws. On the test machine's SwiftShader the
+same levels run at 10 to 20 frames a second, so the time there was the software rasteriser's. The numbers are
+approximate (the 3 s timer drifts under load), and which views were which was not written down.
+
+That made the proof of concept, and the milestone stopped there: no scripted level 1 and no full playthrough.
+Not checked by hand yet: leaving Pointer Lock with Esc and clicking back in, both portals aimed by hand, solving
+level 1, options kept across a reload in this browser (the scripted check in headless Chrome passes), and the
+later levels. What is left is listed in [status.md](status.md).
 
 ## What this decides
 
