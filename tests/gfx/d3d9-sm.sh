@@ -15,4 +15,6 @@ for f in "$out"/*.wgsl; do
   naga "$f" > "$f.log" 2>&1 || { bad=$((bad + 1)); [ $bad -gt 3 ] || { echo "naga rejects $(basename "$f"):"; head -14 "$f.log"; }; }
 done
 [ $bad = 0 ] || { echo "$bad shaders rejected by naga"; exit 1; }
+# a constant expression whose value is not finite: naga lets it pass, Chrome's Tint refuses the module
+if grep -l 'bitcast<f32>(0x' "$out"/*.wgsl > "$out/inf.txt" 2>/dev/null && [ -s "$out/inf.txt" ]; then echo "an infinity or NaN written as a constant (Tint refuses it): $(head -3 "$out/inf.txt" | xargs -n1 basename | tr '\n' ' ')"; exit 1; fi
 echo "$(cat "$out/summary.txt"), $(grep -c ' refused: ' "$out/list.txt") refused as they must be: naga accepts every one"

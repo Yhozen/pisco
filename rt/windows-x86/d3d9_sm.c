@@ -243,7 +243,8 @@ static int survey(Sm *m) {
 // ---- pass 2: WGSL ----
 static void flt(char *out, size_t cap, float v) {
   uint32_t b; memcpy(&b, &v, 4);
-  if (!isfinite(v)) { snprintf(out, cap, "bitcast<f32>(0x%08xu)", b); return; }
+  // not a constant expression: WGSL refuses one whose value is not finite (Tint does; naga lets it pass)
+  if (!isfinite(v)) { snprintf(out, cap, "smf(0x%08xu)", b); return; }
   snprintf(out, cap, "%.9g", (double)v);
   if (!strpbrk(out, ".en")) strncat(out, ".0", cap - strlen(out) - 1);
 }
@@ -539,7 +540,8 @@ static void emit_decls(Sm *m) {
          "  return vec4f(1.0, d, select(0.0, pow(max(s.y, 0.0), p), s.x > 0.0), 1.0);\n}\n");
   put(t, "fn smnrm(s: vec4f) -> vec4f {\n  let d = dot(s.xyz, s.xyz);\n  return select(s * inverseSqrt(d), vec4f(0.0), d == 0.0);\n}\n");
   put(t, "fn smexpp(w: f32) -> vec4f {\n  let i = floor(w);\n  return vec4f(exp2(i), w - i, exp2(w), 1.0);\n}\n");
-  put(t, "fn smlogp(w: f32) -> vec4f {\n  let a = abs(w);\n  if (a == 0.0) { return vec4f(-bitcast<f32>(0x7f800000u), 1.0, -bitcast<f32>(0x7f800000u), 1.0); }\n"
+  put(t, "fn smf(bits: u32) -> f32 { return bitcast<f32>(bits); }\n");   // an infinity or a NaN, made at run time (see flt)
+  put(t, "fn smlogp(w: f32) -> vec4f {\n  let a = abs(w);\n  if (a == 0.0) { return vec4f(-smf(0x7f800000u), 1.0, -smf(0x7f800000u), 1.0); }\n"
          "  let e = floor(log2(a));\n  return vec4f(e, a / exp2(e), log2(a), 1.0);\n}\n");
   if (!m->pixel) {
     for (int v = 0; v < 16; v++) if (f->inputs & (1u << v)) put(t, "var<private> v%d: vec4f;\n", v);
