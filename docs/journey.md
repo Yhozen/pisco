@@ -1,4 +1,4 @@
-# The journey so far (2026-11-24)
+# The journey so far (2026-11-25)
 
 A log of how this project came about, what was built, what we measured, what got in the way, and what we
 learned. For the current state in one page see [status.md](status.md); for the first run on a real title see
@@ -342,6 +342,56 @@ PNG of each of its 11 checkpoints that matches Wine's screenshot of it
 - **Result**: the first frame drawn in Chrome was the menu as Wine draws it; nothing had to be corrected after
   it. What took thought was the last level or two of difference on the still screens (R29).
 
+### 3.16 Text: GDI draws glyphs (2026-11-24)
+Milestone M4, the second part. The level's title and hint appear where Wine draws them, and every level frame makes
+Wine's Direct3D calls, its 9 text draws included.
+- **Asking Wine's GDI** (`tools/oracle-wine/gdiprobe.c`): the four fonts the session makes, their metrics, kerning,
+  Unicode ranges, glyph indices, ABC widths, placements and pixels, compared with ours by `gdi-compare.py`
+  (`tests/run.sh gdi`). Every measurement equals Wine's; glyph pixels differ in under 1 % (Wine's FreeType hints,
+  stb_truetype does not).
+- **The same faces Wine picks**: every font the game asks for (no face name) becomes Liberation Sans or Sans
+  Italic under Wine, so those two files (SIL OFL, the upstream release byte for byte) are built into the module
+  with `#embed`; nothing is read from the host.
+- **No Uniscribe**: D3DX falls back to GDI and reaches the same 39 glyphs with the same widths. Uniscribe does
+  not kern, so our `GetFontLanguageInfo` says the font has no kerning, as the colon of the hint showed.
+- **Result**: 73 kinds of frame identical to Wine's, covering 11,851 of its 11,857 frames (28 and 11,169 before).
+  A crash entering the level that came with it was the game's own (R31).
+
+### 3.17 Played: sound, input from the page, saves (2026-11-24)
+Milestone M5. A second session places both portals and walks out of the cage, with sound, in Node and in Chrome.
+- **The oracle needed ears first**: Wine had no sound device, so the game loaded no sounds there. A PipeWire null
+  sink run as the user, paced by its dummy driver, gives it one, and every oracle run is recorded (R32).
+- **One mixer**: XAudio2's mixer became `rt/mixer.c`, and FMOD 3 (`rt/win32/fmod3.c`, all 33 imports) plays on it,
+  reading files through the game's own callbacks; stb_vorbis and minimp3 decode. On the virtual clock the game's
+  thread mixes exactly up to the clock, so the sound is the same sample for sample on every run.
+- **Against Wine's FMOD trace**: the first 177 calls are Wine's with their results and channel handles, up to the
+  game's first random choice of a sound; per-frame calls agree phase by phase; the level's loudness is within
+  0.4 dB of Wine's recording.
+- **Input and saves**: the page feeds DirectInput (scan codes, a Pointer Lock mouse); what a desktop title writes in
+  its own folder is kept (`SW_SAVES/@game`, OPFS). The game writes only `system.opt`, on Quit, the same 20 bytes
+  as under Wine.
+
+### 3.18 Recipes and images: `sw` (2026-11-25)
+Milestone M6. A recipe and the user's installer become a title image ([images.md](images.md)).
+- **OCI's shape, three changes** (the plan's): no `RUN` in an image (the recipe's steps run on the builder's
+  machine), code layered at build time (one module per title), and the game's layer never published.
+- **`sw build`** checks the installer's sha256, extracts it with innoextract, checks the title's imports against
+  its base and the libraries it names, lifts and compiles through a cache keyed by digests, and writes the layout:
+  base, library and game layers as deterministic tars, the module, a config with the exe, CPU features, DLL choices
+  and registry. `sw run` plays an image in Node or Chrome; `web/image.mjs` makes its layers the C: drive.
+- **Checked** (`tests/run.sh images`): two clean builds give the same digest (after R34), hello32 `FROM` the same base
+  shares its base layer, a registry-only change rebuilds in under a second without lifting, and the image plays the
+  sessions with the same checkpoints and screenshots as before.
+
+### 3.19 Playable in a desktop browser (2026-11-25)
+Milestone M7, as a proof of concept. The image was opened in Chrome on an M1 MacBook Pro and played by hand.
+- **Speed**: 294 to 355 frames a second in lighter views, 103 to 174 in the heaviest (about 320 draws a frame),
+  counted from the game's own presents; no WebGPU error over 4.4 million draws. The 10 to 20 frames a second of the
+  headless tests were SwiftShader's.
+- **Feel**: mouse-look under Pointer Lock is right, with nothing tuned for it.
+- **Stopped there**: a scripted level 1 and a full playthrough were dropped; a playable game was the point. What is
+  left is in [status.md](status.md).
+
 ## 4. Roadblocks
 
 ### Resolved
@@ -377,6 +427,11 @@ PNG of each of its 11 checkpoints that matches Wine's screenshot of it
 | R28 | The start-up test would have traced the main loop for five minutes | since M3 the game no longer stops at Direct3D | a session of one empty step (`SW_SESSION_STEPS='wait 0'`) ends the run at the first frame |
 | R29 | Still screens differed from Wine's by one to nine levels of 255, red and blue more than green | Wine's CPU has MMX and SSE and D3DX decodes and resamples pictures with them; the recipe's CPU has neither, and D3DX's plain code rounds differently | an oracle run with D3DX's processor-specific code turned off (three registry values it reads): the still screens then agree to one level, the rasterisers' rounding |
 | R30 | Is a difference in a moving scene an error? | the oracle's clock is real, ours virtual: a menu with flickering lights and a level with a walking creature are shot at other moments | measured what two runs of Wine differ by (more than ours differs from either), and took a series of shots to find the creature where the oracle has it |
+| R31 | The first level crashed, sometimes | the game tests a field (`0x41d9cb`) before it sets it (`0x41da5e`); in a zeroed heap block the camera is never attached and the next frame reads through a stale index. Whether it crashed depended on what the heap had held | a 32-bit title's heap blocks not asked to be zeroed are filled with `0xCD` (the same on every host); Wine crashed the same way once sounds were loaded, until its heap fills blocks too (`warn+heap`) |
+| R32 | No sound to compare with | the oracle had no sound device, so `FSOUND_Init` failed and the game loaded no sounds; ALSA's `null` plugin is not paced (Wine played 7 times faster than real time) | a PipeWire null sink run as the user, paced by its dummy driver, recorded by ffmpeg |
+| R33 | The session's mouse moved differently under Wine | X's pointer acceleration scaled every motion event over 4 pixels | the session player turns acceleration off |
+| R34 | Two clean builds differed by two bytes | wasm-ld writes the output file's name into the module, and `sw` linked to a temporary name | link as `title.wasm` in a folder of its own |
+| R35 | A scripted Quit from the pause menu | its items take a click in a band a few pixels high, and a fast move lands differently on Wine's real-time frames and on our virtual clock | the scripted check quits from the main menu |
 
 ### Open
 | # | Roadblock | Why it matters | Plan |
@@ -410,6 +465,12 @@ PNG of each of its 11 checkpoints that matches Wine's screenshot of it
 - **Measure the title before designing for it.** The import table said 186 functions, exceptions and a shader
   compiler; one traced session said 81 functions, no exceptions and no shaders for the first level, and that
   text and render-to-texture are needed. The plan follows the trace, not the import table.
+- **An oracle has to see what the title sees.** Wine without a sound device ran a game that loaded no sounds, and
+  with an accelerated pointer a game that moved differently; each comparison was only as good as the oracle's setup.
+- **A title's own bugs look like ours.** Uninitialised memory that happened to be non-zero under Windows and Wine
+  crashed it here; the fix was to make the runtime's heap hand out the same kind of leftovers on every host.
+- **Headless numbers are the software rasteriser's.** The same build that ran at 12 frames a second on SwiftShader
+  ran at 100 to 350 on a laptop's GPU. Where the time goes on a real GPU was not profiled.
 - **Process lessons** (our own mistakes): `| head` on a build pipeline killed builds midway; editing runtime
   files while a background build was reading them broke a build; a research subagent once wrote a scratch file
   (`/tmp/x`) despite being read-only. Run long builds in the background, wait for them, then edit.
@@ -428,6 +489,10 @@ PNG of each of its 11 checkpoints that matches Wine's screenshot of it
 | Narbacular Drop, started | 274 calls from the entry point to `Direct3DCreate9`: the same 81 folded steps as under Wine |
 | Narbacular Drop, menu to level | 6,256 frames (104 s of its time) in 4.2 s in Node; 7.2 M Direct3D 9 calls, 70 methods; 27 kinds of frame identical to Wine's, covering 94 % of Wine's 11,857 frames |
 | Narbacular Drop, drawn | in headless Chrome on SwiftShader: 529,685 draws in 8,650 passes over 6,256 frames, 31 vertex and 8 fragment shaders, 33 pipelines; about 4 minutes (menu 18 to 25 frames a second, still screens 60 to 75, level 13); still screens within 1 level of Wine's (with D3DX's plain code), menu and level within what two runs of Wine differ by |
+| Narbacular Drop, text | every GDI measurement equal to Wine's; 73 kinds of frame identical, covering 11,851 of Wine's 11,857 frames |
+| Narbacular Drop, sound | the first 177 FMOD calls equal Wine's with their results; the first level's loudness within 0.4 dB of Wine's recording; the same samples on every run |
+| Narbacular Drop, image | 49 MB (game layer 40.6 MB, module 9.8 MB); the same digest from two clean builds; first build about 400 s, a registry-only rebuild 0.8 s |
+| Narbacular Drop, played by hand | Chrome on an M1 MacBook Pro: 294 to 355 frames a second in lighter views, 103 to 174 in the heaviest; no WebGPU error over 4.4 M draws |
 | Narbacular Drop, lifted | 3,955 functions, 349,540 instructions, 88 jump tables, 96.2 % of `.text`; 8,279 MMX / 3DNow instructions not lifted; 3 indirect jumps unresolved (C++ exception code) |
 | Doom (console title) | 871 functions, 37 jump tables, 0 unlifted; 7,156-frame timedemo matches native on all 7,123 frames native draws deterministically, in Node and read back from WebGPU in Chrome; ~35 fps in headless Chrome on SwiftShader |
 | Runtime imports implemented | 464 functions (before graphics) plus the D3D12 / D3D12.X objects, XAudio2 and GameInput readings across kernel32, ntdll, msvcrt, ucrtbase, kernelx, XMem, XGameRuntime, user32, DWM, GameInput, oleaut32, advapi32 |
@@ -448,7 +513,9 @@ PNG of each of its 11 checkpoints that matches Wine's screenshot of it
 | `fixtures/` | our own test titles (sources; built binaries are ignored) |
 | `tools/oracle-wine/` | the Wine oracle: prefix, run, session player, trace summaries, `shot-compare.py` (our screenshots against its) |
 | `tools/setup-toolchain.sh`, `tests/run.sh` | the toolchains outside the repository; every test title, one line per check |
-| `rt/win32/` | the Windows desktop layer: start-up kernel32, user32, registry, GDI, Direct3D 9 (`d3d9*.c`: the device and its state; `d3d9_ffp.c`: the fixed-function pipeline as WGSL; `d3d9_gpu.c`: clears, draws and presents as GPU ring records), DirectInput 8, the input state and session player, FMOD 3 (silent), `com.c` for COM objects |
+| `rt/win32/` | the Windows desktop layer: start-up kernel32, user32, registry (from the image's config), GDI with text (`font.c`, stb_truetype, Liberation Sans in `fonts/`), Direct3D 9 (`d3d9*.c`: the device and its state; `d3d9_ffp.c`: the fixed-function pipeline as WGSL; `d3d9_gpu.c`: clears, draws and presents as GPU ring records), DirectInput 8, the input state and session player, FMOD 3 (`fmod3.c`, `audio_decode.c` with stb_vorbis and minimp3), `com.c` for COM objects |
+| `rt/mixer.c` | the one sound output, shared by XAudio2 and FMOD |
+| `crates/sw`, `bases/`, `web/image.mjs` | title images: the `sw` tool (build, run, census, inspect), the bases recipes start from, the hosts' reader ([images.md](images.md)) |
 | `tools/gen-com-layout.py`, `tools/gen-d3d9-oracle.py` | generated headers: COM vtables from the mingw-w64 headers; the oracle's Direct3D 9 answers |
 | `web/session.mjs` | a session script as the text the runtime's player reads |
 | `tools/stdcall-sizes.sh`, `tools/recipe-gen.py` | 32-bit builds: what each import removes from the stack; what the recipe says, for the runtime |
