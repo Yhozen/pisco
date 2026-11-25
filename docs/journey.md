@@ -1,5 +1,7 @@
 # The journey so far (2026-11-25)
 
+(Since §3.22 the project is PISCO, with several runtimes; the sections before it are kept as they were written.)
+
 A log of how this project came about, what was built, what we measured, what got in the way, and what we
 learned. For the current state in one page see [status.md](status.md); for the first run on a real title see
 [first-run.md](first-run.md).
@@ -447,6 +449,50 @@ headless Chrome: the toy robot, the lettered blocks and the floor with image-bas
   screenshot (`media/image3.PNG`) shows, from the sample's default camera; that screenshot was taken from another
   position, so it is not used as a pixel reference. The title text is greyer than in Microsoft's screenshot.
 - Speed: about 2.2 frames per second at 1920x1080 on SwiftShader (CPU rendering), ~56 draws per second.
+
+### 3.22 The scope changes: PISCO, runtimes as peers (2026-11-25)
+The project began as "the Xbox Series build of Minecraft in a browser tab", and the sections above read that way.
+By now it runs three kinds of title: console titles (Doom, XCL's), 64-bit Windows programs (Stockfish, Microsoft's
+two samples) and a 32-bit Windows game (Narbacular Drop). It was renamed PISCO (PISCO Imitates Systems, Compiles
+Originals) and reorganised as what it had become ([plan.md](plan.md)): one recompiler, one package format, several
+compatibility runtimes that are peers, and hosts. Minecraft is now the Xbox Series runtime's goal, one among several;
+the next title is a Windows x86 one (Tag: The Power of Paint).
+- **A folder per runtime**: `rt/` keeps the core every title links; `rt/gdk/` what the Xbox Series and Windows x64
+  share; `rt/xbox-series/`, `rt/windows-x64/`, `rt/windows-x86/` (was `rt/win32/`) each runtime's own. `gdk.c`,
+  `d3d12.c` and `dxgi.c` were split by their sections; each build profile kept the same imports to the name.
+- **A base per runtime**, and the bases are the only list of the runtime's files (`pisco sources`;
+  `tests/run.sh layout`); `tools/build-title.sh` takes `BASE=` instead of `PROFILE=`. A Windows x64 title no longer
+  links the console's libraries (two calls the core makes into them have a stub, as on Windows x86). One title of
+  each base is built as an image twice with equal digests (hello32, hello64, Doom, Narbacular Drop).
+- **Commit 2f16767 (steps 1 and 2) made to conform**: it had added Win64-only code to files every title links. The C
+  maths, printf's argument reader, ucrt's `__stdio_common_*`, the SList and lock cells now follow the guest's width;
+  `fixtures/crt32`, a 32-bit program on `msvcrt.dll`, prints what it prints under Wine (and showed msvcrt's
+  three-digit exponents, `1e+004`). Direct3D 9's GPU buffers lost the 64 KiB tail meant for D3D12's. The samples'
+  tests became `tests/run.sh st` and `pbr`, which say why they skip when the samples or SDKs are not there.
+- **Per-title workarounds are recipe options**: Narbacular Drop's heap fill is `[quirks] heap_fill = 0xCD`.
+
+### 3.23 Tag: The Power of Paint, a title whose shaders are compiled while it runs (2026-11-25)
+
+Tag hands 16 HLSL effects to Microsoft's D3DX at start-up. D3DX comes from the installer's cab and is lifted
+beside the exe like any other code; its compiler, run as lifted x87 code, writes the same 46 bytecodes as under
+Wine, and a Direct3D 9 shader translator (`rt/windows-x86/d3d9_sm.c`) turns them into WGSL. What the comparison with
+Wine found along the way was rarely where we looked first:
+
+- 32-bit `GetSystemInfo` was written with the 64-bit layout, 12 bytes too long: it overwrote a saved EBP, and D3DX's
+  preprocessor failed far from the cause.
+- `HeapSize` answered malloc's rounded-up size; the CRT grows its `atexit` table when `HeapSize` says it is full,
+  so the start-up's calls differed from Wine's until it answered the size asked for.
+- Every translated shader carried `bitcast<f32>(0x7f800000u)` for `log 0`. naga accepts it; Chrome's Tint refuses a
+  constant expression that is not finite, so in Chrome no title shader compiled at all.
+- With the shaders running, every wall was flat grey. The guess was the lighting; the shader, run on the CPU from
+  its WGSL, was right. The cause was a texture: each wall's paint map is a render target the game fills from a
+  system-memory copy with `UpdateTexture`, and bytes written into a render target never reached the GPU.
+- FMOD Ex: Tag's `fmodex.dll` keeps a finished channel's handle valid and names a sound by its file name without
+  folders. Our first FMOD Ex, written from the documentation, did neither, and the game polled dead channels and
+  loaded sounds again.
+
+The plan's save check, "AutoSave.xml survives a reload", rested on a census line that was wrong: `AutoSave.xml` is a
+level shipped with the game and never written. What Tag writes is `TAG.ini`.
 
 ## 4. Roadblocks
 

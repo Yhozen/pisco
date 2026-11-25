@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-// d3d9-ffp <out dir> [keys.txt]: writes the fixed-function shaders (rt/win32/d3d9_ffp.c) of a representative set
+// d3d9-ffp <out dir> [keys.txt]: writes the fixed-function shaders (rt/windows-x86/d3d9_ffp.c) of a representative set
 // of state keys as <out dir>/vs-<n>.wgsl and fs-<n>.wgsl, with one line each on stdout ("vs-3.wgsl <key> <what>").
 // With a keys file (lines "vs <hex>" or "fs <hex>", as a run logs them under SW_D3D9_STATS=1) those keys are
 // written too. Keys the generator must refuse are checked here. tests/gfx/d3d9-ffp.sh validates the files with naga.

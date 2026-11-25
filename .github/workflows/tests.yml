@@ -1,0 +1,47 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# The tests that need no game files and no SDK (tests/run.sh's default steps: build, layout, node, bench, win32, ffp,
+# gdi) and `reuse lint`, on every pull request. The steps with a game, the oracle or Chrome run on a developer's
+# machine (docs/plan.md, rule 3); here they are not asked for.
+name: tests
+on:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency: { group: "tests-${{ github.ref }}", cancel-in-progress: true }
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 24 }
+      - name: toolchains (cached)
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/tools
+            ~/.cargo/bin/naga
+          key: toolchain-${{ hashFiles('tools/setup-toolchain.sh') }}
+      - name: setup
+        run: |
+          sudo apt-get install -y -q lld   # lld-link: the Rust fixtures' linker
+          tools/setup-toolchain.sh wasi mingw rust naga reuse
+      - name: cargo cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            target
+            fixtures/*/target
+          key: cargo-${{ hashFiles('**/Cargo.lock') }}-${{ github.sha }}
+          restore-keys: cargo-${{ hashFiles('**/Cargo.lock') }}-
+      - name: licences
+        run: ~/tools/reuse-venv/bin/reuse lint
+      - name: tests/run.sh (the default steps)
+        run: tests/run.sh
+      - name: logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with: { name: test-logs, path: "out/*.log", if-no-files-found: ignore }

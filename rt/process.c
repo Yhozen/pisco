@@ -63,6 +63,23 @@ u64 rt_guest_call(Cpu *c, u64 fn, u64 a0, u64 a1, u64 a2, u64 a3) {
 #endif
 }
 
+volatile u32 rt_last_pc;
+// --trace-pc: the last 256 blocks entered, and SW_BREAK=<hex address>: when that block is entered, the registers,
+// the top of the stack and the blocks before it are logged (the run goes on)
+static u32 pc_ring[256], pc_at; static s64 break_at = -2;
+void rt_pc(Cpu *c, u32 pc) {
+  rt_last_pc = pc; pc_ring[pc_at++ & 255] = pc;
+  if (break_at == -2) { const char *e = getenv("SW_BREAK"); break_at = e ? (s64)strtoull(e, 0, 16) : -1; }
+  if ((s64)pc != break_at) return;
+  rt_log("break at 0x%x: eax %08x ecx %08x edx %08x ebx %08x esp %08x ebp %08x esi %08x edi %08x", pc, (u32)R[0], (u32)R[1], (u32)R[2], (u32)R[3], (u32)R[4], (u32)R[5], (u32)R[6], (u32)R[7]);
+  char line[200]; int n = 0;
+  for (int i = 0; i < 8; i++) n += snprintf(line + n, sizeof line - n, " %08x", M32(R[4] + 4 * i));
+  rt_log("  stack:%s", line);
+  if (R[5] >= 0x1000) { n = 0; for (int i = 0; i < 8; i++) n += snprintf(line + n, sizeof line - n, " %08x", M32(R[5] + 4 * i)); rt_log("  [ebp]:%s", line); }
+  n = 0; for (int i = 32; i >= 1; i--) n += snprintf(line + n, sizeof line - n, " %x", pc_ring[(pc_at - 1 - i) & 255]);
+  rt_log("  blocks before:%s", line);
+}
+
 // ---- imports ----
 typedef struct { const char *name; ImportFn fn; } ImportDef;
 extern const ImportDef rt_import_table[]; extern const unsigned rt_import_table_count; // imports.gen.c
@@ -75,7 +92,22 @@ static unsigned import_total; // the image's imports, then GetProcAddress result
 typedef struct { const char *name; int bytes; } StdcallDef;
 extern const StdcallDef rt_stdcall_table[]; extern const unsigned rt_stdcall_table_count;
 static short import_pop[8192];
+// ALIAS(...) in the runtime's sources (imports.gen.c): an import by ordinal or by a name that is no C identifier
+typedef struct { const char *name, *target; int bytes; } AliasDef;
+extern const AliasDef rt_alias_table[]; extern const unsigned rt_alias_table_count;
+static const AliasDef *alias_of(const char *full) {
+  for (unsigned k = 0; k < rt_alias_table_count; k++) if (!strcmp(rt_alias_table[k].name, full)) return &rt_alias_table[k];
+  return 0;
+}
+// a DLL that forwards its functions to another one's: wsock32's are ws2_32's (by name and by ordinal)
+static const char *forwarded(const char *full, char *buf, size_t cap) {
+  if (!strncmp(full, "wsock32.dll!", 12)) { snprintf(buf, cap, "ws2_32.dll!%s", full + 12); return buf; }
+  return full;
+}
 static int stdcall_bytes(const char *full) {
+  char fw[200]; full = forwarded(full, fw, sizeof fw);
+  const AliasDef *al = alias_of(full);
+  if (al) { if (al->bytes >= 0) return al->bytes; full = al->target; }
   for (unsigned k = 0; k < rt_stdcall_table_count; k++) if (!strcmp(rt_stdcall_table[k].name, full)) return rt_stdcall_table[k].bytes;
   const char *at = strrchr(full, '@');
   if (at && at[1] >= '0' && at[1] <= '9') return atoi(at + 1);
@@ -88,12 +120,12 @@ static ImportFn find_exact(const char *full) {
 }
 // "dll!name". API sets resolve to the DLL behind them; ucrtbase falls back to msvcrt's functions, and
 // kernelbase / ntdll to kernel32's.
-// imports by ordinal (from the SDK's import libraries)
-static const struct { const char *ord, *name; } ordinals[] = {{"d3d12.dll!#101", "d3d12.dll!D3D12CreateDevice"}, {"d3d12.dll!#102", "d3d12.dll!D3D12GetDebugInterface"}};
 static ImportFn find_import(const char *full) {
+  char fw[200]; full = forwarded(full, fw, sizeof fw);
   ImportFn f = find_exact(full);
   if (f) return f;
-  for (unsigned i = 0; i < sizeof ordinals / sizeof *ordinals; i++) if (!strcmp(full, ordinals[i].ord)) return find_exact(ordinals[i].name);
+  const AliasDef *al = alias_of(full);   // by ordinal, or by a C++ name (ALIAS in the runtime's sources)
+  if (al) return find_exact(al->target);
   const char *bang = strchr(full, '!');
   if (!bang) return 0;
   char alt[200];
@@ -105,6 +137,8 @@ static ImportFn find_import(const char *full) {
     snprintf(alt, sizeof alt, "msvcrt.dll!%s", name); if ((f = find_exact(alt))) return f;
   }
   if (core) { snprintf(alt, sizeof alt, "kernel32.dll!%s", name); if ((f = find_exact(alt))) return f; }
+  // psapi.dll's functions are kernel32's, named K32...
+  if (!strncmp(full, "psapi.dll!", 10)) { snprintf(alt, sizeof alt, "kernel32.dll!K32%s", name); if ((f = find_exact(alt))) return f; }
   // the console's DLLs: kernelx is kernel32 with additions, xmem's functions are kernelx's
   if (!strncmp(full, "xmem.dll!", 9)) { snprintf(alt, sizeof alt, "kernelx.dll!%s", name); if ((f = find_exact(alt))) return f; }
   if (!strncmp(full, "kernelx.dll!", 12) || !strncmp(full, "xmem.dll!", 9) || strstr(full, "legacy.dll!")) {
@@ -158,9 +192,9 @@ u64 rt_stub_import(const char *full) {
   pthread_mutex_unlock(&mem_lock);
   return import_base + 8ull * i;
 }
-// The same for whoever builds a vtable and gives a missing method a named stub: nothing to report (rt/win32/com.c)
+// The same for whoever builds a vtable and gives a missing method a named stub: nothing to report (rt/windows-x86/com.c)
 u64 rt_method_import(const char *dll, const char *name) { dynamic_quiet = 1; u64 a = rt_dynamic_import(dll, name); dynamic_quiet = 0; return a; }
-// A COM method's argument bytes are known to whoever builds its vtable, not to an import library (rt/win32/com.c)
+// A COM method's argument bytes are known to whoever builds its vtable, not to an import library (rt/windows-x86/com.c)
 void rt_import_set_pop(u64 addr, int bytes) {
   if (addr >= import_base && addr < import_base + 8ull * import_total) import_pop[(addr - import_base) / 8] = (short)bytes;
 }
@@ -179,6 +213,23 @@ const char *rt_import_name(u64 a) {
   return import_name_of[(a - import_base) / 8];
 }
 
+// SW_TRACE_DLL=a,b: the imports from those DLLs (by file name without ".dll") are traced as Wine's +snoop does
+static int snooped(u32 i) {
+  static signed char *mark; static u32 marked; static int ready;
+  if (!ready) {
+    ready = 1; const char *e = getenv("SW_TRACE_DLL");
+    if (e && *e) {
+      marked = import_total; mark = calloc(marked ? marked : 1, 1);
+      for (u32 k = 0; k < import_total; k++) {
+        const char *n = import_name_of[k], *bang = strchr(n, '!'); if (!bang) continue;
+        size_t len = (size_t)(bang - n); if (len > 4 && !strncasecmp(bang - 4, ".dll", 4)) len -= 4;
+        for (const char *p = e; *p;) { const char *q = strchr(p, ','); size_t l = q ? (size_t)(q - p) : strlen(p);
+          if (l == len && !strncasecmp(p, n, l)) mark[k] = 1; p += l + (q != 0); }
+      }
+    }
+  }
+  return mark && i < marked && mark[i];
+}
 void rt_call(Cpu *c, u64 t) {
   if (t >= import_base && t < import_base + 8ull * import_total) {
     u32 i = (u32)((t - import_base) / 8);
@@ -199,6 +250,18 @@ void rt_call(Cpu *c, u64 t) {
       return;
     }
     if (rt_trace > 1) rt_log("[%u] %s ret=%08llx", THREAD(c)->id, import_name_of[i], (u64)MP(R[RSP])); // as Wine's relay trace names the caller
+#if GUEST_BITS == 32
+    if (snooped(i)) {   // SW_TRACE_DLL: the call as Wine's +snoop prints it once it returns (the stack's words, the result)
+      u32 n = (u32)import_pop[i] / 4, w[16], at = (u32)R[RSP], caller = M32(at);
+      for (u32 k = 0; k < n && k < 16; k++) w[k] = M32(at + 4 + 4 * k);
+      import_fn[i](c);
+      char line[400]; int len = snprintf(line, sizeof line, "RET  %s(", strchr(import_name_of[i], '!') ? strchr(import_name_of[i], '!') + 1 : import_name_of[i]);
+      for (u32 k = 0; k < n && k < 16 && len < 300; k++) len += snprintf(line + len, sizeof line - len, "%s%08x", k ? "," : "", w[k]);
+      rt_log("snoop: %s) retval=%08x ret=%08x", line, (u32)R[RAX], caller);
+      R[RSP] += pop;
+      return;
+    }
+#endif
     import_fn[i](c);
     R[RSP] += pop;
     return;
@@ -415,7 +478,8 @@ const ModuleDef *rt_module_named(const char *name) {
   slash = strrchr(name, '/'); if (slash) name = slash + 1;
   size_t n = strlen(name);
   for (unsigned k = 0; k < rt_module_count; k++) {
-    const char *m = rt_modules[k].name; size_t mn = strlen(m);
+    const char *m = rt_modules[k].name, *ms = strrchr(m, '/'); if (ms) m = ms + 1;   // a DLL from C:\WINDOWS\system32: "c:/WINDOWS/system32/x.dll"
+    size_t mn = strlen(m);
     if (!strcasecmp(m, name)) return &rt_modules[k];
     if (mn == n + 4 && !strncasecmp(m, name, n) && !strcasecmp(m + n, ".dll")) return &rt_modules[k];
   }
@@ -448,9 +512,21 @@ static void set_security_cookie(const ModuleDef *m) {
   if (cookie >= m->base && cookie < m->base + m->size) M32(cookie) = 0x5EC0C1E5u;
 }
 
+// The image's headers at its base, as Windows maps them (code reads them: MSVC 8's C runtime looks at its own exe's
+// sections before it starts floating point, _IsNonwritableInCurrentImage), with the base the image has here
+static void map_headers(const ModuleDef *m) {
+  u64 first = m->base + m->size;
+  for (unsigned i = 0; i < m->section_count; i++) if (m->sections[i].va < first) first = m->sections[i].va;
+  u64 n = first > m->base ? first - m->base : 0; if (n > 0x1000) n = 0x1000;
+  if (n < 0x200 || host_read_file(m->name, (u32)strlen(m->name), 0, (u32)n, m->base) != n) return;
+  u32 pe = M32(m->base + 0x3C);
+  if (pe > n - 0x80 || M32(m->base + pe) != 0x4550) return;
+  if (M16(m->base + pe + 24) == 0x10B) M32(m->base + pe + 24 + 28) = (u32)m->base; else M64(m->base + pe + 24 + 24) = m->base;   // ImageBase
+}
 static void load_modules(void) {
   for (unsigned k = 0; k < rt_module_count; k++) {
     const ModuleDef *m = &rt_modules[k];
+    map_headers(m);
     for (unsigned i = 0; i < m->section_count; i++) {
       u64 va = m->sections[i].va, n = m->sections[i].len;
       if (n && host_read_file(m->name, (u32)strlen(m->name), m->sections[i].off, n, va) != n) rt_fatal("cannot read section %u of %s", i, m->name);

@@ -40,7 +40,7 @@ if (isMainThread) {
   // the null GPU back end's account of the explicit records (Direct3D 9): a run in which any was inconsistent fails
   let gpu = null; const say = (s) => fs.writeSync(2, `pisco: ${s}\n`);
   EXIT.onmessage = (e) => { const s = gpu?.summary(); if (s) say(s); process.exit(e.data || (gpu?.errors ? 119 : 0)); };
-  // SW_SESSION=<session.json>: the runtime's session player gets its steps (rt/win32/input.c)
+  // SW_SESSION=<session.json>: the runtime's session player gets its steps (rt/windows-x86/input.c)
   const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => k.startsWith('SW_')));
   // the image's settings for the runtime (its registry values: SW_REGISTRY), with the environment's after them
   if (image) for (const [k, v] of Object.entries(image.settings.env)) env[k] = k === 'SW_REGISTRY' && env[k] ? `${v}\n${env[k]}` : v;
@@ -166,5 +166,10 @@ if (isMainThread) {
   try {
     if (tid === 0) { instance.exports._start(); exit(0); }
     else instance.exports.wasi_thread_start(tid, workerData.start);
-  } catch (e) { console.error(String(e.stack || e)); exit(123); }
+  } catch (e) {
+    fs.writeSync(2, String(e.stack || e) + "\n");   // (synchronously: a worker's console is flushed by the main thread, maybe too late)
+    const at = instance.exports.rt_last_pc; // lifted with --trace-pc: the guest block last entered
+    if (at) { const pc = new Uint32Array(memory.buffer, Number(at.value), 1)[0]; fs.writeSync(2, `pisco: the last guest block entered: 0x${pc.toString(16)}\n`); }
+    exit(123);
+  }
 }

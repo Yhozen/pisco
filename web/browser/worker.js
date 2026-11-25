@@ -86,7 +86,7 @@ function run(d) {
     audio_open: (ring) => bus.postMessage({ audio: ring >>> 0 }), // and plays this one
     audio_dump: () => {}, // SW_AUDIO_WAV is Node's: a recording in the browser reads the ring (main.js)
     input_open: (block) => bus.postMessage({ input: block >>> 0 }), // and writes the keyboard and gamepad here
-    win32_input_open: (ring) => bus.postMessage({ win32input: ring >>> 0 }), // a desktop title's keyboard and mouse events (rt/win32/input.c)
+    win32_input_open: (ring) => bus.postMessage({ win32input: ring >>> 0 }), // a desktop title's keyboard and mouse events (rt/windows-x86/input.c)
     exit: (code) => exit(code),
   };
   // a new guest thread: claim an idle pooled worker (the page cannot start one for us while we block)

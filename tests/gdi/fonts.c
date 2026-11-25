@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-// tests/gdi/fonts.c: rt/win32/font.c built natively, asked what tools/oracle-wine/gdiprobe.c asks Wine's GDI, and
+// tests/gdi/fonts.c: rt/windows-x86/font.c built natively, asked what tools/oracle-wine/gdiprobe.c asks Wine's GDI, and
 // printing its answers in the probe's format, so tools/oracle-wine/gdi-compare.py can set the two side by side.
-//   cc -O1 -DFONT_NO_EMBED -Irt/win32 tests/gdi/fonts.c rt/win32/font.c -lm -o out/gdi/fonts && out/gdi/fonts rt/win32/fonts
+//   cc -O1 -DFONT_NO_EMBED -Irt/windows-x86 tests/gdi/fonts.c rt/windows-x86/font.c -lm -o out/gdi/fonts && out/gdi/fonts rt/windows-x86/fonts
 #include "font.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -16,10 +16,10 @@ static uint8_t *slurp(const char *path) {
 }
 static uint32_t glyphs_of(const FontSize *f, const char *s, uint32_t *g) { uint32_t n = (uint32_t)strlen(s); for (uint32_t i = 0; i < n; i++) g[i] = font_glyph(f, font_cp1252((uint8_t)s[i])); return n; }
 int main(int argc, char **argv) {
-  const char *dir = argc > 1 ? argv[1] : "rt/win32/fonts"; char path[512];
+  const char *dir = argc > 1 ? argv[1] : "rt/windows-x86/fonts"; char path[512];
   snprintf(path, sizeof path, "%s/LiberationSans-Regular.ttf", dir); font_set_data(FONT_SANS, slurp(path));
   snprintf(path, sizeof path, "%s/LiberationSans-Italic.ttf", dir); font_set_data(FONT_SANS_ITALIC, slurp(path));
-  printf("# What rt/win32/font.c answers for Narbacular Drop's fonts. Made by tests/gdi/fonts.c.\n");
+  printf("# What rt/windows-x86/font.c answers for Narbacular Drop's fonts. Made by tests/gdi/fonts.c.\n");
   for (unsigned n = 0; n < sizeof fonts / sizeof fonts[0]; n++) {
     const Want *w = &fonts[n]; FontSize f; font_select(&f, w->height, w->italic, w->quality);
     printf("font %u height %d weight %d italic %d charset %d quality %d face \"%s\"\n", n, w->height, w->weight, w->italic, w->charset, w->quality, font_face_name(&f));

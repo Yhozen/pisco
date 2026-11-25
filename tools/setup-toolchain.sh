@@ -14,6 +14,8 @@
 #   reuse  the REUSE tool in ~/tools/reuse-venv             `reuse lint`: every file has a licence (LICENSING.md)
 #   innoextract  innoextract 1.9 in ~/tools/innoextract     `pisco build`: a recipe's `extract = "innosetup"` (its
 #                                                          static Linux build, checked by sha256)
+#   cabextract  cabextract 1.11 in ~/tools/cabextract       `pisco build`: a recipe's [[source.cab]] (built from its
+#                                                          source, checked by sha256; needs cc and make)
 # Environment: TOOLS (default ~/tools), DEPS (default ~/scratch/deps)
 set -euo pipefail
 root=$(cd "$(dirname "$0")/.." && pwd); T=${TOOLS:-$HOME/tools}; D=${DEPS:-$HOME/scratch/deps}; mkdir -p "$T" "$D"
@@ -30,12 +32,18 @@ untar() { # url, the folder under $T it unpacks to
   mv "$tmp/$2" "$T/$2"; rmdir "$tmp"
 }
 UPX=upx-5.3.0-amd64_linux
-for step in ${*:-wasi mingw rust naga dxil wine dxc upx reuse innoextract}; do case $step in
+for step in ${*:-wasi mingw rust naga dxil wine dxc upx reuse innoextract cabextract}; do case $step in
   innoextract)
     if [ -x "$T/innoextract/bin/amd64/innoextract" ]; then echo "have $T/innoextract"; else
       tmp=$(mktemp -d "$T/.fetch.XXXXXX"); curl -fsSL -o "$tmp/ie.tar.xz" https://github.com/dscharrer/innoextract/releases/download/1.9/innoextract-1.9-linux.tar.xz
       echo "008efe5011476ccc4aae17c3e22038b5a1bc5c7aad2b9d4d869537bf3874d21f  $tmp/ie.tar.xz" | sha256sum -c --quiet
       tar -xf "$tmp/ie.tar.xz" -C "$tmp"; mv "$tmp/innoextract-1.9-linux" "$T/innoextract"; rm -rf "$tmp"
+    fi ;;
+  cabextract)
+    if [ -x "$T/cabextract/bin/cabextract" ]; then echo "have $T/cabextract"; else
+      tmp=$(mktemp -d "$T/.fetch.XXXXXX"); curl -fsSL -o "$tmp/ce.tar.gz" https://www.cabextract.org.uk/cabextract-1.11.tar.gz
+      echo "b5546db1155e4c718ff3d4b278573604f30dd64c3c5bfd4657cd089b823a3ac6  $tmp/ce.tar.gz" | sha256sum -c --quiet
+      tar -xzf "$tmp/ce.tar.gz" -C "$tmp"; (cd "$tmp/cabextract-1.11" && ./configure -q --prefix="$T/cabextract" && make -s && make -s install); rm -rf "$tmp"
     fi ;;
   upx)   [ -x "$T/upx/upx" ] && echo "have $T/upx" || { untar "https://github.com/upx/upx/releases/download/v5.3.0/$UPX.tar.xz" "$UPX"; mv "$T/$UPX" "$T/upx"; } ;;
   reuse) [ -x "$T/reuse-venv/bin/reuse" ] && echo "have reuse" || { python3 -m venv "$T/reuse-venv"; "$T/reuse-venv/bin/pip" install -q reuse; } ;;

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-// The writer of the GPU ring (rt/d3d12_cmd.h): what the graphics front ends share. rt/d3d12.c (the console's
-// Direct3D 12) and rt/win32/d3d9_gpu.c (Direct3D 9 for Windows desktop titles) both append records here; one
+// The writer of the GPU ring (rt/d3d12_cmd.h): what the graphics front ends share. rt/gdk/d3d12.c (the console's
+// Direct3D 12) and rt/windows-x86/d3d9_gpu.c (Direct3D 9 for Windows desktop titles) both append records here; one
 // back end reads them (web/gpu/backend.js on the page, web/gpu/null.js in Node).
 #pragma once
 #include "rt.h"

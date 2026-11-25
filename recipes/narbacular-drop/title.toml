@@ -1,7 +1,7 @@
 # The recipe for Narbacular Drop (2005, DigiPen): `pisco build recipes/narbacular-drop --source <installer>` makes its
 # image (docs/images.md). tools/build-title.sh reads [cpu], [registry] and [dll] of it too (RECIPE=...).
 name = "narbacular-drop"
-from = "base/win32-x86:1"
+from = "base/windows-x86:1"
 libraries = ["d3d9", "dinput8", "fmod3"]   # checked against the title's imports
 
 [source]
@@ -22,6 +22,10 @@ features = ["fpu", "tsc", "cx8"]
 [dll]
 # the shipped fmod.dll is UPX-packed; the runtime's own FMOD answers instead
 "fmod.dll" = "builtin"
+
+[quirks]
+# its player attaches the camera only if a pointer is non-zero before it is set (rt/kernel32.c heap_fresh)
+heap_fill = 0xCD
 
 [registry]
 # D3DX's switches for its processor-specific code, all off: what the virtual CPU makes it do anyway, said

@@ -1,0 +1,13 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# fixtures/hello built for x86-64 (tests/run.sh build makes it), as an image FROM the Windows x64 base
+# (tests/images.sh builds it twice and runs it).
+name = "hello64"
+from = "base/windows-x64:1"
+
+[source]
+# built from source in this repository, so no sha256: whatever cargo made
+file = "../../fixtures/hello/target/x86_64-pc-windows-msvc/release/hello.exe"
+extract = "file"
+
+[run]
+exe = 'C:\Program Files\hello64\hello.exe'

@@ -67,6 +67,7 @@ int rt_file_read(int fd, void *p, u32 n) { ssize_t k = read(fd, p, n); return (i
 typedef struct { u64 g; int fd, eof, err, unget; VFile *vf; int append; } Stream;
 static Stream streams[256];
 static u64 iob;
+#define FILE_BYTES (PTR_SIZE == 4 ? 32ull : 48ull)   // sizeof(FILE): what &_iob[n] steps by
 static pthread_mutex_t stream_lock = PTHREAD_MUTEX_INITIALIZER;
 static Stream *stream(u64 g) { for (int i = 0; i < 256; i++) if (streams[i].g == g && g) return &streams[i]; return 0; }
 static u64 stream_new(int fd) {
@@ -216,7 +217,10 @@ static void run_atexit(Cpu *c) {
 }
 
 static u64 data_initenv, data_commode, data_fmode, lconv_g, locale_c;
+// the 32-bit C runtime's tables (rt/windows-x86/msvcrt32.c: _iob, __pioinfo); other bases have none
+__attribute__((weak)) u64 rt_msvcrt32_data(const char *name) { (void)name; return 0; }
 u64 rt_data_import(const char *name) {
+  { u64 d = rt_msvcrt32_data(name); if (d) return d; }
   if (!strcmp(name, "msvcrt.dll!__initenv")) return data_initenv;
   if (!strcmp(name, "msvcrt.dll!_commode")) return data_commode;
   if (!strcmp(name, "msvcrt.dll!_fmode")) return data_fmode;
@@ -225,8 +229,8 @@ u64 rt_data_import(const char *name) {
 void rt_crt_init(void) {
   data_initenv = (uptr)calloc(1, 16); MP(data_initenv) = (uptr)calloc(1, 16);
   data_commode = (uptr)calloc(1, 8); data_fmode = (uptr)calloc(1, 8);
-  iob = (uptr)calloc(3, 48);
-  for (int i = 0; i < 3; i++) streams[i] = (Stream){iob + 48ull * i, i, 0, 0, -1};
+  iob = (uptr)calloc(3, FILE_BYTES);
+  for (int i = 0; i < 3; i++) streams[i] = (Stream){iob + FILE_BYTES * (u64)i, i, 0, 0, -1};
   locale_c = (uptr)strdup("C");
   // struct lconv: ten char* fields, then the monetary chars
   lconv_g = (uptr)calloc(1, 128);
@@ -255,7 +259,7 @@ u64 rt_msvcrt_argv(int *out_argc) {
   return argv_g;
 }
 u64 rt_msvcrt_environ(void) { return MP(data_initenv); }
-u64 rt_msvcrt_iob(int i) { return iob + 48ull * (u64)i; }
+u64 rt_msvcrt_iob(int i) { return iob + FILE_BYTES * (u64)i; }
 IMP(msvcrt, __getmainargs) {
   int argc; u64 argv = rt_msvcrt_argv(&argc);
   M32(ARG(0)) = (u32)argc; MP(ARG(1)) = argv; MP(ARG(2)) = MP(data_initenv);
@@ -277,15 +281,43 @@ IMP(msvcrt, exit) { u32 code = (u32)ARG(0); run_atexit(c); rt_exit_process(code)
 IMP(msvcrt, _exit) { rt_exit_process((u32)ARG(0)); }
 IMP(msvcrt, _cexit) { run_atexit(c); }
 IMP(msvcrt, _amsg_exit) { rt_fatal("runtime error R60%02llu", ARG(0)); }
-IMP(msvcrt, abort) { rt_fatal("abort() called from 0x%llx", MP(R[RSP])); }
+IMP(msvcrt, abort) { rt_fatal("abort() called from 0x%llx", (u64)MP(R[RSP])); }
 IMP(msvcrt, _assert) { rt_fatal("assertion failed: %s (%s:%u)", GSTR(ARG(0)), GSTR(ARG(1)), (u32)ARG(2)); }
 IMP(msvcrt, signal) { RET(0); }
 IMP(msvcrt, _errno) { RET(THREAD(c)->teb + TEB_ERRNO); }
 IMP(msvcrt, __iob_func) { RET(iob); }
 IMP(msvcrt, _beginthreadex) { u32 tid = 0; u64 h = rt_create_thread(c, ARG(1), ARG(2), ARG(3), (ARG(4) & 4) != 0, &tid); if (ARG(5)) M32(ARG(5)) = tid; RET(h); }
 IMP(msvcrt, _endthreadex) { rt_thread_exit(c, (u32)ARG(0)); }
-IMP(msvcrt, _setjmp) { RET(0); } // longjmp is not supported yet: a setjmp that only ever returns once
-IMP(msvcrt, longjmp) { rt_fatal("longjmp is not implemented yet (from 0x%llx)", MP(R[RSP])); }
+#if GUEST_BITS == 32
+// setjmp / longjmp for 32-bit code. MSVC's jmp_buf: Ebp, Ebx, Edi, Esi, Esp, Eip, the SEH registration, TryLevel,
+// a cookie ("VC20"), UnwindFunc, UnwindData[6]; the last word of UnwindData keeps the entry stack pointer of the
+// lifted function the setjmp is in. The lifter makes the return address of each call to a setjmp a landing pad
+// of that function, so its frame has a landing (rt/cpu.h LANDING): longjmp restores the registers and resumes
+// there, as an exception resumes at a pad (rt/seh.c), with setjmp's result in EAX.
+static void save_jmp(Cpu *c, u64 b) {
+  M32(b) = (u32)R[RBP]; M32(b + 4) = (u32)R[RBX]; M32(b + 8) = (u32)R[RDI]; M32(b + 12) = (u32)R[RSI];
+  M32(b + 16) = (u32)R[RSP] + 4; M32(b + 20) = M32(R[RSP]);          // the caller's ESP after the call, and where it returns
+  M32(b + 24) = M32(THREAD(c)->teb + TEB_SEH); M32(b + 28) = 0; M32(b + 32) = 0x56433230u; M32(b + 36) = 0;
+  M32(b + 60) = c->landing ? (u32)c->landing->entry_rsp : 0;
+}
+IMP(msvcrt, _setjmp3) { save_jmp(c, ARG(0)); RET(0); }   // (jmp_buf, count, ...): the extra arguments are for SEH unwinding
+IMP(msvcrt, _setjmp) { save_jmp(c, ARG(0)); RET(0); }
+IMP(msvcrt, longjmp) {
+  u64 b = ARG(0); u32 v = (u32)ARG(1) ? (u32)ARG(1) : 1, want = M32(b + 60);
+  Landing *l = c->landing;
+  while (l && (u32)l->entry_rsp != want) l = l->prev;
+  if (!want || !l) rt_fatal("longjmp to 0x%x: the frame its setjmp was called in (entry ESP 0x%x) has no landing", M32(b + 20), want);
+  R[RBP] = M32(b); R[RBX] = M32(b + 4); R[RDI] = M32(b + 8); R[RSI] = M32(b + 12); R[RSP] = M32(b + 16); R[RAX] = v;
+  M32(THREAD(c)->teb + TEB_SEH) = M32(b + 24);   // handlers registered since the setjmp are gone with their frames
+  c->landing = l; l->resume = M32(b + 20);
+  if (rt_trace) rt_log("longjmp to 0x%x (%u)", M32(b + 20), v);
+  longjmp(*(jmp_buf *)l->jb, 1);
+}
+#else
+IMP(msvcrt, _setjmp3) { RET(0); } // 64-bit: longjmp is not supported yet, a setjmp that only ever returns once
+IMP(msvcrt, _setjmp) { RET(0); }
+IMP(msvcrt, longjmp) { rt_fatal("longjmp is not implemented yet (from 0x%llx)", (u64)MP(R[RSP])); }
+#endif
 
 // ---- memory ----
 IMP(msvcrt, malloc) { RET((uptr)calloc(1, ARG(0) ? ARG(0) : 1)); } // zeroed, as fresh pages from the system are: titles that read memory they never wrote see what they would natively
@@ -562,3 +594,27 @@ IMP(msvcrt, iswlower) { u32 ch = (u16)ARG(0); RET(ch < 128 && islower((int)ch));
 IMP(msvcrt, iswpunct) { u32 ch = (u16)ARG(0); RET(ch < 128 && ispunct((int)ch)); }
 IMP(msvcrt, iswxdigit) { u32 ch = (u16)ARG(0); RET(ch < 128 && isxdigit((int)ch)); }
 IMP(msvcrt, iswprint) { u32 ch = (u16)ARG(0); RET(ch >= 32 && ch != 127); }
+
+// ---- the floating-point control word, in the C runtime's own bit layout (float.h's _MCW_*), on the x87's ----
+static u32 cw_from_fcw(u16 f) {
+  u32 c = 0;
+  if (f & 0x01) c |= 0x10; if (f & 0x02) c |= 0x80000; if (f & 0x04) c |= 0x08; if (f & 0x08) c |= 0x04; if (f & 0x10) c |= 0x02; if (f & 0x20) c |= 0x01;
+  c |= (u32)((f >> 10) & 3) << 8;                                          // rounding: near, down, up, chop in both
+  u32 pc = (f >> 8) & 3; c |= pc == 0 ? 0x20000 : pc == 2 ? 0x10000 : 0;   // precision: _PC_24, _PC_53, _PC_64
+  return c;
+}
+static u16 fcw_from_cw(u32 c, u16 f) {
+  f &= (u16)~0x0F3F;
+  if (c & 0x10) f |= 0x01; if (c & 0x80000) f |= 0x02; if (c & 0x08) f |= 0x04; if (c & 0x04) f |= 0x08; if (c & 0x02) f |= 0x10; if (c & 0x01) f |= 0x20;
+  f |= (u16)(((c >> 8) & 3) << 10);
+  u32 pc = c & 0x30000; f |= (u16)((pc == 0x20000 ? 0 : pc == 0x10000 ? 2 : 3) << 8);
+  return f;
+}
+static u32 control87(Cpu *c, u32 value, u32 mask) {
+  u32 cw = (cw_from_fcw(c->fcw) & ~mask) | (value & mask);
+  c->fcw = fcw_from_cw(cw, c->fcw);
+  return cw_from_fcw(c->fcw);
+}
+IMP(msvcrt, _control87) { RET(control87(c, (u32)ARG(0), (u32)ARG(1))); }
+IMP(msvcrt, _controlfp) { RET(control87(c, (u32)ARG(0), (u32)ARG(1) & ~0x80000u)); } // not the denormal mask
+IMP(msvcrt, _controlfp_s) { u32 v = control87(c, (u32)ARG(1), (u32)ARG(2) & ~0x80000u); if (ARG(0)) M32(ARG(0)) = v; RET(0); }

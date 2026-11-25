@@ -130,9 +130,9 @@ IMP(ucrtbase, __stdio_common_vsnwprintf_s) { // (options, buffer, count, max, fo
 IMP(ucrtbase, _set_fmode) { init_globals(); M32(fmode) = (u32)ARG(0); RET(0); }
 IMP(ucrtbase, __setusermatherr) {}
 IMP(ucrtbase, _query_app_type) { RET(1); }
-IMP(ucrtbase, terminate) { rt_fatal("terminate() called from 0x%llx", MP(R[RSP])); }
-IMP(ucrtbase, _invalid_parameter_noinfo) { rt_fatal("CRT invalid parameter (from 0x%llx)", MP(R[RSP])); }
-IMP(ucrtbase, _invalid_parameter_noinfo_noreturn) { rt_fatal("CRT invalid parameter (from 0x%llx)", MP(R[RSP])); }
+IMP(ucrtbase, terminate) { rt_fatal("terminate() called from 0x%llx", (u64)MP(R[RSP])); }
+IMP(ucrtbase, _invalid_parameter_noinfo) { rt_fatal("CRT invalid parameter (from 0x%llx)", (u64)MP(R[RSP])); }
+IMP(ucrtbase, _invalid_parameter_noinfo_noreturn) { rt_fatal("CRT invalid parameter (from 0x%llx)", (u64)MP(R[RSP])); }
 
 // ---- strings, numbers, files Doom-era C code asks for ----
 #include <ctype.h>
@@ -148,8 +148,10 @@ IMP(ucrtbase, remove) { RET(vfs_remove(GSTR(ARG(0)), 0) ? -1 : 0); }
 IMP(ucrtbase, rename) { RET(vfs_rename(GSTR(ARG(0)), GSTR(ARG(1)), 0) ? -1 : 0); }
 // sscanf: each conversion of the format is done by the host's sscanf on the rest of the input, then stored
 // through the guest pointer from the argument list (pointer-sized slots)
-IMP(ucrtbase, __stdio_common_vsscanf) { // (options, buffer, count, format, locale, va_list)
-  const char *in = GSTR(OA(1)), *f = GSTR(OA(3)); u64 va = OA(5); int assigned = 0;
+int rt_vsscanf(Cpu *c, const char *in, const char *f, u64 va); // msvcrt's sscanf too (rt/windows-x86/msvcrt32.c)
+IMP(ucrtbase, __stdio_common_vsscanf) { RET((s64)rt_vsscanf(c, GSTR(OA(1)), GSTR(OA(3)), OA(5))); } // (options, buffer, count, format, locale, va_list)
+int rt_vsscanf(Cpu *c, const char *in, const char *f, u64 va) {
+  const char *start = in; int assigned = 0;
   while (*f) {
     if (isspace((u8)*f)) { while (isspace((u8)*in)) in++; f++; continue; }
     if (*f != '%' || f[1] == '%') { if (*f == '%') f++; if (*in != *f) break; in++; f++; continue; }
@@ -167,7 +169,7 @@ IMP(ucrtbase, __stdio_common_vsscanf) { // (options, buffer, count, format, loca
     host[k] = 0;
     char fmt2[96]; snprintf(fmt2, sizeof fmt2, "%s%%n", host);
     int used = -1;
-    if (conv == 'n') { if (!suppress) { u64 p = MP(va); va += PTR_SIZE; M32(p) = (u32)(in - GSTR(OA(1))); } f = end; continue; }
+    if (conv == 'n') { if (!suppress) { u64 p = MP(va); va += PTR_SIZE; M32(p) = (u32)(in - start); } f = end; continue; }
     if (suppress) { if (strchr("diouxX", conv)) { long long v; snprintf(fmt2, sizeof fmt2, "%%lld%%n"); sscanf(in, fmt2, &v, &used); } else if (strchr("feEgGaA", conv)) { double v; sscanf(in, "%lf%n", &v, &used); } else { char tmp[1024]; snprintf(fmt2, sizeof fmt2, "%s%%n", host); sscanf(in, fmt2, tmp, &used); } if (used < 0) break; in += used; f = end; continue; }
     u64 p = MP(va); va += PTR_SIZE;
     if (strchr("di", conv)) { long long v; char h2[96]; snprintf(h2, sizeof h2, "%.*sll%c%%n", (int)(strlen(host) - 1), host, conv); if (sscanf(in, h2, &v, &used) < 1 || used < 0) break; if (size == 3) M64(p) = (u64)v; else if (size == 1) M16(p) = (u16)v; else if (size == 2) M8(p) = (u8)v; else M32(p) = (u32)v; }
@@ -176,7 +178,7 @@ IMP(ucrtbase, __stdio_common_vsscanf) { // (options, buffer, count, format, loca
     else { if (sscanf(in, fmt2, GSTR(p), &used) < 1 || used < 0) break; }
     in += used; assigned++; f = end;
   }
-  RET(assigned);
+  (void)c; return assigned;
 }
 IMP(user32, MessageBoxW) { char *t = rt_narrow(GWSTR(ARG(1))), *cap = ARG(2) ? rt_narrow(GWSTR(ARG(2))) : 0; rt_log("message box: %s%s%s", cap ? cap : "", cap ? ": " : "", t); free(t); free(cap); RET(1); }
 IMP(user32, MessageBoxA) { rt_log("message box: %s", GSTR(ARG(1))); RET(1); }

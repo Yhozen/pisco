@@ -12,12 +12,15 @@ pub enum RegData { Dword(u32), Sz(String) }
 #[derive(Clone, Debug)]
 pub struct RegValue { pub key: String, pub name: String, pub data: RegData }
 
-pub struct Source { pub file: String, pub sha256: Option<String>, pub extract: String, pub app: Option<String>, pub map: BTreeMap<String, String> }
+pub struct Source { pub file: String, pub sha256: Option<String>, pub extract: String, pub app: Option<String>, pub map: BTreeMap<String, String>, pub cabs: Vec<Cab> }
+/// [[source.cab]]: files taken out of a cabinet among the installer's files (cabextract), put in a folder of C:
+pub struct Cab { pub cab: String, pub files: Vec<String>, pub to: String }
 pub struct Recipe {
     pub dir: PathBuf, pub name: String, pub from: String, pub libraries: Vec<String>, pub source: Source,
     pub exe: String, pub display: Option<String>, pub args: Vec<String>,
     pub cpu: Option<Vec<String>>, pub dll: BTreeMap<String, String>, pub registry: Vec<RegValue>,
     pub split: usize, pub entries: Vec<u64>, pub base_address: Option<u64>, pub opt: String,
+    pub heap_fill: Option<u8>, // [quirks] heap_fill: the byte a heap block the title did not ask to be zeroed holds
 }
 pub struct Library { pub description: String, pub sources: Vec<String> }
 pub struct Base {
@@ -88,7 +91,7 @@ pub fn load_recipe(dir: &Path) -> R<Recipe> {
     let path = if dir.is_dir() { dir.join("title.toml") } else { dir.to_path_buf() };
     let t = load(&path)?;
     let dir = path.parent().unwrap().to_path_buf();
-    let known = ["name", "from", "libraries", "source", "run", "cpu", "dll", "registry", "lifter", "build"];
+    let known = ["name", "from", "libraries", "source", "run", "cpu", "dll", "registry", "lifter", "build", "quirks"];
     if let Some(k) = t.keys().find(|k| !known.contains(&k.as_str())) { return Err(format!("{}: {k} is not a recipe key ({})", path.display(), known.join(", "))); }
     let src = table(&t, "source")?.ok_or(format!("{}: no [source]", path.display()))?;
     let run = table(&t, "run")?.ok_or(format!("{}: no [run]", path.display()))?;
@@ -96,6 +99,16 @@ pub fn load_recipe(dir: &Path) -> R<Recipe> {
     let build = table(&t, "build")?.cloned().unwrap_or_default();
     let mut map = BTreeMap::new();
     for (k, v) in table(src, "map")?.into_iter().flatten() { map.insert(k.clone(), v.as_str().ok_or("source.map: strings")?.to_string()); }
+    let mut cabs = Vec::new();
+    match src.get("cab") {
+        None => {}
+        Some(Value::Array(a)) => for c in a {
+            let c = c.as_table().ok_or("[[source.cab]]: tables")?;
+            cabs.push(Cab { cab: s(c, "cab").ok_or("[[source.cab]] cab = 'C:\\...\\x.cab'")?, files: strs(c, "files")?.filter(|f| !f.is_empty()).ok_or("[[source.cab]] files = [\"name.dll\"]")?,
+                to: s(c, "to").ok_or("[[source.cab]] to = 'C:\\WINDOWS\\system32'")? });
+        },
+        Some(_) => return Err("[[source.cab]]: an array of tables".into()),
+    }
     let mut dll = BTreeMap::new();
     for (k, v) in table(&t, "dll")?.into_iter().flatten() {
         let how = v.as_str().ok_or("[dll]: \"name.dll\" = \"builtin\"")?;
@@ -104,9 +117,9 @@ pub fn load_recipe(dir: &Path) -> R<Recipe> {
     }
     Ok(Recipe {
         name: s(&t, "name").ok_or("recipe: no name")?,
-        from: s(&t, "from").ok_or("recipe: no from (a base, e.g. \"base/win32-x86:1\")")?,
+        from: s(&t, "from").ok_or("recipe: no from (a base, e.g. \"base/windows-x86:1\")")?,
         libraries: strs(&t, "libraries")?.unwrap_or_default(),
-        source: Source { file: s(src, "file").ok_or("[source] file")?, sha256: s(src, "sha256").map(|x| x.to_ascii_lowercase()), extract: s(src, "extract").unwrap_or("file".into()), app: s(src, "app"), map },
+        source: Source { file: s(src, "file").ok_or("[source] file")?, sha256: s(src, "sha256").map(|x| x.to_ascii_lowercase()), extract: s(src, "extract").unwrap_or("file".into()), app: s(src, "app"), map, cabs },
         exe: s(run, "exe").ok_or("[run] exe")?,
         display: s(run, "display"),
         args: strs(run, "args")?.unwrap_or_default(),
@@ -117,11 +130,15 @@ pub fn load_recipe(dir: &Path) -> R<Recipe> {
         entries: match lifter.get("entries") { Some(Value::Array(a)) => a.iter().map(|v| int(v, "lifter.entries")).collect::<R<_>>()?, _ => vec![] },
         base_address: lifter.get("base").map(|v| int(v, "lifter.base")).transpose()?,
         opt: s(&build, "opt").unwrap_or("-O2".into()),
+        heap_fill: match table(&t, "quirks")?.and_then(|q| q.get("heap_fill")) {
+            None => None,
+            Some(v) => Some(v.as_integer().filter(|n| (0..=255).contains(n)).ok_or("quirks.heap_fill: a byte, 0 to 255")? as u8),
+        },
         dir,
     })
 }
 
-/// "base/win32-x86:1" -> <root>/bases/win32-x86/1/base.toml
+/// "base/windows-x86:1" -> <root>/bases/windows-x86/1/base.toml
 pub fn load_base(root: &Path, from: &str) -> R<Base> {
     let (name, version) = from.split_once(':').ok_or(format!("from = \"{from}\": <base>:<version>"))?;
     let short = name.strip_prefix("base/").ok_or(format!("from = \"{from}\": bases are named base/<name>"))?;
@@ -155,7 +172,7 @@ pub fn load_base(root: &Path, from: &str) -> R<Base> {
     Ok(b)
 }
 
-/// "rt/win32/d3d9*.c" -> the files it names, sorted (a `*` matches within one file name)
+/// "rt/windows-x86/d3d9*.c" -> the files it names, sorted (a `*` matches within one file name)
 pub fn glob(root: &Path, pattern: &str) -> R<Vec<String>> {
     let (dir, pat) = pattern.rsplit_once('/').unwrap_or((".", pattern));
     let mut out = Vec::new();
@@ -189,6 +206,17 @@ pub fn implemented(root: &Path, files: &[String]) -> R<Vec<String>> {
                 let ok = |s: &str, upper: bool| !s.is_empty() && s.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_' || (upper && b.is_ascii_uppercase()));
                 if ok(dll, false) && ok(name, true) { out.push(format!("{dll}.dll!{name}")); }
             }
+        }
+        // ALIAS(dll, "imported name", fn, bytes): an import by ordinal or by a C++ name, answered by IMP(dll, fn)
+        let mut rest = text.as_str();
+        while let Some(i) = rest.find("ALIAS(") {
+            rest = &rest[i + 6..];
+            let (Some(q1), Some(comma)) = (rest.find('"'), rest.find(',')) else { continue };
+            if comma > q1 { continue; }
+            let dll = rest[..comma].trim();
+            let Some(q2) = rest[q1 + 1..].find('"') else { continue };
+            let name = &rest[q1 + 1..q1 + 1 + q2];
+            if !dll.is_empty() && dll.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_') && !name.is_empty() { out.push(format!("{dll}.dll!{name}")); }
         }
     }
     out.sort(); out.dedup();

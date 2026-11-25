@@ -181,7 +181,7 @@ Where Direct3D's behaviour had to be known and the trace does not show it, the o
 `tools/oracle-wine/d3d9probe.c` prints the adapter's identity and modes, `CheckDeviceFormat` for 51 formats in
 44 uses, a new device's every state, and three dozen corner cases (who holds which reference, locking twice,
 lights that were never set, what a recording does to the device). Its output and `d3d9caps.txt` become
-`rt/win32/d3d9_oracle.gen.h`. One answer mattered at once: `D32` is not a depth format there, so the game
+`rt/windows-x86/d3d9_oracle.gen.h`. One answer mattered at once: `D32` is not a depth format there, so the game
 takes `D24X8`.
 
 ## Pixels: Direct3D 9 on WebGPU (M4, the first part)
@@ -196,12 +196,12 @@ clock, in strict mode, and the frame presented at each checkpoint is saved. Ever
 is drawn: 529,685 draws in 8,650 passes over 6,256 frames, none left out, no WebGPU error.
 
 **How.** At each draw the device's state becomes a vertex key and a fragment key, and the runtime writes the two
-fixed-function shaders for them as WGSL (`rt/win32/d3d9_ffp.c`); with the vertex layout and the raster, depth and
+fixed-function shaders for them as WGSL (`rt/windows-x86/d3d9_ffp.c`); with the vertex layout and the raster, depth and
 blend state they make a pipeline; matrices, lights, material and fog go into one uniform block. All of it travels
 as explicit records on the GPU ring (`rt/d3d12_cmd.h`: shader, sampler, pipeline, buffer and texture writes, pass,
 viewport, draw), beside the D3D12 records and through the same back end. Where Direct3D 9's conventions are not
 WebGPU's (the byte order of colours, pixel centres, the winding that is culled, depth bias units, fans, points,
-the alpha test) is written at the top of `rt/win32/d3d9_gpu.c`.
+the alpha test) is written at the top of `rt/windows-x86/d3d9_gpu.c`.
 
 **What the session needed**: 31 vertex shaders, 8 fragment shaders, 33 pipelines, 4 samplers.
 
@@ -299,11 +299,11 @@ places glyphs without the font's kerning pairs, while D3DX's GDI path asks `GetC
 `GetFontLanguageInfo` answers 0, and D3DX places its glyphs as under Wine (`GetCharacterPlacement` itself still
 kerns as Wine's does when asked).
 
-**How** (`rt/win32/font.c`, used by `gdi32.c`): every face name becomes Liberation Sans 2.1.5 (regular or
-italic, SIL Open Font License, `rt/win32/fonts/`), the face and version Wine gives the game on the oracle's
+**How** (`rt/windows-x86/font.c`, used by `gdi32.c`): every face name becomes Liberation Sans 2.1.5 (regular or
+italic, SIL Open Font License, `rt/windows-x86/fonts/`), the face and version Wine gives the game on the oracle's
 machine; no game file is read. The two font files are built into the module with C23's `#embed` (0.8 MB more for
 a Windows desktop title): no file for a host to provide, and the build stays a function of the repository. Their
-outlines are read and rasterised with stb_truetype (`rt/win32/third_party/`). What Wine does was measured with
+outlines are read and rasterised with stb_truetype (`rt/windows-x86/third_party/`). What Wine does was measured with
 `tools/oracle-wine/gdiprobe.c` (each of the four fonts: the face chosen, `TEXTMETRICW`, kerning, Unicode ranges,
 glyph indices, ABC widths, advances, `GetCharacterPlacementA` of the session's two texts with and without
 `GCP_USEKERNING`, and the pixels of every glyph drawn as D3DX and the game draw them) and is done the same way:
@@ -396,10 +396,10 @@ blocks with 0x55; with sounds loaded, the zeroed blocks it handed out otherwise 
 level, the bug M4 found, now under Wine) and no pointer acceleration in the player (X scaled each motion event
 above 4 pixels, so Wine's game saw other mouse deltas than the session's).
 
-**FMOD 3** (`rt/win32/fmod3.c`) answers the 33 imports on the runtime's sound output, which is XAudio2's mixer
-factored out of `rt/xaudio2.c` into `rt/mixer.c` (the same ring and AudioWorklet; Doom uses it unchanged). Sounds are
+**FMOD 3** (`rt/windows-x86/fmod3.c`) answers the 33 imports on the runtime's sound output, which is XAudio2's mixer
+factored out of `rt/gdk/xaudio2.c` into `rt/mixer.c` (the same ring and AudioWorklet; Doom uses it unchanged). Sounds are
 read through the game's own file functions (called with `rt_guest_call` when a sound is loaded or opened, the whole
-file at once) and decoded by `rt/win32/audio_decode.c`: WAV (every one in `File.ore` is PCM, so ADPCM is not there),
+file at once) and decoded by `rt/windows-x86/audio_decode.c`: WAV (every one in `File.ore` is PCM, so ADPCM is not there),
 Ogg Vorbis (stb_vorbis) and MP3 (minimp3), both vendored unchanged. Short looping streams are decoded once and shared
 (20 torches play the same Ogg file); the music is decoded as it plays. Under the virtual clock the title's own thread
 mixes, exactly up to the clock each time it moves, so the sound of a run is a function of the run: two runs of the
@@ -432,7 +432,7 @@ correlate at 0.84, and the first level, where the music at volume 128 is most of
 -21.8 dB under Wine.
 
 **Input from the page.** In the browser a Windows desktop title's keyboard and mouse go into a ring of events the
-runtime drains whenever DirectInput reads (`rt/win32/input.c`, `web/browser/main.js`): keys as DirectInput scan
+runtime drains whenever DirectInput reads (`rt/windows-x86/input.c`, `web/browser/main.js`): keys as DirectInput scan
 codes (the full table), the mouse as relative motion under Pointer Lock (a click on the canvas takes the pointer;
 Escape gives it back, as browsers do, and reaches the title as its Escape key), buttons and the wheel. The session
 player feeds the same state; the console's GameInput path (Doom) is untouched.

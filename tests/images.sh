@@ -3,10 +3,11 @@
 # tests/images.sh: title images (milestone M6, docs/images.md), built by `pisco build` and run by `pisco run`.
 #   1. hello32 (recipes/hello32) built twice, each time with an empty cache: the same manifest digest; its image run in
 #      Node passes its 7 checks
+#   1b. hello64 (Windows x64) and Doom (Xbox Series, from out/doom/game) the same way: one title of every base
 #   2. Narbacular Drop from the user's installer (ND_SETUP; skipped when it is not found), the same: two builds with
 #      empty caches give the same manifest digest. With the Wine-installed game there (ND) the extracted files are
 #      compared with it (the differences are printed)
-#   3. hello32's base layer is the same blob as Narbacular Drop's (both are FROM base/win32-x86:1)
+#   3. hello32's base layer is the same blob as Narbacular Drop's (both are FROM base/windows-x86:1)
 #   4. a recipe that differs only in its registry, built with the first build's cache: nothing lifted, compiled or
 #      linked again (the build's log says so; its time is printed), the same module blob, another config
 #   5. `pisco run` of the first image with the menu-to-level session in Node: the checkpoints of tests/run.sh nd
@@ -46,6 +47,23 @@ b=$(build hello32-b recipes/hello32 $T/hello32-b $T/cache-b) || exit 1
 pass=$(SW_STRICT=1 $SW run $T/hello32-a 2>&1 | grep -c '^\[PASS\]')
 [ "$pass" = 7 ] || { echo "hello32: its image passed $pass of 7"; exit 1; }
 echo "hello32: two builds with empty caches give manifest $a; the image passes 7 of 7 in Node"
+
+# 1b. one title of each other base: hello64 (Windows x64) and Doom (Xbox Series, when tests/gfx/doom.sh has built it)
+a=$(build hello64-a recipes/hello64 $T/hello64-a $T/cache-a) || exit 1
+b=$(build hello64-b recipes/hello64 $T/hello64-b $T/cache-b) || exit 1
+[ "$a" = "$b" ] || { echo "hello64: two builds with empty caches differ ($a, $b)"; exit 1; }
+pass=$(SW_STRICT=1 $SW run $T/hello64-a 2>&1 | grep -c '^\[PASS\]')
+[ "$pass" = 7 ] || { echo "hello64: its image passed $pass of 7"; exit 1; }
+echo "hello64 (base/windows-x64:1): two builds with empty caches give manifest $a; the image passes 7 of 7 in Node"
+if [ -f out/doom/game/doom.exe ]; then
+  a=$(build doom-a recipes/doom $T/doom-a $T/cache-a) || exit 1
+  b=$(build doom-b recipes/doom $T/doom-b $T/cache-b) || exit 1
+  [ "$a" = "$b" ] || { echo "doom: two builds with empty caches differ ($a, $b)"; exit 1; }
+  SW_STRICT=1 SW_PACE=off timeout 900 $SW run $T/doom-a -- -hashframes -timedemo demo1 > $T/doom.run.log 2>&1
+  frames=$(grep -c '^frame' $T/doom.run.log); want=$(grep -c '^frame' out/doom/ref/native-t1.txt 2>/dev/null || echo 7156)
+  [ "$frames" = "$want" ] || { echo "doom: its image drew $frames frames of the timedemo, natively $want"; exit 1; }
+  echo "doom (base/xbox-series:1): two builds with empty caches give manifest $a; the image plays the timedemo's $frames frames"
+else echo "doom: out/doom/game is not built (tests/run.sh doom): its image is not built"; fi
 
 if [ -z "${ND_SETUP:-}" ] || [ ! -f "$ND_SETUP" ]; then echo "Narbacular Drop: no installer found (ND_SETUP): its image is not built"; exit 0; fi
 # 2. Narbacular Drop, twice from nothing

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-2.0-or-later
-# gen-d3d12-layout.py <d3d12.h> > rt/d3d12_layout.gen.h
+# gen-d3d12-layout.py <d3d12.h> > rt/gdk/d3d12_layout.gen.h
 # The PC vtable order of each D3D12 interface family, read from d3d12.h of microsoft/DirectX-Headers (MIT):
 # include/directx/d3d12.h. Each family gets its most derived interface's methods and the IIDs of every
 # version, so QueryInterface can answer for all of them.
