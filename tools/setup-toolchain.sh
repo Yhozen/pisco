@@ -12,6 +12,8 @@
 #                                                          so the Windows build runs under Wine)
 #   upx    UPX in ~/tools/upx                              tools/oracle-wine: unpacking a packed DLL before +snoop
 #   reuse  the REUSE tool in ~/tools/reuse-venv             `reuse lint`: every file has a licence (LICENSING.md)
+#   innoextract  innoextract 1.9 in ~/tools/innoextract     `sw build`: a recipe's `extract = "innosetup"` (its
+#                                                          static Linux build, checked by sha256)
 # Environment: TOOLS (default ~/tools), DEPS (default ~/scratch/deps)
 set -euo pipefail
 root=$(cd "$(dirname "$0")/.." && pwd); T=${TOOLS:-$HOME/tools}; D=${DEPS:-$HOME/scratch/deps}; mkdir -p "$T" "$D"
@@ -28,7 +30,13 @@ untar() { # url, the folder under $T it unpacks to
   mv "$tmp/$2" "$T/$2"; rmdir "$tmp"
 }
 UPX=upx-5.3.0-amd64_linux
-for step in ${*:-wasi mingw rust naga dxil wine dxc upx reuse}; do case $step in
+for step in ${*:-wasi mingw rust naga dxil wine dxc upx reuse innoextract}; do case $step in
+  innoextract)
+    if [ -x "$T/innoextract/bin/amd64/innoextract" ]; then echo "have $T/innoextract"; else
+      tmp=$(mktemp -d "$T/.fetch.XXXXXX"); curl -fsSL -o "$tmp/ie.tar.xz" https://github.com/dscharrer/innoextract/releases/download/1.9/innoextract-1.9-linux.tar.xz
+      echo "008efe5011476ccc4aae17c3e22038b5a1bc5c7aad2b9d4d869537bf3874d21f  $tmp/ie.tar.xz" | sha256sum -c --quiet
+      tar -xf "$tmp/ie.tar.xz" -C "$tmp"; mv "$tmp/innoextract-1.9-linux" "$T/innoextract"; rm -rf "$tmp"
+    fi ;;
   upx)   [ -x "$T/upx/upx" ] && echo "have $T/upx" || { untar "https://github.com/upx/upx/releases/download/v5.3.0/$UPX.tar.xz" "$UPX"; mv "$T/$UPX" "$T/upx"; } ;;
   reuse) [ -x "$T/reuse-venv/bin/reuse" ] && echo "have reuse" || { python3 -m venv "$T/reuse-venv"; "$T/reuse-venv/bin/pip" install -q reuse; } ;;
   wasi)  untar "https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-34/$WASI.tar.gz" "$WASI" ;;

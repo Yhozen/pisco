@@ -2,6 +2,8 @@
 // The title's file system. Console paths map to mounts:
 //   G:\ GAME:\ D:\ C:\title\ and relative paths -> "game": the title's folder, read-only, read through the host;
 //   S:\ -> "pls" (persistent local storage), T:\ -> "temp", any other drive -> "<letter>".
+// The rest of C:\ is read through the host too when the title runs from an image: its file layers make the drive
+// (web/image.mjs; C:\WINDOWS comes from the base). The title's folder is reached as C:\title.
 // Writes go to an in-memory overlay (a copy of the file is made on first write); deletes leave a whiteout;
 // listings merge the overlay with the folder. Nothing in the title's folder is ever changed.
 // What persists (the host keeps it between runs, below): S:\ for every title; for a Windows desktop title
@@ -94,14 +96,22 @@ static const char *static_mount(const char *d) {
   names[k][0] = (char)('a' + k); names[k][1] = 0;
   return names[k];
 }
-static const char *game_rel(const char *p) { return !strncmp(p, "game/", 5) ? p + 5 : !strcmp(p, "game") ? "" : 0; }
+// what the host is asked for: a path in the title's folder ("game/a/b" -> "a/b"), or on the C: drive of a title image
+// ("c/windows/win.ini" -> "c:/windows/win.ini": the image's file layers, web/image.mjs; a host with no image has no
+// such files). Other mounts are the overlay's alone. `buf` holds the name when it has to be made.
+static const char *game_rel(const char *p, char *buf, size_t cap) {
+  if (!strncmp(p, "game/", 5)) return p + 5;
+  if (!strcmp(p, "game")) return "";
+  if (p[0] == 'c' && (!p[1] || p[1] == '/')) { snprintf(buf, cap, "c:%s", p + 1); return buf; }
+  return 0;
+}
 
 // what is at p: 0 nothing, 1 file, 2 directory; *size for files
 static int kind(const char *p, u64 *size) {
   Node *n = node(p);
   if (n) { if (n->gone) return 0; if (size) *size = n->size; return n->dir ? 2 : 1; }
   if (!strchr(p, '/')) return 2; // a mount root
-  const char *g = game_rel(p);
+  char gb[1100]; const char *g = game_rel(p, gb, sizeof gb);
   if (g) { s64 s = host_stat(g, (u32)strlen(g)); if (s == -2) return 2; if (s >= 0) { if (size) *size = (u64)s; return 1; } }
   return 0;
 }
@@ -117,7 +127,7 @@ static Node *writable(const char *p) {
   u64 size = 0; int k = n && n->gone ? 0 : kind(p, &size);
   n = node_new(p); n->gone = 0; n->dir = 0; n->mtime = now_ft();
   if (k == 1) {
-    const char *g = game_rel(p);
+    char gb[1100]; const char *g = game_rel(p, gb, sizeof gb);
     n->data = malloc(size + 1); n->cap = size + 1; n->size = size;
     if (size) host_read_file(g, (u32)strlen(g), 0, size, (u64)(uptr)n->data);
   }
@@ -159,7 +169,7 @@ s64 vfs_read(VFile *f, void *dst, u64 n) {
   pthread_mutex_lock(&vfs_lock);
   Node *nd = node(f->path); s64 got = 0;
   if (nd && !nd->gone) { if (f->pos < nd->size) { got = (s64)((nd->size - f->pos) < n ? nd->size - f->pos : n); memcpy(dst, nd->data + f->pos, (size_t)got); } }
-  else { const char *g = game_rel(f->path); if (g) got = host_read_file(g, (u32)strlen(g), f->pos, n, (u64)(uptr)dst); }
+  else { char gb[1100]; const char *g = game_rel(f->path, gb, sizeof gb); if (g) got = host_read_file(g, (u32)strlen(g), f->pos, n, (u64)(uptr)dst); }
   pthread_mutex_unlock(&vfs_lock);
   if ((u64)got < n && rt_trace) rt_log("vfs: read of %llu at %llu from %s gave %lld (%s)", n, f->pos, f->path, got, nd ? "overlay" : "host");
   f->pos += (u64)got;
@@ -243,7 +253,7 @@ void vfs_list(const char *guest, void (*cb)(void *, const char *, int, u64), voi
     seen = realloc(seen, sizeof(char *) * (size_t)(nseen + 1)); seen[nseen++] = n->path + pl + 1;
     if (!n->gone) cb(ctx, n->path + pl + 1, n->dir, n->size);
   }
-  const char *g = game_rel(p);
+  char gb[1100]; const char *g = game_rel(p, gb, sizeof gb);
   if (g) {
     u32 need = host_list(g, (u32)strlen(g), 0, 0);
     if (need) {

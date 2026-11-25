@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // Starts a lifted title in this page: ?wasm=<title.wasm>&exe=<the title's .exe>&args=<space-separated>
+// or a title image (web/image.mjs, docs/images.md): ?image=<the image's URL, served by tools/serve.mjs>&args=<more>
 // The title's threads (its main thread too) run in workers; this page owns what a console would: the GPU
 // (web/gpu/backend.js, on this thread), the speakers (an AudioWorklet playing the title's mixer ring), and the
 // keyboard and gamepad (written into the title's input block), or for a Windows desktop title the keyboard and the
@@ -12,15 +13,16 @@
 //          makes it from SW_SESSION=<session.json>). At each `shot` of a session the frame presented last is
 //          sent to the server (POST /capture/shot), which saves it as a PNG.
 import { startBackend } from '../gpu/backend.js';
+import { fetchImage } from '../image.mjs';
 const q = new URLSearchParams(location.search);
 const status = document.getElementById('status'), out = document.getElementById('out'), canvas = document.getElementById('screen');
 const bus = new BroadcastChannel('series-web');
 const workers = [];
 let line = '';
 const POOL = 32; // guest threads come from workers the page starts ahead of time (see worker.js)
-let ctl, boot, memory, device, dir;
+let ctl, boot, memory, device, dir, drive = null, folder = null;
 const log = (s) => { console.log(s); out.textContent += s + '\n'; };
-const startPooled = (slot) => { const w = new Worker('worker.js'); workers.push(w); w.postMessage({ ...boot, pool: { ctl, slot } }); };
+const startPooled = (slot) => { const w = new Worker('worker.js', { type: 'module' }); workers.push(w); w.postMessage({ ...boot, pool: { ctl, slot } }); };
 const capture = q.get('capture') === '1', hashFrames = q.get('hash') === '1', clockStep = +(q.get('SW_CLOCK') || 0);
 const post = (path, body, headers = {}) => fetch(path, { method: 'POST', body, headers }).catch(() => {});
 
@@ -195,21 +197,24 @@ else {
       console.log(`gpu: ${adapter.info?.vendor || ''} ${adapter.info?.architecture || ''} ${adapter.info?.description || ''} features: ${want.join(' ') || 'none'}`);
     } else log('gpu: WebGPU is not available in this browser');
   } catch (err) { log(`gpu: ${err.message}`); }
-  const wasm = await (await fetch(q.get('wasm'))).arrayBuffer();
-  const module = await WebAssembly.compile(wasm);
-  dir = new URL(q.get('exe'), location.href).href.replace(/[^/]*$/, ''); // the title's folder
+  // a title image: its module, its drive (the file layers, served below <image>/c/) and its settings (exe, registry)
+  const image = q.get('image') ? await fetchImage(new URL(q.get('image'), location.href).href).catch((e) => { log(`image: ${e.message}`); return null; }) : null;
+  if (q.get('image') && !image) { console.log('series-web exit 125'); throw new Error('no image'); }
+  const module = await WebAssembly.compile(image ? image.wasm : await (await fetch(q.get('wasm'))).arrayBuffer());
+  if (image) { drive = image.drive; folder = image.settings.folder; dir = drive + folder.split('/').map(encodeURIComponent).join('/') + '/'; console.log(`image: ${image.settings.title} (manifest ${image.digest})`); }
+  else dir = new URL(q.get('exe'), location.href).href.replace(/[^/]*$/, ''); // the title's folder
   memory = new WebAssembly.Memory({ initial: 1024, maximum: 65536, shared: true });
   const tids = new Int32Array(new SharedArrayBuffer(4)); tids[0] = 1;
-  const args = (q.get('args') || '').split(' ').filter(Boolean);
+  const args = [...(image ? image.settings.args : []), ...(q.get('args') || '').split(' ').filter(Boolean)];
   status.textContent = 'running';
   ctl = new Int32Array(new SharedArrayBuffer(16 * POOL));
-  const env = {}; for (const [k, v] of q) if (k.startsWith('SW_')) env[k] = v;
+  const env = { ...(image ? image.settings.env : {}) }; for (const [k, v] of q) if (k.startsWith('SW_')) env[k] = k === 'SW_REGISTRY' && env[k] ? `${env[k]}\n${v}` : v;
   if (q.get('trace')) env.SW_TRACE = q.get('trace');
   if (q.get('pace') === 'off') env.SW_PACE = 'off';
   let store = [];
-  try { store = await openStore(new URL(q.get('exe'), location.href).pathname); if (store.length) console.log(`storage: ${store.length} file(s) from earlier sessions`); } catch (e) { log(`storage: ${e.message} (saves will not survive a reload)`); }
-  boot = { module, memory, dir, tids, args, env, store, t0: performance.timeOrigin };
+  try { store = await openStore(image ? `image:${image.settings.title}` : new URL(q.get('exe'), location.href).pathname); if (store.length) console.log(`storage: ${store.length} file(s) from earlier sessions`); } catch (e) { log(`storage: ${e.message} (saves will not survive a reload)`); }
+  boot = { module, memory, dir, drive, folder, tids, args, env, store, t0: performance.timeOrigin };
   for (let i = 0; i < POOL; i++) startPooled(i);
-  const w = new Worker('worker.js'); workers.push(w);
+  const w = new Worker('worker.js', { type: 'module' }); workers.push(w);
   w.postMessage({ ...boot, tid: 0, pool: { ctl, slot: -1 } });
 }

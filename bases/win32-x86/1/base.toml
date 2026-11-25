@@ -1,0 +1,47 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# base/win32-x86:1, what a 32-bit Windows desktop title is built FROM (docs/images.md): the virtual CPU's default,
+# the runtime's core profile, the default registry, the files of its C: drive (its own layer), and the libraries a
+# recipe can add: runtime sources for a DLL a title imports, each with a layer of its own.
+name = "base/win32-x86"
+version = 1
+architecture = "386"     # as OCI names it: 32-bit x86
+os = "windows"
+
+[cpu]
+# what a recipe without [cpu] gets: every feature the lifter supports
+features = ["fpu", "tsc", "cx8", "cmov", "mmx", "fxsr", "sse", "sse2", "sse3", "ssse3", "sse4.1", "sse4.2", "popcnt", "cx16", "pclmul"]
+
+[runtime]
+# the core of rt/ and rt/win32/ (the profile `win32` of tools/build-title.sh), less the libraries below; paths from
+# the repository's root, `*` within a file name
+sources = ["rt/*.c", "rt/win32/*.c"]
+exclude = ["rt/gdk.c", "rt/d3d12.c", "rt/dxgi.c", "rt/dstorage.c", "rt/xaudio2.c", "rt/audio_codec.c"]
+opt = "-O2"
+
+[registry]
+# the defaults every title of this base sees; a recipe's [registry] adds to them and wins
+'HKLM\Software\Microsoft\Windows NT\CurrentVersion' = { ProductName = "Microsoft Windows XP", CurrentVersion = "5.1", CurrentBuildNumber = "2600", CSDVersion = "Service Pack 3" }
+'HKLM\Software\Microsoft\Windows\CurrentVersion' = { ProgramFilesDir = 'C:\Program Files', CommonFilesDir = 'C:\Program Files\Common Files' }
+
+[files]
+# the base's layer: this folder (C:\ at its top), the fonts gdi32 draws with (built into the module as well: a
+# title that looks for them in C:\WINDOWS\Fonts finds them), empty folders the environment names (TEMP), and a
+# placeholder in C:\WINDOWS\system32 for every DLL the runtime answers for (as Wine's builtin DLLs have)
+dir = "files"
+dirs = ['WINDOWS\Temp', 'WINDOWS\system32', 'Documents and Settings\player', 'Documents and Settings\All Users', 'Program Files\Common Files']
+fonts = { 'WINDOWS\Fonts\LiberationSans-Regular.ttf' = "rt/win32/fonts/LiberationSans-Regular.ttf", 'WINDOWS\Fonts\LiberationSans-Italic.ttf' = "rt/win32/fonts/LiberationSans-Italic.ttf", 'WINDOWS\Fonts\LiberationSans-LICENSE.txt' = "rt/win32/fonts/LICENSE" }
+system32 = 'WINDOWS\system32'
+
+# ---- libraries: a recipe names the ones its title needs (`libraries = [...]`); the build checks the choice against
+# the title's imports. `sources` leave the core; the DLLs a library answers for are the IMP(dll, ...) in them.
+[libraries.d3d9]
+description = "Direct3D 9 on the GPU ring's explicit records (WebGPU), fixed-function pipeline and vs_1_1 / ps_1_1"
+sources = ["rt/win32/d3d9*.c"]
+
+[libraries.dinput8]
+description = "DirectInput 8: the keyboard and the mouse from the host's input ring"
+sources = ["rt/win32/dinput8.c"]
+
+[libraries.fmod3]
+description = "FMOD 3 (fmod.dll's FSOUND_ functions) on the runtime's mixer, with WAV, Ogg Vorbis and MP3 decoders"
+sources = ["rt/win32/fmod3.c", "rt/win32/audio_decode.c"]

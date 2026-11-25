@@ -28,6 +28,11 @@
 #            the cage; its sound not silent and the same on a second run; its FMOD calls against Wine's +snoop trace
 #            when the oracle's is there), system.opt written by Quit and read again by a second run (SW_SAVES), then
 #            the same in Chrome: the session's screenshots, and a reload that finds system.opt in OPFS (minutes)
+#   images   tests/images.sh: title images (M6): `sw build` of hello32 and, from the user's installer (ND_SETUP; skipped
+#            without it), Narbacular Drop, each twice with empty caches (the same manifest digest), their shared base
+#            layer, a registry-only rebuild that lifts, compiles and links nothing, then `sw run` of the menu-to-level
+#            session in Node with the nd step's checkpoints, and the image's registry read by advapi32 (minutes). The
+#            nd, ndgfx and ndplay steps keep building from the installed folder with tools/build-title.sh
 #   doom     tests/gfx/doom.sh: Doom as a console title in Node and Chrome (minutes)
 #   xcl      tests/gfx/xcl.sh: XCL's console test title in Chrome, when it has been built into out/xcltitle-game
 #   audio    tests/audio/run.sh: the XMA2 / Opus decoders (builds FFmpeg's the first time)
@@ -136,6 +141,7 @@ for s in ${*:-build node bench win32 ffp gdi}; do case $s in
   ndgfx)  if [ -f "$ND/Narbacular Drop.exe" ]; then LINES_SHOWN=16 ND=$ND step ndgfx tests/gfx/nd.sh; else echo "skip  ndgfx: the game is not installed (ND=$ND)"; fi ;;
   ndplay) if [ -f "$ND/Narbacular Drop.exe" ]; then LINES_SHOWN=16 ND=$ND step ndplay tests/gfx/ndplay.sh; else echo "skip  ndplay: the game is not installed (ND=$ND)"; fi ;;
   doom)   LINES_SHOWN=4 step doom tests/gfx/doom.sh ;;
+  images) LINES_SHOWN=9 step images tests/images.sh ;;
   audio)  step audio tests/audio/run.sh ;;
   xcl)    if [ -f out/xcltitle-game/xcl_testtitle.exe ]; then LINES_SHOWN=3 step xcl tests/gfx/xcl.sh; else echo "skip  xcl: out/xcltitle-game/xcl_testtitle.exe is not built"; fi ;;
   *) echo "unknown step: $s"; fail=1 ;;

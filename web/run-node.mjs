@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // Runs a lifted title under Node: node run-node.mjs title.wasm <the title's .exe> [title arguments...]
+//                              or node run-node.mjs <image> [title arguments...] (a title image: web/image.mjs, docs/images.md;
+//                              its file layers are the title's C: drive, its config says which exe, its registry, ...)
 // Environment: SW_* variables reach the runtime (SW_TRACE, SW_STRICT, SW_CLOCK, ...); SW_SAVES, SW_SESSION and SW_AUDIO_WAV
 // are the host's too.
 // The main thread only supervises: the title's threads (its main thread too) run in workers, so an exit
@@ -8,16 +10,25 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { Worker, isMainThread, workerData } from 'node:worker_threads';
 import { sessionSteps } from './session.mjs';
+import { isImageDir, openImageDir, driveName } from './image.mjs';
 
 const EXIT = new BroadcastChannel('series-web-exit');
 const GPU_OPEN = new BroadcastChannel('series-web-gpu'); // a title thread opened the GPU ring: the supervisor runs the null back end
 const STACK_MB = 64; // wasm frames of recursive guest code live on the worker's native stack
 
 if (isMainThread) {
-  const [wasmPath, exePath, ...args] = process.argv.slice(2);
-  const module = await WebAssembly.compile(fs.readFileSync(wasmPath));
+  const [first, ...rest] = process.argv.slice(2);
+  let image = null, module, args, dir = null;
+  if (await isImageDir(first)) {
+    image = await openImageDir(first);
+    module = await WebAssembly.compile(image.wasm); image.wasm = null;
+    args = [...image.settings.args, ...rest];
+  } else {
+    const [exePath, ...more] = rest; args = more;
+    module = await WebAssembly.compile(fs.readFileSync(first));
+    dir = path.dirname(path.resolve(exePath)); // the title's folder: its exe and the DLLs it ships
+  }
   const memory = new WebAssembly.Memory({ initial: 1024, maximum: 65536, shared: true });
-  const dir = path.dirname(path.resolve(exePath)); // the title's folder: its exe and the DLLs it ships
   const tids = new Int32Array(new SharedArrayBuffer(4)); tids[0] = 1;
   // SW_SAVES=<folder>: what the title keeps between runs (rt/vfs.c) lives there: its persistent storage (S:\) at the
   // top, and a Windows desktop title's writes in its own folder (the top layer over it) in <folder>/@game
@@ -31,15 +42,20 @@ if (isMainThread) {
   EXIT.onmessage = (e) => { const s = gpu?.summary(); if (s) say(s); process.exit(e.data || (gpu?.errors ? 119 : 0)); };
   // SW_SESSION=<session.json>: the runtime's session player gets its steps (rt/win32/input.c)
   const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => k.startsWith('SW_')));
+  // the image's settings for the runtime (its registry values: SW_REGISTRY), with the environment's after them
+  if (image) for (const [k, v] of Object.entries(image.settings.env)) env[k] = k === 'SW_REGISTRY' && env[k] ? `${v}\n${env[k]}` : v;
+  const imageDir = image ? path.resolve(first) : null, folder = image ? image.settings.folder : null;
   if (process.env.SW_SESSION) env.SW_SESSION_STEPS = sessionSteps(JSON.parse(fs.readFileSync(process.env.SW_SESSION, 'utf8')));
   GPU_OPEN.onmessage = async (e) => {
     const { startNull } = await import('./gpu/null.js');
     gpu = startNull(memory, e.data, { dir, log: say });
   };
-  new Worker(new URL(import.meta.url), { workerData: { t0: performance.timeOrigin, module, memory, dir, tids, tid: 0, saves, store, args, env },
+  new Worker(new URL(import.meta.url), { workerData: { t0: performance.timeOrigin, module, memory, dir, imageDir, folder, tids, tid: 0, saves, store, args, env },
     resourceLimits: { stackSizeMb: STACK_MB } }).on('error', (e) => { console.error(e); process.exit(121); });
 } else {
-  const { module, memory, dir, tids, tid, args, env, saves, store, t0 } = workerData;
+  const { module, memory, dir, imageDir, folder, tids, tid, args, env, saves, store, t0 } = workerData;
+  // a title image: its drive, read from the layers (the main thread has checked their digests)
+  const drive = imageDir ? (await openImageDir(imageDir, { verify: false, wasm: false })).drive : null;
   const clock = () => performance.timeOrigin + performance.now() - t0; // one monotonic clock for every thread
   const kinds = ['trap', 'instruction not lifted', 'import not implemented', 'indirect call to unknown code', 'image does not fit', 'fatal'];
   const u8 = () => new Uint8Array(memory.buffer);
@@ -101,6 +117,12 @@ if (isMainThread) {
     if (!fds.has(name)) { const real = resolve(name); let fd = -1; try { if (real) fd = fs.openSync(real, 'r'); } catch {} fds.set(name, fd); }
     return fds.get(name);
   };
+  // the title's files from its image's drive: the names it asks for are in its folder, or "c:/..." on the drive
+  const imageFiles = drive && {
+    read_file: (name, nlen, off, len, dst) => { const b = drive.read(driveName(text(name, nlen), folder), Number(off), Number(len)); if (!b) return 0; u8().set(b, Number(dst)); return b.length; },
+    stat: (name, nlen) => BigInt(drive.stat(driveName(text(name, nlen), folder))),
+    list: (name, nlen, buf, cap) => { const l = drive.list(driveName(text(name, nlen), folder)); if (l === null) return 0; const b = Buffer.from(l); if (buf && cap >= b.length) u8().set(b, buf); return b.length; },
+  };
   const host = {
     fault: (kind, a) => { console.error(`series-web: ${kinds[kind]}${kind === 5 ? '' : ` at 0x${BigInt.asUintN(64, a).toString(16)}`}`); exit(120); },
     now_us: () => clock() * 1000,
@@ -132,10 +154,11 @@ if (isMainThread) {
     input_open: () => {}, // no keyboard or gamepad: readings stay empty
     win32_input_open: () => {}, // the same for a Windows desktop title (its sessions come from SW_SESSION)
     exit: (code) => exit(code),
+    ...imageFiles,
   };
   const spawn = (arg) => {
     const t = Atomics.add(tids, 0, 1);
-    new Worker(new URL(import.meta.url), { workerData: { t0, module, memory, dir, tids, tid: t, args, env, saves, store, start: arg }, resourceLimits: { stackSizeMb: STACK_MB } })
+    new Worker(new URL(import.meta.url), { workerData: { t0, module, memory, dir, imageDir, folder, tids, tid: t, args, env, saves, store, start: arg }, resourceLimits: { stackSizeMb: STACK_MB } })
       .on('error', (e) => { console.error(e); exit(122); });
     return t;
   };

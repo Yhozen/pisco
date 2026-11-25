@@ -24,25 +24,8 @@ case $PROFILE in
   *) echo "build-title.sh: unknown PROFILE $PROFILE" >&2; exit 2 ;;
 esac
 python3 "$root/tools/recipe-gen.py" ${RECIPE:+"$RECIPE"} > "$out/recipe.gen.c"
-# the import table: every IMP(dll, name) the runtime defines
-grep -ho 'IMP([a-z0-9_]*, *[A-Za-z0-9_]*)' $RT_FILES | sort -u | sed -E 's/IMP\(([a-z0-9_]+), *([A-Za-z0-9_]+)\)/\1 \2/' > "$out/imports.txt"
-{ echo '#include "rt.h"'
-  awk '{print "void imp_"$1"_"$2"(Cpu*);"}' "$out/imports.txt"
-  echo 'typedef struct { const char *name; ImportFn fn; } ImportDef;'
-  echo 'const ImportDef rt_import_table[] = {'
-  awk '{print "  {\""$1".dll!"$2"\", imp_"$1"_"$2"},"}' "$out/imports.txt"
-  echo '};'
-  echo "const unsigned rt_import_table_count = sizeof rt_import_table / sizeof rt_import_table[0];"
-  # 32-bit: what each import removes from the stack, for the runtime's and the title's own imports
-  echo 'typedef struct { const char *name; int bytes; } StdcallDef;'
-  echo 'const StdcallDef rt_stdcall_table[] = {'
-  if [ "$GUEST_BITS" = 32 ]; then
-    # first the runtime functions no import library describes (rt/win32/stdcall.txt), then what the libraries say
-    { grep -v -e '^#' -e '^ *$' "$root/rt/win32/stdcall.txt"; { awk '{print $1".dll!"$2}' "$out/imports.txt"; grep -ho '"[^"]*![^"]*",' "$out"/title*.c | tr -d '",'; } | "$root/tools/stdcall-sizes.sh"; } | awk '{print "  {\""$1"\", "$2"},"}'
-  fi
-  echo '  {0, 0}};'
-  echo "const unsigned rt_stdcall_table_count = sizeof rt_stdcall_table / sizeof rt_stdcall_table[0] - 1;"
-} > "$out/imports.gen.c"
+# the import table: every IMP(dll, name) the runtime defines, and for a 32-bit title the stdcall sizes
+"$root/tools/gen-imports.sh" "$GUEST_BITS" "$out" "$out/imports.gen.c" $RT_FILES
 CF="$TARGET -mllvm -wasm-enable-sjlj ${OPT:--O2} -fno-strict-aliasing -I$root/rt -Wno-everything -DGUEST_BITS=$GUEST_BITS"
 # The memory layout. By default the runtime's stack, data and heap come first and the images sit above them
 # (the lifter moves them there). An image that has to load low (a 32-bit title's exe at 0x400000, often with no

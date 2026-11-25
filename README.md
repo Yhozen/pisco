@@ -76,6 +76,20 @@ node web/run-node.mjs out/hello/title.wasm fixtures/hello/target/x86_64-pc-windo
 node tools/run-chrome.mjs out/hello/title.wasm <the .exe>          # the same in headless Chrome
 ```
 
+A Windows PC title is built from its recipe and your own installer into a title image (an OCI image layout:
+[docs/images.md](docs/images.md)); the installer is checked by its sha256, extracted with innoextract
+(`tools/setup-toolchain.sh innoextract`), and never copied into the repository:
+
+```sh
+cargo build --release -p sw -p lifter
+target/release/sw build recipes/narbacular-drop --source ~/Downloads/narbacular_drop_setup.exe   # -> out/images/narbacular-drop
+target/release/sw run out/images/narbacular-drop --session recipes/narbacular-drop/sessions/menu-to-level.json
+target/release/sw run out/images/narbacular-drop --chrome          # headless Chrome; in a browser of your own:
+node tools/serve.mjs 8000 web out/images/narbacular-drop           # then http://127.0.0.1:8000/browser/index.html?image=/files/0/
+target/release/sw inspect out/images/narbacular-drop               # its layers, config and registry
+target/release/sw census <a title's .exe>                          # what the base and its libraries answer for
+```
+
 `SW_TRACE=1` logs missing imports and exception dispatch; `SW_TRACE=2` every import call. For Windows
 desktop titles: `SW_CLOCK=16667` makes time virtual (it moves by that many microseconds when a frame is
 presented), `SW_SESSION=<session.json>` plays a scripted session of mouse and keyboard input (both hosts; in

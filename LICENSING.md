@@ -63,9 +63,17 @@ licences checkable, a title links only the runtime files of its profile (`tools/
 `console` is `rt/*.c`; `win32`, for Windows desktop titles, is the core of `rt/` plus `rt/win32/`, without the
 console's libraries (`gdk.c`, the D3D12 and DirectStorage front ends, XAudio2, the FFmpeg decoders).
 
+## Title images
+
+`sw` (`crates/sw`, GPL-2.0-or-later) is a separate program: it runs the lifter, clang and innoextract (zlib licence;
+downloaded, never linked) as subprocesses. In an image ([docs/images.md](docs/images.md)) the base's
+layer carries the Liberation fonts under the OFL with their `LICENSE` beside them; the game layer and the module are
+built from the user's own installer, stay on the user's machine and are marked so in the manifest.
+
 ## What is never in this repository
 
-A title's files, anything lifted or built from them (`title.wasm`, shaders, screenshots, traces), and tools we
-only download (wasi-sdk, llvm-mingw, Wine, dxc). They keep their own terms; `out/` is ignored.
+A title's files, anything lifted or built from them (`title.wasm`, title images, shaders, screenshots, traces), the
+user's installers (a recipe names one by its sha256), and tools we only download (wasi-sdk, llvm-mingw, Wine, dxc,
+innoextract). They keep their own terms; `out/` is ignored.
 
 This page describes how the repository is organised. It is not legal advice.

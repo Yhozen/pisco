@@ -6,6 +6,9 @@
 // time), the audio (POST /capture/audio, stereo float) is kept beside it, and POST /capture/end writes <out.mp4>
 // with both. With --shots, a frame the page sends under a name (POST /capture/shot: a session's checkpoint)
 // is saved as <dir>/<name>.png.
+// An extra dir that is a title image (web/image.mjs) is served as it is (index.json, blobs/...), and its C: drive, the
+// file layers stacked, below /files/<n>/c/ (with ?stat and ?list as for a folder).
+import { isImageDir, openImageDir } from '../web/image.mjs';
 import http from 'node:http'; import fs from 'node:fs'; import path from 'node:path'; import zlib from 'node:zlib'; import { spawn } from 'node:child_process';
 const argv = process.argv.slice(2);
 const ci = argv.indexOf('--capture'); const captureOut = ci >= 0 ? argv.splice(ci, 2)[1] : null;
@@ -67,7 +70,9 @@ function saveShot(meta, body) {
   return `saved as ${path.relative(process.cwd(), file)}`;
 }
 
-http.createServer((req, res) => {
+const images = new Map(); // n -> the image in extra dir n (null: a plain folder)
+const imageOf = (n) => { if (!images.has(n)) images.set(n, isImageDir(extra[n]).then((is) => (is ? openImageDir(extra[n], { wasm: false }) : null))); return images.get(n); };
+http.createServer(async (req, res) => {
   let p = decodeURIComponent(new URL(req.url, 'http://x').pathname), base = root;
   const head = { 'Cross-Origin-Opener-Policy': 'same-origin', 'Cross-Origin-Embedder-Policy': 'require-corp', 'Cross-Origin-Resource-Policy': 'same-origin', 'Content-Type': 'text/plain' };
   if (req.method === 'POST' && p.startsWith('/capture/')) {
@@ -85,6 +90,15 @@ http.createServer((req, res) => {
     return;
   }
   const m = p.match(/^\/files\/(\d+)(\/.*)$/); if (m) { base = extra[+m[1]]; p = m[2]; }
+  const image = m && /^\/c(\/|$)/.test(p) ? await imageOf(+m[1]).catch((e) => { console.error(`serve: ${e.message}`); return null; }) : null;
+  if (image) {
+    const d = image.drive, name = p.slice(3), query = new URL(req.url, 'http://x').search;
+    if (query === '?stat') { const s = d.stat(name); res.writeHead(s === -1 ? 404 : 200, head).end(s === -1 ? '' : String(s)); return; }
+    if (query === '?list') { const l = d.list(name); res.writeHead(l === null ? 404 : 200, head).end(l ?? ''); return; }
+    const data = d.read(name); if (!data) { res.writeHead(404, head).end(); return; }
+    res.writeHead(200, { ...head, 'Content-Type': types[path.extname(name)] || 'application/octet-stream', 'Content-Length': data.length }).end(data);
+    return;
+  }
   // file names are matched without regard to case, as the title expects of Windows
   let file = path.resolve(base);
   for (const part of path.normalize(p).split(path.sep).filter(Boolean)) {

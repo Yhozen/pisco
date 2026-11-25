@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // Runs a lifted title in headless Chrome and prints its output: node tools/run-chrome.mjs <title.wasm> <title.exe> [args...]
+//   or a title image: node tools/run-chrome.mjs <image> [args...] (web/image.mjs; its shots go to <image>-shots/)
 // Starts tools/serve.mjs and Chrome, follows the page console through the DevTools protocol. WebGPU runs on
 // SwiftShader (Chrome's CPU Vulkan), as in Horizon's WEB.md, so no GPU is needed.
 // Environment: TIMEOUT (s, default 600), PAGE ('pace=off&hash=1': more page options), and the runtime's own SW_*
@@ -13,12 +14,16 @@
 //   there (OPFS: what titles stored) and use it again next time, with PORT=<n> for the same origin (OPFS is per origin)
 import { spawn } from 'node:child_process'; import path from 'node:path'; import fs from 'node:fs'; import os from 'node:os';
 import { sessionSteps } from '../web/session.mjs';
-const [wasm, exe, ...args] = process.argv.slice(2);
+import { isImageDir } from '../web/image.mjs';
+const argv = process.argv.slice(2), image = (await isImageDir(argv[0])) ? path.resolve(argv[0]) : null;
+const [wasm, exe, ...args] = image ? [null, null, ...argv.slice(1)] : argv;
 const root = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..');
 const port = +(process.env.PORT || 8000 + Math.floor(Math.random() * 1000)), dbg = port + 1000;
 const capture = process.env.CAPTURE ? path.resolve(process.env.CAPTURE) : null;
-const server = spawn(process.execPath, [path.join(root, 'tools/serve.mjs'), port, path.join(root, 'web'), path.dirname(path.resolve(wasm)), path.dirname(path.resolve(exe)), ...(capture ? ['--capture', capture] : []),
-  '--shots', path.join(path.dirname(path.resolve(wasm)), 'shots')], { stdio: 'inherit' });
+const dirs = image ? [image] : [path.dirname(path.resolve(wasm)), path.dirname(path.resolve(exe))];
+const shots = image ? `${image}-shots` : path.join(path.dirname(path.resolve(wasm)), 'shots');
+const server = spawn(process.execPath, [path.join(root, 'tools/serve.mjs'), port, path.join(root, 'web'), ...dirs, ...(capture ? ['--capture', capture] : []),
+  '--shots', shots], { stdio: 'inherit' });
 // the runtime's settings for the page: every SW_* of the environment (SW_TRACE has its own, older, page option), the session as its steps
 const settings = Object.entries(process.env).filter(([k]) => k.startsWith('SW_') && k !== 'SW_TRACE' && k !== 'SW_SESSION');
 if (process.env.SW_SESSION) settings.push(['SW_SESSION_STEPS', sessionSteps(JSON.parse(fs.readFileSync(process.env.SW_SESSION, 'utf8')))]);
@@ -54,7 +59,7 @@ ws.onmessage = (e) => {
 };
 ws.onopen = () => {
   send('Runtime.enable');
-  url = `http://127.0.0.1:${port}/browser/index.html?wasm=/files/0/${path.basename(wasm)}&exe=/files/1/${path.basename(exe)}&args=${encodeURIComponent(args.join(' '))}${process.env.SW_TRACE ? `&trace=${process.env.SW_TRACE}` : ''}${capture ? '&capture=1' : ''}${settings.map(([k, v]) => `&${k}=${encodeURIComponent(v)}`).join('')}${process.env.PAGE ? '&' + process.env.PAGE : ''}`;
+  url = `http://127.0.0.1:${port}/browser/index.html?${image ? 'image=/files/0/' : `wasm=/files/0/${path.basename(wasm)}&exe=/files/1/${path.basename(exe)}`}&args=${encodeURIComponent(args.join(' '))}${process.env.SW_TRACE ? `&trace=${process.env.SW_TRACE}` : ''}${capture ? '&capture=1' : ''}${settings.map(([k, v]) => `&${k}=${encodeURIComponent(v)}`).join('')}${process.env.PAGE ? '&' + process.env.PAGE : ''}`;
   send('Page.navigate', { url });
   if (process.env.KEYS) setTimeout(() => send('Runtime.evaluate', { expression: `window.swKeys && window.swKeys(${process.env.KEYS})` }), 3000);
   if (process.env.RELOAD_AT) setTimeout(async () => {

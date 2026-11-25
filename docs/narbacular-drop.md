@@ -480,6 +480,23 @@ game play as 108 s of video, in sync, although SwiftShader took 6 minutes to dra
 volumedetect): mean -26.4 dB, peak -2.5 dB; -35.9 dB over the first 15 s (the title music fading in, as the game
 fades it), -22.0 dB in the level.
 
+## Its image (M6)
+
+`sw build recipes/narbacular-drop --source narbacular_drop_setup.exe` checks the installer's sha256, extracts it with
+innoextract (Inno Setup 5.0.4 data: eight files into `{app}`, the "Read Me" twice, the later copy kept) and builds
+the image ([images.md](images.md)): the base's layer, the d3d9, dinput8 and fmod3 libraries' layers, the game's
+(40.6 MB, at `C:\Program Files\Narbacular Drop`), the module (9.8 MB) and the config. Against the Wine prefix's
+installation (`--compare`) the files are the same except `fmod.dll`, which the oracle's tools UPX-unpacked
+(the installer's is the packed one, kept there as `fmod.dll.packed`), and Wine's uninstaller (`unins000.exe`,
+`unins000.dat`), which an extraction does not make. The census of its imports: 186, 130 answered by the base,
+1 by d3d9, 1 by dinput8, the 33 FSOUND functions by fmod3, 21 not implemented (never called in the sessions).
+
+The recipe now sets the three registry values the oracle's plain screenshots are taken with
+(`HKLM\Software\Microsoft\Direct3D`: `DisableMMX`, `DisablePSGP`, `DisableD3DXPSGP` = 1), and advapi32 answers
+from them: D3DX opens the key 19 times and reads `DisableMMX` 16 times. The sessions' recorded checkpoints
+(frames and Direct3D calls) are unchanged, and `nd`, `ndgfx` and `ndplay` pass as before (the virtual CPU had
+already taken D3DX off those paths). The calls up to `Direct3DCreate9` stay Wine's: the key is first opened after it.
+
 ## What this decides
 
 | Question | Answer |
