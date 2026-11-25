@@ -29,7 +29,7 @@ typedef struct Sound {
 } Sound;
 #define SMAGIC 0x46584E44u
 typedef struct Channel {
-  int active, paused, ended, primed; u32 count, mode; Sound *snd;
+  int active, paused, ended, primed, done; u32 count, mode; Sound *snd;   // done: played to its end, its handle still valid
   u64 at; double frac; float a[2], b[2]; s16 buf[4096]; u32 buf_n, buf_at;
   float volume, gl, gr, pos[3], vel[3]; int is3d, loops_left;
 } Channel;
@@ -73,8 +73,11 @@ static u32 create(Cpu *c, u32 extra_mode) {
   }
   const char *label = mode & MODE_OPENMEMORY ? "(memory)" : GSTR(name);
   Sound *s = calloc(1, sizeof *s); s->magic = SMAGIC; s->mode = mode; s->loop_count = -1;
-  snprintf(s->name, sizeof s->name, "%s", label);
-  s->pcm = decode_whole(s->name, file, size, mode & MODE_CREATESTREAM ? 8u << 20 : ~0ull);
+  // getName answers the file's name without its folders, as FMOD Ex does (Wine: "softsplat1.mp3" for
+  // ".\\assets\\sounds\\effects\\softsplat1.mp3"): Tag looks a sound up by it before loading it again
+  const char *base = label; for (const char *p = label; *p; p++) if (*p == '\\' || *p == '/') base = p + 1;
+  snprintf(s->name, sizeof s->name, "%s", base);
+  s->pcm = decode_whole(label, file, size, mode & MODE_CREATESTREAM ? 8u << 20 : ~0ull);
   if (s->pcm) { free(file); s->channels = s->pcm->channels; s->rate = s->pcm->rate; s->frames = s->pcm->frames; }
   else if ((s->dec = audio_open(file, size))) { s->file = file; s->channels = audio_channels(s->dec); s->rate = audio_rate(s->dec); s->frames = audio_length(s->dec); }
   else { rt_log("fmodex: %s: not a sound file audio_decode.c reads", label); free(file); free(s); return FMOD_ERR_FORMAT; }
@@ -88,6 +91,10 @@ static Channel *channel_of(u64 h) {   // a handle that is still valid -> its cha
 }
 static u32 handle_of(Channel *k) { return (k->count << 12) | (u32)(k - ch); }
 static void stop(Channel *k) { k->active = 0; k->snd = 0; }
+// A channel whose sound has played to its end keeps its handle, as Tag's fmodex.dll does under Wine (isPlaying
+// answers false with FMOD_OK, never FMOD_ERR_INVALID_HANDLE, in a whole session): until Channel::stop, or until
+// playSound takes the channel for another sound (ended channels go after the ones never used or stopped).
+static void finish(Channel *k) { k->done = 1; }
 
 // ---- 3D ----
 static float dot3(const float *a, const float *b) { return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]; }
@@ -125,22 +132,22 @@ static void mix(Cpu *c, float *out, u32 frames, void *ctx) {
   (void)c; (void)ctx;
   for (int i = 0; i < CHANNELS; i++) {
     Channel *k = &ch[i];
-    if (!k->active || k->paused || !k->snd) continue;
+    if (!k->active || k->done || k->paused || !k->snd) continue;
     float gl = k->volume * k->gl, gr = k->volume * k->gr;
     if (!k->is3d) { gl *= (float)M_SQRT1_2; gr *= (float)M_SQRT1_2; }   // a 2D sound in the middle: equal power
     double step = (double)k->snd->rate / MIXER_RATE;
-    if (!k->primed) { k->primed = 1; if (!next_frame(k, k->a)) { stop(k); continue; } if (!next_frame(k, k->b)) { k->b[0] = k->a[0]; k->b[1] = k->a[1]; k->ended = 1; } }
+    if (!k->primed) { k->primed = 1; if (!next_frame(k, k->a)) { finish(k); continue; } if (!next_frame(k, k->b)) { k->b[0] = k->a[0]; k->b[1] = k->a[1]; k->ended = 1; } }
     for (u32 n = 0; n < frames; n++) {
       float t = (float)k->frac;
       out[2 * n] += (k->a[0] + (k->b[0] - k->a[0]) * t) * gl; out[2 * n + 1] += (k->a[1] + (k->b[1] - k->a[1]) * t) * gr;
       k->frac += step;
       while (k->frac >= 1) {
         k->frac -= 1;
-        if (k->ended) { stop(k); break; }
+        if (k->ended) { finish(k); break; }
         k->a[0] = k->b[0]; k->a[1] = k->b[1];
         if (!next_frame(k, k->b)) { k->b[0] = k->a[0]; k->b[1] = k->a[1]; k->ended = 1; }
       }
-      if (!k->active) break;
+      if (k->done) break;
     }
   }
 }
@@ -181,9 +188,10 @@ IMP(fmodex, System_playSound) { // (this, channel index: -1 free, -2 reuse *out;
   if (want == -2) k = channel_of(M32(out));
   else if (want >= 0 && want < channel_limit) k = &ch[want];
   if (!k) for (int i = 0; i < channel_limit; i++) if (!ch[i].active) { k = &ch[i]; break; }
+  if (!k) for (int i = 0; i < channel_limit; i++) if (ch[i].done) { k = &ch[i]; break; }
   if (!k) k = &ch[0];   // all busy: the first is stolen
   stop(k);
-  k->active = 1; k->count++; k->snd = s; k->at = 0; k->primed = 0; k->ended = 0; k->frac = 0; k->buf_n = k->buf_at = 0;
+  k->active = 1; k->count++; k->snd = s; k->at = 0; k->primed = 0; k->ended = 0; k->done = 0; k->frac = 0; k->buf_n = k->buf_at = 0;
   k->paused = paused; k->volume = 1; k->mode = s->mode; k->loops_left = s->loop_count;
   k->is3d = (s->mode & MODE_3D) != 0; memset(k->pos, 0, sizeof k->pos); memset(k->vel, 0, sizeof k->vel); gains(k);
   if (s->dec) audio_seek(s->dec, 0);
@@ -193,9 +201,9 @@ IMP(fmodex, System_playSound) { // (this, channel index: -1 free, -2 reuse *out;
 
 // ---- Channel ----
 #define CHANNEL_DO(...) do { pthread_mutex_lock(&mixer_lock); Channel *k = channel_of(ARG(0)); u32 r_ = FMOD_ERR_INVALID_HANDLE; if (k) { __VA_ARGS__; r_ = FMOD_OK; } pthread_mutex_unlock(&mixer_lock); RET(r_); } while (0)
-IMP(fmodex, Channel_isPlaying) { // (this, bool *): false (and an invalid handle) once it has ended
+IMP(fmodex, Channel_isPlaying) { // (this, bool *): false once it has ended; an invalid handle once stopped or taken
   pthread_mutex_lock(&mixer_lock); Channel *k = channel_of(ARG(0));
-  if (ARG(1)) M8(ARG(1)) = k != 0;
+  if (ARG(1)) M8(ARG(1)) = k && !k->done;
   pthread_mutex_unlock(&mixer_lock); RET(k ? FMOD_OK : FMOD_ERR_INVALID_HANDLE);
 }
 IMP(fmodex, Channel_stop) { CHANNEL_DO(stop(k)); }
