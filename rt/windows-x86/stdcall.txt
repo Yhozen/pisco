@@ -11,3 +11,6 @@ kernel32.dll!InterlockedExchange 8
 kernel32.dll!InterlockedExchangeAdd 8
 kernel32.dll!InterlockedIncrement 4
 kernel32.dll!InterlockedDecrement 4
+# DirectDraw's exports (rt/windows-x86/ddraw.c), looked up with GetProcAddress
+ddraw.dll!DirectDrawCreate 12
+ddraw.dll!DirectDrawCreateEx 16
