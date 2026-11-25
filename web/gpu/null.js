@@ -91,7 +91,7 @@ export function startNull(memory, addr, { dir, log }) {
       const r = res.get(w[0]), mip = w[1]; count.textureWrites++; count.bytes += w[8] * w[6] * w[7]; trace(`write texture ${w[0]} level ${mip} ${w[2]},${w[3]},${w[4]} ${w[5]}x${w[6]}x${w[7]}`);
       if (!r || r.dim === 0) { wrong(`a write to texture ${w[0]}, which does not exist`); break; }
       const side = (v) => Math.max(1, v >> mip);
-      if (mip >= r.mips || w[2] + w[5] > side(r.width) || w[3] + w[6] > side(r.height) || w[4] + w[7] > (r.dim === 3 ? side(r.depth) : 1) || w[8] < 4 * w[5]) wrong(`a write to texture ${w[0]} level ${mip} outside it`);
+      if (mip >= r.mips || w[2] + w[5] > side(r.width) || w[3] + w[6] > side(r.height) || w[4] + w[7] > (r.dim === 3 ? side(r.depth) : r.depth || 1) || w[8] < 4 * w[5]) wrong(`a write to texture ${w[0]} level ${mip} outside it`);
       break;
     }
     case GPU.R_PASS: {
