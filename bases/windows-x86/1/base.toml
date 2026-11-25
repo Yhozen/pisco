@@ -34,7 +34,7 @@ system32 = 'WINDOWS\system32'
 # ---- libraries: a recipe names the ones its title needs (`libraries = [...]`); the build checks the choice against
 # the title's imports. `sources` leave the core; the DLLs a library answers for are the IMP(dll, ...) in them.
 [libraries.d3d9]
-description = "Direct3D 9 on the GPU ring's explicit records (WebGPU): the fixed-function pipeline only (shaders: not yet)"
+description = "Direct3D 9 on the GPU ring's explicit records (WebGPU): the fixed-function pipeline; d3d9_sm.c translates vs/ps 1.1 to 2.x to WGSL, not yet drawn with"
 sources = ["rt/windows-x86/d3d9*.c"]
 
 [libraries.dinput8]

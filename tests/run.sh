@@ -19,6 +19,9 @@
 #            the shaders it made must pass naga
 #   ffp      tests/gfx/d3d9-ffp.sh: Direct3D 9's fixed-function pipeline as WGSL (rt/windows-x86/d3d9_ffp.c), built
 #            natively: the shaders of a representative set of state keys, validated with naga
+#   sm       tests/gfx/d3d9-sm.sh: Direct3D 9's shader translator (rt/windows-x86/d3d9_sm.c), built natively: shaders
+#            assembled to cover shader models 1.1 to 2.x, each one's WGSL validated with naga (SM_CAPTURED: a folder of
+#            a title's captured bytecode, translated too)
 #   gdi      rt/windows-x86/font.c (gdi32's fonts) built natively by tests/gdi/fonts.c, which asks it what
 #            tools/oracle-wine/gdiprobe.c asks Wine's GDI; with the probe's answers (out/oracle/narbacular-drop/
 #            gdiprobe.txt) every measurement D3DX and the game read must be Wine's (tools/oracle-wine/gdi-compare.py),
@@ -42,7 +45,7 @@
 #            the SDKs in WINSDK by tools/build-gdk-sample-pbr.sh) or REDIST (minutes)
 #   xcl      tests/gfx/xcl.sh: XCL's console test title in Chrome, when it has been built into out/xcltitle-game
 #   audio    tests/audio/run.sh: the XMA2 / Opus decoders (builds FFmpeg's the first time)
-# Default: build layout node bench win32 ffp gdi. Needs tools/setup-toolchain.sh to have run. Exit status 1 if a step fails.
+# Default: build layout node bench win32 ffp sm gdi. Needs tools/setup-toolchain.sh to have run. Exit status 1 if a step fails.
 set -uo pipefail
 root=$(cd "$(dirname "$0")/.." && pwd); cd "$root"; mkdir -p out
 MINGW=${MINGW:-$HOME/tools/llvm-mingw-20261117-ucrt-ubuntu-22.04-x86_64}; CXX=$MINGW/bin/x86_64-w64-mingw32-clang++
@@ -144,7 +147,7 @@ nd_session() { SW_STRICT=1 SW_CLOCK=16667 SW_D3D9_STATS=1 SW_SESSION=recipes/nar
 ND=${ND:-$HOME/.pisco/oracle/prefix-narbacular-drop/drive_c/Program Files (x86)/Narbacular Drop}
 REDIST=${REDIST:-$HOME/untrusted/vcredist/x/Contents/VC/Redist/MSVC/14.44.35112/x64/Microsoft.VC143.CRT}; export REDIST
 WINSDK=${WINSDK:-$HOME/winsdk}
-for s in ${*:-build layout node bench win32 ffp gdi}; do case $s in
+for s in ${*:-build layout node bench win32 ffp sm gdi}; do case $s in
   build)  step build build ;;
   layout) step layout tests/layout.sh ;;
   node)   LINES_SHOWN=8 step node tests/regress.sh ;;
@@ -153,6 +156,7 @@ for s in ${*:-build layout node bench win32 ffp gdi}; do case $s in
   chrome) LINES_SHOWN=5 step chrome chrome ;;
   nd)     if [ -f "$ND/Narbacular Drop.exe" ]; then LINES_SHOWN=3 step nd nd; else echo "skip  nd: the game is not installed (ND=$ND)"; fi ;;
   ffp)    if command -v naga > /dev/null; then step ffp tests/gfx/d3d9-ffp.sh; else echo "skip  ffp: naga is not installed (tools/setup-toolchain.sh naga)"; fi ;;
+  sm)     if command -v naga > /dev/null; then step sm tests/gfx/d3d9-sm.sh ${SM_CAPTURED:+$SM_CAPTURED/*}; else echo "skip  sm: naga is not installed (tools/setup-toolchain.sh naga)"; fi ;;
   gdi)    LINES_SHOWN=5 step gdi gdi ;;
   ndgfx)  if [ -f "$ND/Narbacular Drop.exe" ]; then LINES_SHOWN=16 ND=$ND step ndgfx tests/gfx/nd.sh; else echo "skip  ndgfx: the game is not installed (ND=$ND)"; fi ;;
   ndplay) if [ -f "$ND/Narbacular Drop.exe" ]; then LINES_SHOWN=16 ND=$ND step ndplay tests/gfx/ndplay.sh; else echo "skip  ndplay: the game is not installed (ND=$ND)"; fi ;;
