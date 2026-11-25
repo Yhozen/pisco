@@ -12,10 +12,9 @@
 // - Vertex inputs: register vN is @location(N), a vec4f (WebGPU fills missing components with 0, 0, 0, 1, as
 //   Direct3D does). SmInfo says which usage and usage index each register was declared with: the pipeline maps
 //   the vertex declaration's elements onto those locations.
-// - Resources: group 0 is the vertex stage's, group 1 the pixel stage's. In each, binding 0 is the block both
-//   stages share (SmFixed: the half-pixel offset, fog, the alpha reference), binding 1 the float constants
-//   (array<vec4f, SmInfo.float_count>), binding 2 the integer and boolean constants (SmIntBool). A pixel shader's
-//   sampler sN is binding 3 + 2N (the texture) and 4 + 2N (the sampler).
+// - Resources, all in group 0 (the GPU ring's draws bind one group): binding 0 is one uniform block both stages read,
+//   SmUniforms (the fixed part, then the pixel stage's constants, then the vertex stage's: a pixel shader declares
+//   the block only up to its own); a pixel shader's sampler sN is binding 1 + 2N (the texture) and 2 + 2N (the sampler).
 #pragma once
 #include <stddef.h>
 #include <stdint.h>
@@ -29,15 +28,21 @@ typedef struct SmLinkKey {
 } SmLinkKey;
 enum { SM_TEX_NONE = 0, SM_TEX_2D = 2, SM_TEX_CUBE = 3, SM_TEX_3D = 4 };   // D3DSAMPLER_TEXTURE_TYPE >> 27
 
-// the block of binding 0 (the WGSL struct SmFixed, member for member)
+// the uniform block of binding 0 (the WGSL struct U, member for member)
 typedef struct SmFixedUniforms {
   float half_pixel[4];     // x y: what moves a clip-space position (times its w) by half a pixel
   float fog_color[4];
   float misc[4];           // the alpha reference (0 to 255)
   float point[4];          // D3DRS_POINTSIZE, _MIN, _MAX, the viewport's height
 } SmFixedUniforms;
-// binding 2: integer constants i0..i15 (x: count, y: start, z: step) and booleans b0..b15 (x: 0 or 1)
-typedef struct SmIntBool { int32_t i[16][4]; uint32_t b[16][4]; } SmIntBool;
+typedef struct SmUniforms {
+  SmFixedUniforms fx;
+  float ps_f[32][4]; int32_t ps_i[16][4]; uint32_t ps_b[16][4];   // the pixel shader's c, i (count, start, step), b (x: 0 or 1)
+  int32_t vs_i[16][4]; uint32_t vs_b[16][4];
+  float vs_f[256][4];                                              // the vertex shader's c: as many as SmInfo.float_count says
+} SmUniforms;
+#define SM_UNIFORM_BYTES(vs_floats) (offsetof(SmUniforms, vs_f) + 16 * (size_t)(vs_floats))   // the block a draw sends
+#define SM_PIXEL_UNIFORM_BYTES offsetof(SmUniforms, vs_i)                                   // what a pixel shader declares
 
 enum { SM_USAGE_POSITION = 0, SM_USAGE_BLENDWEIGHT, SM_USAGE_BLENDINDICES, SM_USAGE_NORMAL, SM_USAGE_PSIZE, SM_USAGE_TEXCOORD,
        SM_USAGE_TANGENT, SM_USAGE_BINORMAL, SM_USAGE_TESSFACTOR, SM_USAGE_POSITIONT, SM_USAGE_COLOR, SM_USAGE_FOG, SM_USAGE_DEPTH, SM_USAGE_SAMPLE };
@@ -49,8 +54,8 @@ typedef struct SmInfo {
   uint16_t varyings;       // pixel: the locations it reads; vertex: the locations it writes (bit per location)
   uint16_t samplers;       // pixel: the samplers it reads (bit N: sN)
   uint8_t sampler_types[16]; // SM_TEX_* of each
-  uint16_t float_count;    // the float constants it reads: binding 1 holds this many vec4f (at least 1)
-  uint8_t int_bool;        // it reads integer or boolean constants (binding 2)
+  uint16_t float_count;    // the float constants it reads (at least 1; a vertex shader's block ends after this many)
+  uint8_t int_bool;        // it reads integer or boolean constants
   uint8_t relative;        // it indexes the float constants with a0 or aL
   uint8_t writes_depth;    // pixel: oDepth
   uint8_t writes_psize;    // vertex: oPts

@@ -258,13 +258,13 @@ static void reg_value(Sm *m, const Src *x, char *o, size_t cap) {
   case R_ADDR_TEX: if (m->pixel) snprintf(o, cap, "t%u", x->num); else snprintf(o, cap, "vec4f(a0)"); return;
   case R_CONSTINT:
     if (m->def_i[x->num]) snprintf(o, cap, "vec4f(vec4i(%d, %d, %d, %d))", m->defi[x->num][0], m->defi[x->num][1], m->defi[x->num][2], m->defi[x->num][3]);
-    else snprintf(o, cap, "vec4f(ib.i[%u])", x->num);
+    else snprintf(o, cap, "vec4f(u.%s_i[%u])", m->pixel ? "ps" : "vs", x->num);
     return;
   case R_LOOP: snprintf(o, cap, "vec4f(f32(aL%d))", m->loop_depth > 0 ? m->loop_depth : 1); return;
   case R_PREDICATE: snprintf(o, cap, "select(vec4f(0.0), vec4f(1.0), p0)"); return;
   case R_CONSTBOOL:
     if (m->def_b[x->num]) snprintf(o, cap, "vec4f(%s)", m->defb[x->num] ? "1.0" : "0.0");
-    else snprintf(o, cap, "vec4f(f32(ib.b[%u].x))", x->num);
+    else snprintf(o, cap, "vec4f(f32(u.%s_b[%u].x))", m->pixel ? "ps" : "vs", x->num);
     return;
   default: break;
   }
@@ -281,7 +281,7 @@ static void reg_value(Sm *m, const Src *x, char *o, size_t cap) {
       char a[4][48]; for (int k = 0; k < 4; k++) { float v; memcpy(&v, &m->defs[c][k], 4); flt(a[k], sizeof a[k], v); }
       snprintf(o, cap, "%svec4f(%s, %s, %s, %s)%s", clampl, a[0], a[1], a[2], a[3], clampr); return;
     }
-    snprintf(o, cap, "%scf[%u]%s", clampl, c, clampr); return;
+    snprintf(o, cap, "%su.%s_f[%u]%s", clampl, m->pixel ? "ps" : "vs", c, clampr); return;
   }
   snprintf(o, cap, "vec4f(0.0)");
 }
@@ -362,7 +362,7 @@ static int scalar_cond(Sm *m, const Ins *in, char *o, size_t cap) { // ifc / bre
   const Src *x = &in->s[in->op == OP_CALLNZ ? 1 : 0];
   if (x->type == R_CONSTBOOL) {
     if (m->def_b[x->num]) snprintf(o, cap, "%s", (m->defb[x->num] != 0) != (x->mod == MOD_NOT) ? "true" : "false");
-    else snprintf(o, cap, "ib.b[%u].x %s 0u", x->num, x->mod == MOD_NOT ? "==" : "!=");
+    else snprintf(o, cap, "u.%s_b[%u].x %s 0u", m->pixel ? "ps" : "vs", x->num, x->mod == MOD_NOT ? "==" : "!=");
     return 1;
   }
   if (x->type == R_PREDICATE) { snprintf(o, cap, "%sp0.%c", x->mod == MOD_NOT ? "!" : "", comp_ch[x->swz & 3]); return 1; }
@@ -370,7 +370,7 @@ static int scalar_cond(Sm *m, const Ins *in, char *o, size_t cap) { // ifc / bre
 }
 static void int_const(Sm *m, uint32_t n, char *o, size_t cap) {
   if (n < 16 && m->def_i[n]) snprintf(o, cap, "vec4i(%d, %d, %d, %d)", m->defi[n][0], m->defi[n][1], m->defi[n][2], m->defi[n][3]);
-  else snprintf(o, cap, "ib.i[%u]", n);
+  else snprintf(o, cap, "u.%s_i[%u]", m->pixel ? "ps" : "vs", n);
 }
 static const char *tex_type(uint8_t t) { return t == SM_TEX_CUBE ? "texture_cube<f32>" : t == SM_TEX_3D ? "texture_3d<f32>" : "texture_2d<f32>"; }
 static const char *coord_swz(uint8_t t) { return t == SM_TEX_2D ? "xy" : "xyz"; }
@@ -513,14 +513,15 @@ static int emit_ins(Sm *m, const Ins *in, int *in_main, int *in_fn) {
 }
 
 static void emit_decls(Sm *m) {
-  Text *t = m->t; SmInfo *f = m->info; int g = m->pixel;
+  Text *t = m->t; SmInfo *f = m->info;
   put(t, "diagnostic(off, derivative_uniformity);\n");
+  // one uniform block for both stages (d3d9_sm.h SmUniforms): a pixel shader declares the part up to its own constants
   put(t, "struct SmFixed { half_pixel: vec4f, fog_color: vec4f, misc: vec4f, point: vec4f }\n");
-  put(t, "@group(%d) @binding(0) var<uniform> fx: SmFixed;\n", g);
-  put(t, "@group(%d) @binding(1) var<uniform> cf: array<vec4f, %u>;\n", g, f->float_count);
-  if (f->int_bool) put(t, "struct SmIntBool { i: array<vec4i, 16>, b: array<vec4u, 16> }\n@group(%d) @binding(2) var<uniform> ib: SmIntBool;\n", g);
+  put(t, "struct U {\n  fx: SmFixed,\n  ps_f: array<vec4f, 32>,\n  ps_i: array<vec4i, 16>,\n  ps_b: array<vec4u, 16>,\n");
+  if (!m->pixel) put(t, "  vs_i: array<vec4i, 16>,\n  vs_b: array<vec4u, 16>,\n  vs_f: array<vec4f, %u>,\n", f->float_count);
+  put(t, "}\n@group(0) @binding(0) var<uniform> u: U;\n");
   for (int s = 0; s < 16; s++) if (f->samplers & (1u << s))
-    put(t, "@group(1) @binding(%d) var tex%d: %s;\n@group(1) @binding(%d) var smp%d: sampler;\n", 3 + 2 * s, s, tex_type(f->sampler_types[s]), 4 + 2 * s, s);
+    put(t, "@group(0) @binding(%d) var tex%d: %s;\n@group(0) @binding(%d) var smp%d: sampler;\n", 1 + 2 * s, s, tex_type(f->sampler_types[s]), 2 + 2 * s, s);
   for (int r = 0; r < 32; r++) if (m->temps & (1u << r)) put(t, "var<private> r%d: vec4f;\n", r);
   if (m->uses_a0) put(t, "var<private> a0: vec4i;\n");
   if (m->uses_p0) put(t, "var<private> p0: vec4<bool>;\n");
@@ -532,7 +533,7 @@ static void emit_decls(Sm *m) {
       char a[4][48]; for (int k = 0; k < 4; k++) { float v; memcpy(&v, &m->defs[c][k], 4); flt(a[k], sizeof a[k], v); }
       put(t, "    case %d: { return vec4f(%s, %s, %s, %s); }\n", c, a[0], a[1], a[2], a[3]);
     }
-    put(t, "    default: { if (i < 0 || i >= %u) { return vec4f(0.0); } return cf[i]; }\n  }\n}\n", f->float_count);
+    put(t, "    default: { if (i < 0 || i >= %u) { return vec4f(0.0); } return u.%s_f[i]; }\n  }\n}\n", f->float_count, m->pixel ? "ps" : "vs");
   }
   put(t, "fn smlit(s: vec4f) -> vec4f {\n  let d = max(s.x, 0.0);\n  let p = clamp(s.w, -128.0, 128.0);\n"
          "  return vec4f(1.0, d, select(0.0, pow(max(s.y, 0.0), p), s.x > 0.0), 1.0);\n}\n");
@@ -585,8 +586,9 @@ size_t sm_wgsl(const uint32_t *tk, size_t count, const SmLinkKey *link, SmInfo *
   size_t result = 0;
   if (!decode(m, tk, count) || !survey(m)) { result = refuse(out, cap, "%s", m->err); goto done; }
   if (link->fog && pixel) m->inputs_read |= 1u << 3;
-  info->float_count = (uint16_t)(m->relative ? (pixel ? 224 : 256) : (m->max_const + 1 > 0 ? m->max_const + 1 : 1));
+  info->float_count = (uint16_t)(m->relative ? (pixel ? 32 : 256) : (m->max_const + 1 > 0 ? m->max_const + 1 : 1));
   if (m->max_const + 1 > info->float_count) info->float_count = (uint16_t)(m->max_const + 1);
+  if ((pixel && info->float_count > 32) || info->float_count > 256) { result = refuse(out, cap, "float constant c%d is beyond the model's", m->max_const); goto done; }
   info->relative = (uint8_t)m->relative; info->int_bool = (uint8_t)m->uses_ib;
   if (!pixel) for (int r = 0; r < 16; r++) if ((info->inputs & (1u << r)) && info->usage[r] == 0xFF) { info->usage[r] = r == 0 ? SM_USAGE_POSITION : SM_USAGE_TEXCOORD; info->usage_index[r] = 0; }
   Text t = {out, 0, cap, 0}; m->t = &t;
@@ -607,7 +609,7 @@ size_t sm_wgsl(const uint32_t *tk, size_t count, const SmLinkKey *link, SmInfo *
     for (int k = 1; k < 8; k++) put(&t, "  @location(%d) tex%d: vec4f,\n", (int)tex_loc((uint32_t)k), k);
     put(&t, "}\n@vertex fn main(vin: VIn) -> VOut {\n");
     for (int r = 0; r < 16; r++) if (info->inputs & (1u << r)) put(&t, "  v%d = vin.v%d;\n", r, r);
-    put(&t, "  shader_main();\n  var o: VOut;\n  o.position = vec4f(oPos.xy + fx.half_pixel.xy * oPos.w, oPos.zw);\n"
+    put(&t, "  shader_main();\n  var o: VOut;\n  o.position = vec4f(oPos.xy + u.fx.half_pixel.xy * oPos.w, oPos.zw);\n"
             "  o.diffuse = clamp(oD0, vec4f(0.0), vec4f(1.0));\n  o.specular = clamp(oD1, vec4f(0.0), vec4f(1.0));\n  o.tex = oT0;\n"
             "  o.fog = clamp(oFog.x, 0.0, 1.0);\n");
     for (int k = 1; k < 8; k++) put(&t, "  o.tex%d = oT%d;\n", k, k);
@@ -637,11 +639,11 @@ size_t sm_wgsl(const uint32_t *tk, size_t count, const SmLinkKey *link, SmInfo *
     if ((major == 1 && !(m->temps & 1)) || (major >= 2 && !(m->colors & 1))) c0 = "vec4f(0.0)";
     put(&t, "  var color = %s;\n", c0);
     if (link->alpha_test) {
-      static const char *const cmpf[9] = {"", "false", "a8 < fx.misc.x", "a8 == fx.misc.x", "a8 <= fx.misc.x", "a8 > fx.misc.x", "a8 != fx.misc.x", "a8 >= fx.misc.x", "true"};
+      static const char *const cmpf[9] = {"", "false", "a8 < u.fx.misc.x", "a8 == u.fx.misc.x", "a8 <= u.fx.misc.x", "a8 > u.fx.misc.x", "a8 != u.fx.misc.x", "a8 >= u.fx.misc.x", "true"};
       if (link->alpha_test > 8) { result = refuse(out, cap, "alpha test %u", link->alpha_test); goto done; }
       put(&t, "  let a8 = floor(clamp(color.a, 0.0, 1.0) * 255.0 + 0.5);\n  if (!(%s)) { discard; }\n", cmpf[link->alpha_test]);
     }
-    if (link->fog) put(&t, "  color = vec4f(mix(fx.fog_color.rgb, color.rgb, clamp(fin.fog, 0.0, 1.0)), color.a);\n");
+    if (link->fog) put(&t, "  color = vec4f(mix(u.fx.fog_color.rgb, color.rgb, clamp(fin.fog, 0.0, 1.0)), color.a);\n");
     put(&t, "  o.c0 = color;\n");
     for (int k = 1; k < 4; k++) if (colors & (1 << k)) put(&t, "  o.c%d = oC%d;\n", k, k);
     if (info->writes_depth) put(&t, "  o.depth = oDepth.x;\n");
