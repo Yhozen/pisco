@@ -221,11 +221,16 @@ IMP(d3d9, IDirect3D9_CreateDevice) {
   if (out) M32(out) = 0;
   if (ARG(1) >= oracle_adapters || !ARG(5) || !out || !(flags & 0xE0)) { RET(D3DERR_INVALIDCALL); return; }
   if (ARG(2) != 1) { com_unsure("Direct3D 9: CreateDevice of device type %u: only the HAL device (1) exists", (u32)ARG(2)); RET(D3DERR_NOTAVAILABLE); return; }
-  if (!pp->windowed) { com_unsure("Direct3D 9: CreateDevice full screen is not implemented"); RET(D3DERR_NOTAVAILABLE); return; }
   u32 window = pp->window ? pp->window : (u32)ARG(3); s32 cw = 0, ch = 0;
-  if (!win32_client_size(window, &cw, &ch)) { RET(D3DERR_INVALIDCALL); return; }
-  // what Direct3D fills in: the window's client area, the display's format, one back buffer
-  if (!pp->width) pp->width = (u32)cw; if (!pp->height) pp->height = (u32)ch;
+  if (!pp->windowed) {
+    // full screen: the page's canvas is the display, and the mode the title asks for is its back buffer's size (the
+    // refresh rate is the host's). The mode must be named, as on Windows.
+    if (!pp->width || !pp->height || !pp->format || !window) { RET(D3DERR_INVALIDCALL); return; }
+  } else {
+    if (!win32_client_size(window, &cw, &ch)) { RET(D3DERR_INVALIDCALL); return; }
+    // what Direct3D fills in: the window's client area, the display's format, one back buffer
+    if (!pp->width) pp->width = (u32)cw; if (!pp->height) pp->height = (u32)ch;
+  }
   if (!pp->format) pp->format = oracle_display.format;
   if (!pp->count) pp->count = 1;
   if (!d3d9_format(pp->format) || (pp->auto_depth && !d3d9_format(pp->depth_format)) || pp->count != 1 || pp->multisample) {
@@ -253,6 +258,7 @@ static void device_destroy(Device9 *d) {
   if (d->recording) { d3d9_stateblock_destroy(d->recording); d->recording = 0; }
   d3d9_state_free(&d->state, 1);
   for (Declaration9 *v = d->fvf_declarations, *next; v; v = next) { next = v->next_fvf; d3d9_unhold(&v->o); }
+  for (int i = 0; i < 2; i++) if (d->up[i]) { d3d9_gpu_release(&d->up[i]->o); free(d->up[i]->bits); d->up[i]->o.vtable = 0; free(d->up[i]); d->up[i] = 0; }   // the UP draws' buffers
   for (unsigned i = 0; i < 4; i++) d3d9_unhold((Object9 *)d->targets[i]);
   d3d9_unhold((Object9 *)d->depth); d3d9_unhold((Object9 *)d->auto_depth); d3d9_unhold((Object9 *)d->back_buffer);
   d->swapchain->o.vtable = 0; free(d->swapchain);

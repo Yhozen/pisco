@@ -44,6 +44,7 @@ void d3d9_state_free(State9 *s, int unhold) {
     for (unsigned i = 0; i < SAMPLERS; i++) d3d9_unhold((Object9 *)s->textures[i]);
     for (unsigned i = 0; i < STREAMS; i++) d3d9_unhold((Object9 *)s->streams[i].buffer);
     d3d9_unhold((Object9 *)s->indices); d3d9_unhold((Object9 *)s->declaration);
+    d3d9_unhold((Object9 *)s->vertex_shader); d3d9_unhold((Object9 *)s->pixel_shader);
   }
   free(s->lights); s->lights = 0; s->light_count = 0;
 }
@@ -92,7 +93,7 @@ IMP(d3d9, IDirect3DDevice9_SetTexture) {
   STAT(device_SetTexture); Device9 *d = DEV; int s = d3d9_sampler_index((u32)ARG(1)); Object9 *t = (Object9 *)GP(ARG(2));
   ARGV("device_SetTexture stage", ARG(1));
   if (s < 0) { ignored("SetTexture", (u32)ARG(1)); RET(D3D_OK); return; }
-  if (t && t->kind != K_TEXTURE && t->kind != K_VOLUMETEXTURE) { RET(D3DERR_INVALIDCALL); return; }
+  if (t && t->kind != K_TEXTURE && t->kind != K_VOLUMETEXTURE && t->kind != K_CUBETEXTURE) { RET(D3DERR_INVALIDCALL); return; }
   bind((Object9 **)&TARGET(d)->textures[s], t); MARK(d, C_TEXTURE, (u32)s); RET(D3D_OK);
 }
 IMP(d3d9, IDirect3DDevice9_GetTexture) {
@@ -158,20 +159,20 @@ IMP(d3d9, IDirect3DDevice9_GetVertexDeclaration) {
   Declaration9 *v = DEV->state.declaration; if (v) d3d9_addref(&v->o);
   M32(ARG(1)) = (u32)(uptr)v; RET(D3D_OK);
 }
-// Shaders cannot be created on this device yet, so the only shader there is to set is none
-IMP(d3d9, IDirect3DDevice9_SetVertexShader) {
-  STAT(device_SetVertexShader); Device9 *d = DEV;
-  if (ARG(1)) { com_unsure("Direct3D 9: SetVertexShader of a shader this device did not make"); RET(D3DERR_INVALIDCALL); return; }
-  TARGET(d)->vertex_shader = 0; MARK1(d, M_VERTEX_SHADER); RET(D3D_OK);
+// SetVertexShader / SetPixelShader (a shader this device made, or none: the fixed-function pipeline)
+static u32 set_shader(Cpu *c, Device9 *d, u32 kind) {
+  Object9 *o = (Object9 *)GP(ARG(1));
+  if (o && (o->kind != kind || o->device != d)) return D3DERR_INVALIDCALL;
+  if (kind == K_VERTEXSHADER) { bind((Object9 **)&TARGET(d)->vertex_shader, o); MARK1(d, M_VERTEX_SHADER); }
+  else { bind((Object9 **)&TARGET(d)->pixel_shader, o); MARK1(d, M_PIXEL_SHADER); }
+  return D3D_OK;
 }
-IMP(d3d9, IDirect3DDevice9_GetVertexShader) { STAT(device_GetVertexShader); if (!ARG(1)) { RET(D3DERR_INVALIDCALL); return; } M32(ARG(1)) = 0; RET(D3D_OK); }
-IMP(d3d9, IDirect3DDevice9_SetPixelShader) {
-  STAT(device_SetPixelShader); Device9 *d = DEV;
-  if (ARG(1)) { com_unsure("Direct3D 9: SetPixelShader of a shader this device did not make"); RET(D3DERR_INVALIDCALL); return; }
-  TARGET(d)->pixel_shader = 0; MARK1(d, M_PIXEL_SHADER); RET(D3D_OK);
-}
-IMP(d3d9, IDirect3DDevice9_GetPixelShader) { STAT(device_GetPixelShader); if (!ARG(1)) { RET(D3DERR_INVALIDCALL); return; } M32(ARG(1)) = 0; RET(D3D_OK); }
-// Shader constants: (first register, values, count of registers). Kept although no shader can be made yet.
+static u32 get_shader(Cpu *c, Object9 *o) { if (!ARG(1)) return D3DERR_INVALIDCALL; if (o) d3d9_addref(o); M32(ARG(1)) = (u32)(uptr)o; return D3D_OK; }
+IMP(d3d9, IDirect3DDevice9_SetVertexShader) { STAT(device_SetVertexShader); RET(set_shader(c, DEV, K_VERTEXSHADER)); }
+IMP(d3d9, IDirect3DDevice9_GetVertexShader) { STAT(device_GetVertexShader); RET(get_shader(c, (Object9 *)DEV->state.vertex_shader)); }
+IMP(d3d9, IDirect3DDevice9_SetPixelShader) { STAT(device_SetPixelShader); RET(set_shader(c, DEV, K_PIXELSHADER)); }
+IMP(d3d9, IDirect3DDevice9_GetPixelShader) { STAT(device_GetPixelShader); RET(get_shader(c, (Object9 *)DEV->state.pixel_shader)); }
+// Shader constants: (first register, values, count of registers)
 #define SET_CONSTANTS(FIELD, LIMIT, WIDTH, KLASS) do { Device9 *d = DEV; u32 first = (u32)ARG(1), n = (u32)ARG(3); \
     if (!ARG(2) || first > LIMIT || n > LIMIT - first) { RET(D3DERR_INVALIDCALL); return; } \
     memcpy(&TARGET(d)->FIELD[first], (void *)GP(ARG(2)), n * WIDTH); for (u32 i = 0; i < n; i++) MARK(d, KLASS, first + i); RET(D3D_OK); } while (0)
@@ -369,13 +370,17 @@ IMP(d3d9, IDirect3DDevice9_DrawIndexedPrimitive) { // (primitive type, base vert
   d3d9_gpu_draw(d, type, (s32)ARG(2), (u32)ARG(5), (u32)ARG(6), 1);
   RET(D3D_OK);
 }
-// The vertices (and indices) come with the call: counted and checked, not drawn yet (no title here has used them). Afterwards stream 0 (and the index buffer) are unbound, as Direct3D leaves them.
+// The vertices (and indices) come with the call: they go through the device's own buffers (d3d9_up_buffer), and the
+// draw is an ordinary one. Afterwards stream 0 (and the index buffer) are unbound, as Direct3D leaves them.
 IMP(d3d9, IDirect3DDevice9_DrawPrimitiveUP) { // (primitive type, primitive count, vertices, stride)
   STAT(device_DrawPrimitiveUP); Device9 *d = DEV; State9 *s = &d->state; u32 type = (u32)ARG(1);
   ARGV("device_DrawPrimitiveUP primitive_type", type);
   if ((!s->declaration && !s->fvf) || !vertices_of(type, (u32)ARG(2)) || !ARG(2) || !ARG(3) || !ARG(4)) { RET(D3DERR_INVALIDCALL); return; }
   if (d3d9_stats) draw_stats(d, "draw DrawPrimitiveUP fvf", "draw DrawPrimitiveUP vertexblend", "draw DrawPrimitiveUP lights", "draw DrawPrimitiveUP target");
-  { static int told; if (!told++) com_unsure("Direct3D 9: DrawPrimitiveUP is not drawn"); }
+  u32 stride = (u32)ARG(4), bytes = vertices_of(type, (u32)ARG(2)) * stride;
+  Buffer9 *vb = d3d9_up_buffer(d, 0, (const void *)GP(ARG(3)), bytes, FMT_VERTEXDATA);
+  bind((Object9 **)&s->streams[0].buffer, &vb->o); s->streams[0].offset = 0; s->streams[0].stride = stride;
+  d3d9_gpu_draw(d, type, 0, 0, (u32)ARG(2), 0);
   bind((Object9 **)&s->streams[0].buffer, 0); s->streams[0].offset = s->streams[0].stride = 0;
   RET(D3D_OK);
 }
@@ -384,7 +389,12 @@ IMP(d3d9, IDirect3DDevice9_DrawIndexedPrimitiveUP) { // (primitive type, lowest 
   ARGV("device_DrawIndexedPrimitiveUP primitive_type", type);
   if ((!s->declaration && !s->fvf) || !vertices_of(type, (u32)ARG(4)) || !ARG(4) || !ARG(5) || !ARG(7) || !ARG(8) || (ARG(6) != FMT_INDEX16 && ARG(6) != FMT_INDEX32)) { RET(D3DERR_INVALIDCALL); return; }
   if (d3d9_stats) draw_stats(d, "draw DrawIndexedPrimitiveUP fvf", "draw DrawIndexedPrimitiveUP vertexblend", "draw DrawIndexedPrimitiveUP lights", "draw DrawIndexedPrimitiveUP target");
-  { static int told; if (!told++) com_unsure("Direct3D 9: DrawIndexedPrimitiveUP is not drawn"); }
+  // (vertices from index 0: the lowest index plus the count of vertices is how many the indices can reach)
+  u32 stride = (u32)ARG(8), isize = ARG(6) == FMT_INDEX16 ? 2 : 4;
+  Buffer9 *vb = d3d9_up_buffer(d, 0, (const void *)GP(ARG(7)), ((u32)ARG(2) + (u32)ARG(3)) * stride, FMT_VERTEXDATA);
+  Buffer9 *ib = d3d9_up_buffer(d, 1, (const void *)GP(ARG(5)), vertices_of(type, (u32)ARG(4)) * isize, (u32)ARG(6));
+  bind((Object9 **)&s->streams[0].buffer, &vb->o); s->streams[0].offset = 0; s->streams[0].stride = stride; bind((Object9 **)&s->indices, &ib->o);
+  d3d9_gpu_draw(d, type, 0, 0, (u32)ARG(4), 1);
   bind((Object9 **)&s->streams[0].buffer, 0); s->streams[0].offset = s->streams[0].stride = 0; bind((Object9 **)&s->indices, 0);
   RET(D3D_OK);
 }

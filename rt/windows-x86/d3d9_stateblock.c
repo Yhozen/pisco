@@ -49,8 +49,8 @@ static void copy_singles(State9 *to, const State9 *from, u32 single) {
   if (single & M_SCISSOR) to->scissor = from->scissor;
   if (single & M_INDICES) bind((Object9 **)&to->indices, (Object9 *)from->indices);
   if (single & M_DECLARATION) { bind((Object9 **)&to->declaration, (Object9 *)from->declaration); to->fvf = from->fvf; }
-  if (single & M_VERTEX_SHADER) to->vertex_shader = from->vertex_shader;
-  if (single & M_PIXEL_SHADER) to->pixel_shader = from->pixel_shader;
+  if (single & M_VERTEX_SHADER) bind((Object9 **)&to->vertex_shader, (Object9 *)from->vertex_shader);
+  if (single & M_PIXEL_SHADER) bind((Object9 **)&to->pixel_shader, (Object9 *)from->pixel_shader);
   if (single & M_NPATCH) to->npatch = from->npatch;
 }
 // Capture: the block's entries take the device's values. A light the device does not have stays as the block has it.

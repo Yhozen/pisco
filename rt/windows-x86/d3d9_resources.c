@@ -160,6 +160,61 @@ IMP(d3d9, IDirect3DTexture9_UnlockRect) {
 }
 IMP(d3d9, IDirect3DTexture9_AddDirtyRect) { STAT(texture_2d_AddDirtyRect); TEX->surfaces[0]->dirty++; RET(D3D_OK); }
 
+// ---- cube textures ----
+// CreateCubeTexture(edge length, levels, usage, format, pool, IDirect3DCubeTexture9 **, shared handle): six faces
+// (D3DCUBEMAP_FACE_POSITIVE_X 0 ... NEGATIVE_Z 5), each a chain of `levels` surfaces
+IMP(d3d9, IDirect3DDevice9_CreateCubeTexture) {
+  STAT(device_CreateCubeTexture); Device9 *d = DEV;
+  u32 e = (u32)ARG(1), levels = (u32)ARG(2), usage = (u32)ARG(3), format = (u32)ARG(4), pool = (u32)ARG(5); u64 out = ARG(6);
+  ARGV("device_CreateCubeTexture levels", levels); ARGV("device_CreateCubeTexture usage", usage); ARGV("device_CreateCubeTexture format", format); ARGV("device_CreateCubeTexture pool", pool);
+  if (!out) { RET(D3DERR_INVALIDCALL); return; }
+  M32(out) = 0;
+  const Format9 *f = d3d9_format(format);
+  if (!e || pool > POOL_SCRATCH || ARG(7) || ((usage & (USAGE_RENDERTARGET | USAGE_DEPTHSTENCIL)) && pool != POOL_DEFAULT)) { RET(D3DERR_INVALIDCALL); return; }
+  if (!f) { com_unsure("Direct3D 9: CreateCubeTexture with format %u (0x%x): its layout is not known here", format, format); RET(D3DERR_INVALIDCALL); return; }
+  u32 chain = full_chain(e, e, 1);
+  if (usage & USAGE_AUTOGENMIPMAP) { if (levels > 1) { RET(D3DERR_INVALIDCALL); return; } levels = 1; }
+  if (!levels) levels = chain; if (levels > chain) { RET(D3DERR_INVALIDCALL); return; }
+  Texture9 *t = (Texture9 *)GP(com_new("d3d9", &IDirect3DCubeTexture9_interface, sizeof(Texture9)));
+  d3d9_object_init(&t->o, K_CUBETEXTURE, d, 0);
+  t->format = format; t->usage = usage; t->pool = pool; t->width = t->height = e; t->depth = 1; t->levels = levels; t->autogen_filter = 2;
+  t->surfaces = calloc(6 * levels, sizeof *t->surfaces);
+  for (u32 face = 0; face < 6; face++) for (u32 i = 0; i < levels; i++) t->surfaces[face * levels + i] = d3d9_surface_new(d, &t->o, i, dim(e, i), dim(e, i), format, usage, pool, 0, 0);
+  M32(out) = (u32)(uptr)t; RET(D3D_OK);
+}
+static Surface9 *cube_face(Texture9 *t, u64 face, u64 level) { return face < 6 && level < t->levels ? t->surfaces[face * t->levels + level] : 0; }
+IMP(d3d9, IDirect3DCubeTexture9_QueryInterface) { STAT(texture_cube_QueryInterface); RET(query(c, SELF, IDirect3DCubeTexture9_interface.iid, IID_IDirect3DBaseTexture9_text, IID_IDirect3DResource9_text)); }
+IMP(d3d9, IDirect3DCubeTexture9_AddRef) { STAT(texture_cube_AddRef); RET(d3d9_addref(SELF)); }
+IMP(d3d9, IDirect3DCubeTexture9_Release) { STAT(texture_cube_Release); RET(d3d9_release(SELF)); }
+IMP(d3d9, IDirect3DCubeTexture9_GetDevice) { STAT(texture_cube_GetDevice); RET(get_device(c, SELF)); }
+IMP(d3d9, IDirect3DCubeTexture9_SetPriority) { STAT(texture_cube_SetPriority); Texture9 *t = TEX; u32 old = t->priority; if (t->pool == POOL_MANAGED) t->priority = (u32)ARG(1); RET(old); }
+IMP(d3d9, IDirect3DCubeTexture9_GetPriority) { STAT(texture_cube_GetPriority); RET(TEX->priority); }
+IMP(d3d9, IDirect3DCubeTexture9_PreLoad) { STAT(texture_cube_PreLoad); }
+IMP(d3d9, IDirect3DCubeTexture9_GetType) { STAT(texture_cube_GetType); RET(RTYPE_CUBETEXTURE); }
+IMP(d3d9, IDirect3DCubeTexture9_SetLOD) { STAT(texture_cube_SetLOD); Texture9 *t = TEX; u32 old = t->lod; if (t->pool == POOL_MANAGED) t->lod = ARG(1) < t->levels ? (u32)ARG(1) : t->levels - 1; RET(old); }
+IMP(d3d9, IDirect3DCubeTexture9_GetLOD) { STAT(texture_cube_GetLOD); RET(TEX->lod); }
+IMP(d3d9, IDirect3DCubeTexture9_GetLevelCount) { STAT(texture_cube_GetLevelCount); RET(TEX->levels); }
+IMP(d3d9, IDirect3DCubeTexture9_SetAutoGenFilterType) { STAT(texture_cube_SetAutoGenFilterType); if (!ARG(1)) { RET(D3DERR_INVALIDCALL); return; } TEX->autogen_filter = (u32)ARG(1); RET(D3D_OK); }
+IMP(d3d9, IDirect3DCubeTexture9_GetAutoGenFilterType) { STAT(texture_cube_GetAutoGenFilterType); RET(TEX->autogen_filter); }
+IMP(d3d9, IDirect3DCubeTexture9_GenerateMipSubLevels) { STAT(texture_cube_GenerateMipSubLevels); }
+IMP(d3d9, IDirect3DCubeTexture9_GetLevelDesc) {
+  STAT(texture_cube_GetLevelDesc); Texture9 *t = TEX;
+  if (ARG(1) >= t->levels || !ARG(2)) { RET(D3DERR_INVALIDCALL); return; }
+  *(SurfaceDesc9 *)GP(ARG(2)) = t->surfaces[ARG(1)]->desc; RET(D3D_OK);
+}
+IMP(d3d9, IDirect3DCubeTexture9_GetCubeMapSurface) { // (face, level, IDirect3DSurface9 **)
+  STAT(texture_cube_GetCubeMapSurface); Texture9 *t = TEX; Surface9 *s = cube_face(t, ARG(1), ARG(2));
+  if (!s || !ARG(3)) { RET(D3DERR_INVALIDCALL); return; }
+  d3d9_addref(&t->o); M32(ARG(3)) = (u32)(uptr)s; RET(D3D_OK);
+}
+IMP(d3d9, IDirect3DCubeTexture9_LockRect) { // (face, level, D3DLOCKED_RECT *, RECT *, flags)
+  STAT(texture_cube_LockRect); Surface9 *s = cube_face(TEX, ARG(1), ARG(2));
+  if (!s) { RET(D3DERR_INVALIDCALL); return; }
+  RET(surface_lock(s, ARG(3), ARG(4), (u32)ARG(5)));
+}
+IMP(d3d9, IDirect3DCubeTexture9_UnlockRect) { STAT(texture_cube_UnlockRect); Surface9 *s = cube_face(TEX, ARG(1), ARG(2)); if (!s) { RET(D3DERR_INVALIDCALL); return; } surface_unlock(s); RET(D3D_OK); }
+IMP(d3d9, IDirect3DCubeTexture9_AddDirtyRect) { STAT(texture_cube_AddDirtyRect); Surface9 *s = cube_face(TEX, ARG(1), 0); if (s) s->dirty++; RET(D3D_OK); }
+
 // ---- volume textures ----
 // CreateVolumeTexture(width, height, depth, levels, usage, format, pool, IDirect3DVolumeTexture9 **, shared handle)
 IMP(d3d9, IDirect3DDevice9_CreateVolumeTexture) {
@@ -310,9 +365,21 @@ IMP(d3d9, IDirect3DDevice9_UpdateTexture) {
   u32 skip = 0; while (skip < src->levels && (dim(src->width, skip) != dst->width || dim(src->height, skip) != dst->height || dim(src->depth, skip) != dst->depth)) skip++;
   if (skip == src->levels || src->levels - skip < dst->levels) { if (!(dst->usage & USAGE_AUTOGENMIPMAP) || skip == src->levels) { RET(D3DERR_INVALIDCALL); return; } }
   for (u32 i = 0; i < dst->levels && skip + i < src->levels; i++) {
-    if (src->o.kind == K_TEXTURE) { Surface9 *a = src->surfaces[skip + i], *b = dst->surfaces[i]; memcpy(b->bits, a->bits, a->size < b->size ? a->size : b->size); b->dirty++; }
+    if (src->o.kind == K_CUBETEXTURE) for (u32 f = 0; f < 6; f++) { Surface9 *a = src->surfaces[f * src->levels + skip + i], *b = dst->surfaces[f * dst->levels + i]; memcpy(b->bits, a->bits, a->size < b->size ? a->size : b->size); b->dirty++; }
+    else if (src->o.kind == K_TEXTURE) { Surface9 *a = src->surfaces[skip + i], *b = dst->surfaces[i]; memcpy(b->bits, a->bits, a->size < b->size ? a->size : b->size); b->dirty++; }
     else { Volume9 *a = src->volumes[skip + i], *b = dst->volumes[i]; memcpy(b->bits, a->bits, a->size < b->size ? a->size : b->size); b->dirty++; }
   }
+  RET(D3D_OK);
+}
+// GetRenderTargetData(render target, system-memory surface of its size and format): the target's pixels into the
+// surface. Here they are the bytes the runtime holds for the target (what the title wrote, or zeros): reading the
+// GPU's back is T4's (docs/tag.md: Tag reads a 512x512 target back each frame).
+IMP(d3d9, IDirect3DDevice9_GetRenderTargetData) {
+  STAT(device_GetRenderTargetData); Surface9 *a = (Surface9 *)GP(ARG(1)), *b = (Surface9 *)GP(ARG(2));
+  if (!a || !b || a->o.kind != K_SURFACE || b->o.kind != K_SURFACE || !(a->desc.usage & USAGE_RENDERTARGET) || b->desc.pool != POOL_SYSTEMMEM
+      || a->desc.width != b->desc.width || a->desc.height != b->desc.height || a->desc.format != b->desc.format || a->desc.multisample) { RET(D3DERR_INVALIDCALL); return; }
+  { static int told; if (!told++) rt_log("Direct3D 9: GetRenderTargetData gives the runtime's copy of the target, not the GPU's pixels (T4)"); }
+  memcpy(b->bits, a->bits, a->size < b->size ? a->size : b->size); b->dirty++;
   RET(D3D_OK);
 }
 // ColorFill(surface, RECT * or null, colour): the 32-bit and 16-bit RGB formats
@@ -450,11 +517,71 @@ void d3d9_destroy(Object9 *o) {
   switch (o->kind) {
   case K_SURFACE: surface_free((Surface9 *)o); return;
   case K_TEXTURE: { Texture9 *t = (Texture9 *)o; for (u32 i = 0; i < t->levels; i++) surface_free(t->surfaces[i]); free(t->surfaces); break; }
+  case K_CUBETEXTURE: { Texture9 *t = (Texture9 *)o; for (u32 i = 0; i < 6 * t->levels; i++) surface_free(t->surfaces[i]); free(t->surfaces); break; }
   case K_VOLUMETEXTURE: { Texture9 *t = (Texture9 *)o; for (u32 i = 0; i < t->levels; i++) { free(t->volumes[i]->bits); t->volumes[i]->o.vtable = 0; free(t->volumes[i]); } free(t->volumes); break; }
   case K_VERTEXBUFFER: case K_INDEXBUFFER: free(((Buffer9 *)o)->bits); break;
   case K_DECLARATION: free(((Declaration9 *)o)->elements); break;
+  case K_VERTEXSHADER: case K_PIXELSHADER: free(((Shader9 *)o)->tokens); break;
   case K_STATEBLOCK: d3d9_stateblock_destroy((StateBlock9 *)o); return;
   default: return;   // the swap chain goes with its device
   }
   o->vtable = 0; free(o);
+}
+
+// ---- shaders: CreateVertexShader / CreatePixelShader (bytecode, IDirect3D*Shader9 **) keep a copy of the tokens. A
+// shader of a model the translator does not take is refused here, as a device without that model refuses it.
+#include "d3d9_sm.h"
+static u32 create_shader(Cpu *c, u32 kind) {
+  u64 out = ARG(2); const u32 *t = (const u32 *)GP(ARG(1));
+  if (!ARG(1) || !out) return D3DERR_INVALIDCALL;
+  M32(out) = 0;
+  u32 v = t[0], major = (v >> 8) & 0xFF;
+  if ((v >> 16) != (kind == K_VERTEXSHADER ? 0xFFFEu : 0xFFFFu) || major < 1 || major > 2) {
+    char name[16]; sm_version_name(v, name, sizeof name);
+    com_unsure("Direct3D 9: Create%sShader of %s: shader model 3 and others are not translated", kind == K_VERTEXSHADER ? "Vertex" : "Pixel", name);
+    return D3DERR_INVALIDCALL;
+  }
+  size_t n = sm_length(t, 1u << 16);
+  if (!n) return D3DERR_INVALIDCALL;
+  Shader9 *s = (Shader9 *)GP(com_new("d3d9", kind == K_VERTEXSHADER ? &IDirect3DVertexShader9_interface : &IDirect3DPixelShader9_interface, sizeof(Shader9)));
+  d3d9_object_init(&s->o, kind, DEV, 0);
+  s->count = (u32)n; s->tokens = malloc(4 * n); memcpy(s->tokens, t, 4 * n);
+  M32(out) = (u32)(uptr)s; return D3D_OK;
+}
+IMP(d3d9, IDirect3DDevice9_CreateVertexShader) { STAT(device_CreateVertexShader); RET(create_shader(c, K_VERTEXSHADER)); }
+IMP(d3d9, IDirect3DDevice9_CreatePixelShader) { STAT(device_CreatePixelShader); RET(create_shader(c, K_PIXELSHADER)); }
+// GetFunction(void * or null, UINT *size): the bytecode, or its size in bytes
+static u32 get_function(Cpu *c, Shader9 *s) {
+  if (!ARG(2)) return D3DERR_INVALIDCALL;
+  if (!ARG(1)) { M32(ARG(2)) = 4 * s->count; return D3D_OK; }
+  if (M32(ARG(2)) < 4 * s->count) return D3DERR_INVALIDCALL;
+  memcpy((void *)GP(ARG(1)), s->tokens, 4 * s->count); return D3D_OK;
+}
+IMP(d3d9, IDirect3DVertexShader9_QueryInterface) { STAT(vertex_shader_QueryInterface); RET(query(c, SELF, IDirect3DVertexShader9_interface.iid, 0, 0)); }
+IMP(d3d9, IDirect3DVertexShader9_AddRef) { STAT(vertex_shader_AddRef); RET(d3d9_addref(SELF)); }
+IMP(d3d9, IDirect3DVertexShader9_Release) { STAT(vertex_shader_Release); RET(d3d9_release(SELF)); }
+IMP(d3d9, IDirect3DVertexShader9_GetDevice) { STAT(vertex_shader_GetDevice); RET(get_device(c, SELF)); }
+IMP(d3d9, IDirect3DVertexShader9_GetFunction) { STAT(vertex_shader_GetFunction); RET(get_function(c, (Shader9 *)SELF)); }
+IMP(d3d9, IDirect3DPixelShader9_QueryInterface) { STAT(pixel_shader_QueryInterface); RET(query(c, SELF, IDirect3DPixelShader9_interface.iid, 0, 0)); }
+IMP(d3d9, IDirect3DPixelShader9_AddRef) { STAT(pixel_shader_AddRef); RET(d3d9_addref(SELF)); }
+IMP(d3d9, IDirect3DPixelShader9_Release) { STAT(pixel_shader_Release); RET(d3d9_release(SELF)); }
+IMP(d3d9, IDirect3DPixelShader9_GetDevice) { STAT(pixel_shader_GetDevice); RET(get_device(c, SELF)); }
+IMP(d3d9, IDirect3DPixelShader9_GetFunction) { STAT(pixel_shader_GetFunction); RET(get_function(c, (Shader9 *)SELF)); }
+
+// ---- the buffers of the UP draws: the device's own, invisible to the title (no reference of its changes), grown
+// as needed and written whole for each draw (a DISCARD: the back end may hand out new storage)
+Buffer9 *d3d9_up_buffer(Device9 *d, int which, const void *src, u32 bytes, u32 format) {
+  Buffer9 *b = d->up[which];
+  if (!b || b->size < bytes) {
+    u32 size = 1u << 16; while (size < bytes) size *= 2;
+    if (b) { d3d9_gpu_release(&b->o); free(b->bits); b->o.vtable = 0; free(b); }
+    b = (Buffer9 *)GP(com_new("d3d9", which ? &IDirect3DIndexBuffer9_interface : &IDirect3DVertexBuffer9_interface, sizeof(Buffer9)));
+    b->o.kind = which ? K_INDEXBUFFER : K_VERTEXBUFFER; b->o.device = d; b->o.refs = 1;
+    b->usage = USAGE_DYNAMIC; b->pool = POOL_DEFAULT; b->size = size; b->bits = calloc(1, size);
+    d->up[which] = b;
+  }
+  b->format = format;
+  memcpy(b->bits, src, bytes); b->dirty++;
+  d3d9_gpu_buffer_locked(b, 0, bytes, LOCK_DISCARD);
+  return b;
 }

@@ -48,7 +48,7 @@ enum { FMT_R8G8B8 = 20, FMT_A8R8G8B8 = 21, FMT_X8R8G8B8 = 22, FMT_VERTEXDATA = 1
 // the object (bound to a stage, a stream or a target, or kept by a state block). An object lives while either
 // is above zero, and holds a reference on its device while `refs` is, as the oracle's does (d3d9probe.txt).
 // A texture's surfaces and a volume texture's volumes have no count of their own: theirs is the texture's.
-enum { K_DIRECT3D = 1, K_DEVICE, K_SWAPCHAIN, K_SURFACE, K_TEXTURE, K_VOLUMETEXTURE, K_VOLUME, K_VERTEXBUFFER, K_INDEXBUFFER, K_DECLARATION, K_STATEBLOCK };
+enum { K_DIRECT3D = 1, K_DEVICE, K_SWAPCHAIN, K_SURFACE, K_TEXTURE, K_VOLUMETEXTURE, K_VOLUME, K_VERTEXBUFFER, K_INDEXBUFFER, K_DECLARATION, K_STATEBLOCK, K_VERTEXSHADER, K_PIXELSHADER, K_CUBETEXTURE };
 typedef struct Device9 Device9;
 typedef struct Object9 {
   u32 vtable; s32 refs, held; u32 kind;
@@ -65,7 +65,8 @@ typedef struct Surface9 {
   u32 gpu_id, gpu_dirty;       // d3d9_gpu.c: its texture on the GPU (a surface that is no texture's level), and the `dirty` last sent there
 } Surface9;
 typedef struct Volume9 { Object9 o; VolumeDesc9 desc; u32 level; u8 *bits; u32 row_pitch, slice_pitch, size; s32 locked; u32 dirty, gpu_dirty; } Volume9;
-typedef struct Texture9 {      // a 2D texture (K_TEXTURE: `surfaces`) or a volume texture (K_VOLUMETEXTURE: `volumes`)
+typedef struct Texture9 {      // a 2D texture (K_TEXTURE: `surfaces`), a cube texture (K_CUBETEXTURE: `surfaces`, six faces of
+                               // `levels` each, face by face) or a volume texture (K_VOLUMETEXTURE: `volumes`)
   Object9 o;
   u32 format, usage, pool, width, height, depth, levels, lod, autogen_filter, priority;
   Surface9 **surfaces; Volume9 **volumes;
@@ -82,6 +83,8 @@ typedef struct Buffer9 {       // a vertex buffer or an index buffer
 typedef struct Declaration9 { Object9 o; u32 count, fvf; Element9 *elements;   // `count` includes the end marker; `fvf`: the code it was made from, 0 for a title's own
                               struct Declaration9 *next_fvf; } Declaration9;
 typedef struct SwapChain9 { Object9 o; } SwapChain9;
+// a vertex or pixel shader: its bytecode (d3d9_sm.c translates it for a draw), from the version token to the end token
+typedef struct Shader9 { Object9 o; u32 *tokens; u32 count; } Shader9;
 
 // ---- the state a state block can hold ----
 enum { RS_COUNT = 256, TSS_COUNT = 33, STAGES = 8, SAMP_COUNT = 14, SAMPLERS = 21, STREAMS = 16, CLIP_PLANES = 8,
@@ -96,7 +99,7 @@ typedef struct State9 {
   struct { Buffer9 *buffer; u32 offset, stride, freq; } streams[STREAMS];
   Buffer9 *indices;
   Declaration9 *declaration; u32 fvf;     // the vertex format: a title's declaration (fvf 0), or the device's own declaration for an FVF code
-  u32 vertex_shader, pixel_shader;        // always 0: shaders cannot be created yet
+  struct Shader9 *vertex_shader, *pixel_shader;   // 0: the fixed-function pipeline
   Material9 material; Viewport9 viewport; Rect9 scissor;
   float clip_planes[CLIP_PLANES][4];
   float npatch;
@@ -128,6 +131,7 @@ struct Device9 {
   int in_scene; u32 frames;
   Declaration9 *fvf_declarations;         // the declarations made for FVF codes: the device's, kept until it goes
   u32 software_vp; s32 cursor_x, cursor_y; u32 cursor_shown;
+  Buffer9 *up[2];                         // DrawPrimitiveUP's vertices and DrawIndexedPrimitiveUP's indices: the device's own buffers
 };
 
 // ---- shared helpers ----
@@ -164,6 +168,8 @@ void d3d9_gpu_draw(Device9 *d, u32 type, s32 base, u32 first, u32 primitives, in
 void d3d9_gpu_present(Device9 *d);                 // the back buffer goes to the screen
 void d3d9_gpu_buffer_locked(Buffer9 *b, u32 offset, u32 size, u32 flags);   // a lock for writing: what it may change
 void d3d9_gpu_release(Object9 *o);                 // the object is going: so is what it has on the GPU
+// d3d9_resources.c: the device's buffer for a UP draw's vertices (0) or indices (1), holding `bytes` from `src`
+Buffer9 *d3d9_up_buffer(Device9 *d, int which, const void *src, u32 bytes, u32 format);
 void d3d9_gpu_shot(const char *name);              // a session's checkpoint: the host saves the frame presented last
 void d3d9_gpu_stats(void);                         // logs how many shaders, pipelines and draws there were
 void d3d9_gpu_finish(void);                        // the process ends: returns once the back end has seen everything

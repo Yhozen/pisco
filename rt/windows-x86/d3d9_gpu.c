@@ -48,7 +48,8 @@ enum { SAMP_ADDRESSU = 1, SAMP_ADDRESSV, SAMP_ADDRESSW, SAMP_BORDERCOLOR, SAMP_M
 enum { PT_POINTLIST = 1, PT_LINELIST, PT_LINESTRIP, PT_TRIANGLELIST, PT_TRIANGLESTRIP, PT_TRIANGLEFAN };
 enum { TS_VIEW = 2, TS_PROJECTION = 3, TS_TEXTURE0 = 16, TS_WORLD = 256 };
 enum { DXGI_R32G32B32A32_FLOAT = 2, DXGI_R32G32B32_FLOAT = 6, DXGI_R32G32_FLOAT = 16, DXGI_R8G8B8A8_UNORM = 28, DXGI_D32_FLOAT = 40, DXGI_R32_FLOAT = 41, DXGI_D24_UNORM_S8_UINT = 45,
-       DXGI_D16_UNORM = 55, DXGI_B8G8R8A8_UNORM = 87, DXGI_B8G8R8X8_UNORM = 88 };
+       DXGI_D16_UNORM = 55, DXGI_B8G8R8A8_UNORM = 87, DXGI_B8G8R8X8_UNORM = 88,
+       DXGI_R16G16B16A16_FLOAT = 10, DXGI_R16G16_FLOAT = 34, DXGI_R16_FLOAT = 54 };
 
 // What is not handled is said once (and stops a strict run), then the draw goes on without it or is left out
 #define UNSURE_ONCE(...) do { static int told_; if (!told_++) com_unsure(__VA_ARGS__); } while (0)
@@ -67,6 +68,12 @@ static u32 dxgi_of(u32 format) {
   switch (format) {
   case FMT_A8R8G8B8: return DXGI_B8G8R8A8_UNORM;
   case FMT_X8R8G8B8: return DXGI_B8G8R8X8_UNORM;
+  case 111: return DXGI_R16_FLOAT;                                     // R16F
+  case 112: return DXGI_R16G16_FLOAT;                                  // G16R16F
+  case 113: return DXGI_R16G16B16A16_FLOAT;                            // A16B16G16R16F
+  case 114: return DXGI_R32_FLOAT;                                     // R32F (Tag's paint maps: docs/tag.md)
+  case 115: return DXGI_R32G32_FLOAT;                                  // G32R32F
+  case 116: return DXGI_R32G32B32A32_FLOAT;                            // A32B32G32R32F
   case 75: case 77: case 79: case 83: return DXGI_D24_UNORM_S8_UINT;   // D24S8, D24X8, D24X4S4, D24FS8
   case 70: case 73: case 80: return DXGI_D16_UNORM;                    // D16_LOCKABLE, D15S1, D16
   case 71: case 82: return DXGI_D32_FLOAT;                             // D32, D32F_LOCKABLE
@@ -129,6 +136,7 @@ static u32 buffer(Buffer9 *b) {
 }
 // A texture with all its levels; the ones whose bytes changed are sent again. 0: a format not drawn with.
 static u32 texture(Texture9 *t) {
+  if (t->o.kind == K_CUBETEXTURE) { static int told; if (!told++) rt_log("Direct3D 9: a cube texture is not drawn with yet (T4)"); return 0; }
   u32 format = dxgi_of(t->format); int color = t->format == FMT_A8R8G8B8 || t->format == FMT_X8R8G8B8;
   if (!format || (!color && !(t->usage & USAGE_DEPTHSTENCIL))) return 0;   // the two colour formats, or a depth format used as one
   int target = (t->usage & (USAGE_RENDERTARGET | USAGE_DEPTHSTENCIL)) != 0;
@@ -158,7 +166,7 @@ static u32 target(Surface9 *s, u32 *mip) {
 void d3d9_gpu_release(Object9 *o) {
   switch (o->kind) {
   case K_SURFACE: destroy(((Surface9 *)o)->gpu_id); break;
-  case K_TEXTURE: case K_VOLUMETEXTURE: destroy(((Texture9 *)o)->gpu_id); break;
+  case K_TEXTURE: case K_VOLUMETEXTURE: case K_CUBETEXTURE: destroy(((Texture9 *)o)->gpu_id); break;
   case K_VERTEXBUFFER: case K_INDEXBUFFER: destroy(((Buffer9 *)o)->gpu_id); break;
   default: break;
   }
