@@ -110,6 +110,11 @@ extract = "innosetup"                     # innoextract (tools/setup-toolchain.s
 # app = 'C:\Program Files\Narbacular Drop'  where {app} goes (default: the exe's folder)
 # map = { commonappdata = 'C:\Documents and Settings\All Users\Application Data' }  the installer's other folders
 
+[[source.cab]]                            # files the installer carries in a cabinet (cabextract on the builder's
+cab = 'C:\Program Files\Tag\DirectX\AUG2007_d3dx9_35_x86.cab'   # machine: tools/setup-toolchain.sh cabextract,
+files = ["d3dx9_35.dll"]                  # or CABEXTRACT=<path>), taken out into a folder of C: (recipes/tag)
+to = 'C:\WINDOWS\system32'
+
 [run]
 exe = 'C:\Program Files\Narbacular Drop\Narbacular Drop.exe'
 display = "640x480"
@@ -170,7 +175,9 @@ manifest digest is the last line on stdout):
 
 1. **the source**: its sha256 against the recipe's;
 2. **extraction**: `innoextract` into `<cache>/extract/<sha256>-innosetup`, once per installer. `--compare <folder>`
-   sets the extracted `{app}` against another installation (a Wine prefix's) and prints the differences;
+   sets the extracted `{app}` against another installation (a Wine prefix's) and prints the differences. Each
+   `[[source.cab]]` is taken out of its cabinet with `cabextract`, once per cabinet and list of files, into
+   `<cache>/extract/<sha256>-innosetup-cab-<key>`; a missing `cabextract` stops the build and says how to get it;
 3. **lifting**: the lifter and clang on the lifted C, once per **lift key**: the sha256 of the images the lifter
    reads (the exe and every shipped DLL that is not `builtin`), the lifter (its version and a hash of its sources
    and `Cargo.lock`; `pisco` builds it first), `rt/cpu.h` and `rt/modules.h`, the lifter's options, clang's version and

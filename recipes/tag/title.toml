@@ -1,0 +1,41 @@
+# The recipe for Tag: The Power of Paint (2008, DigiPen; Direct3D 9): `pisco build recipes/tag --source <installer>`
+# makes its image (docs/images.md). What is known of the title so far: docs/tag.md (milestone T0 of the plan). The
+# image is not yet runnable: the lifter takes the exe only, and the runtime has no FMOD Ex nor ws2_32 (T1 to T5).
+name = "tag"
+from = "base/windows-x86:1"
+libraries = ["d3d9", "dinput8"]   # checked against the title's imports; FMOD Ex (fmodex.dll) has no library yet (T5)
+
+[source]
+# the user's own installer: never stored in the repository, nor in any image that leaves the machine
+file = "Tag_setup.exe"
+sha256 = "bb69d916e788c6a658e4b75e945efd6960ce4ddef1f5cc0ce6db86efccbe8113"
+extract = "innosetup"
+app = 'C:\Program Files\Tag'
+
+[[source.cab]]
+# Microsoft's D3DX, which the installer leaves to DXSETUP: taken out of its cabinet into system32, as DXSETUP puts
+# it there. The title's shaders are compiled at run time by this DLL's HLSL compiler (docs/tag.md)
+cab = 'C:\Program Files\Tag\DirectX\AUG2007_d3dx9_35_x86.cab'
+files = ["d3dx9_35.dll"]
+to = 'C:\WINDOWS\system32'
+
+[run]
+exe = 'C:\Program Files\Tag\Tag.exe'
+display = "1024x768"   # Game Data\TAG.ini: full screen (bWindowed = 0) at 1024x768, as the oracle runs it
+
+[cpu]
+# As for Narbacular Drop: d3dx9_35.dll has hand-written MMX and 3DNow paths the lifter does not take (7727 of its
+# instructions, docs/tag.md); on a Pentium without MMX it runs its plain x87 code
+features = ["fpu", "tsc", "cx8"]
+
+[registry]
+# D3DX's switches for its processor-specific code, all off (as for Narbacular Drop)
+'HKLM\Software\Microsoft\Direct3D' = { DisableMMX = 1, DisablePSGP = 1, DisableD3DXPSGP = 1 }
+
+[dll]
+# the shipped fmodex.dll is UPX-packed; the runtime's own FMOD Ex is to answer instead (T5)
+"fmodex.dll" = "builtin"
+
+[lifter]
+split = 16    # the lifted C in 16 files: compiled in parallel
+entries = []  # extra function entries reported by runs (none needed so far)

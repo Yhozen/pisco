@@ -134,7 +134,42 @@ fn extract(r: &Recipe, src: &Path, sha: &str, cache: &Path) -> R<Extracted> {
         dirs.push(join("")); for d in ds { dirs.push(join(&d)); }
         for (rel, host) in fs { files.insert(join(&rel), host); }
     }
+    for c in &r.source.cabs { uncab(c, &mut files, &mut dirs, &dir)?; }
     Ok(Extracted { files, dirs, app_guest })
+}
+fn cabextract() -> PathBuf {
+    if let Ok(p) = std::env::var("CABEXTRACT") { return p.into(); }
+    let p = home().join("tools/cabextract/bin/cabextract");
+    if p.is_file() { p } else { "cabextract".into() }
+}
+/// [[source.cab]]: files taken out of a cabinet the installer carries (cabextract), once per cabinet and list,
+/// into a folder of their own beside the extraction's
+fn uncab(c: &recipe::Cab, files: &mut BTreeMap<String, PathBuf>, dirs: &mut Vec<String>, extracted: &Path) -> R<()> {
+    let cab_guest = recipe::drive_path(&c.cab)?;
+    let to = recipe::drive_path(&c.to)?;
+    let cab = files.iter().find(|(g, _)| g.eq_ignore_ascii_case(&cab_guest)).map(|x| x.1.clone()).ok_or(format!("[[source.cab]] {}: not among the installer's files", c.cab))?;
+    let key = oci::sha256(format!("{cab_guest}\n{}\n", c.files.join("\n")).as_bytes());
+    let mut name = extracted.as_os_str().to_owned(); name.push(format!("-cab-{}", &key[..16]));
+    let dir = PathBuf::from(name);
+    if !dir.is_dir() {
+        let tmp = tmp_name(&dir); let _ = std::fs::remove_dir_all(&tmp); io(std::fs::create_dir_all(&tmp), &tmp)?;
+        let ce = cabextract();
+        for f in &c.files {
+            let o = Command::new(&ce).args(["-q", "-F", f, "-d"]).arg(&tmp).arg(&cab).output()
+                .map_err(|e| format!("{}: {e}: [[source.cab]] needs cabextract on this machine (tools/setup-toolchain.sh cabextract, or CABEXTRACT=<path>)", ce.display()))?;
+            if !o.status.success() { return Err(format!("cabextract {f} from {}: {}", c.cab, String::from_utf8_lossy(&o.stderr).trim())); }
+        }
+        publish(&tmp, &dir)?;
+        say(&format!("extract: {} from {}", c.files.join(" "), c.cab));
+    }
+    for f in &c.files {
+        let host = io(std::fs::read_dir(&dir), &dir)?.filter_map(|e| e.ok()).find(|e| e.file_name().to_string_lossy().eq_ignore_ascii_case(f)).map(|e| e.path())
+            .ok_or(format!("[[source.cab]] {f}: not in {}", c.cab))?;
+        let n = host.file_name().unwrap().to_string_lossy().into_owned();
+        files.insert(if to.is_empty() { n } else { format!("{to}/{n}") }, host);
+    }
+    if !dirs.contains(&to) { dirs.push(to); }
+    Ok(())
 }
 /// The extracted files of {app} against another copy of the same installation (a Wine prefix's)
 fn compare(ex: &Extracted, other: &Path) -> R<()> {

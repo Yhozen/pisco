@@ -12,7 +12,9 @@ pub enum RegData { Dword(u32), Sz(String) }
 #[derive(Clone, Debug)]
 pub struct RegValue { pub key: String, pub name: String, pub data: RegData }
 
-pub struct Source { pub file: String, pub sha256: Option<String>, pub extract: String, pub app: Option<String>, pub map: BTreeMap<String, String> }
+pub struct Source { pub file: String, pub sha256: Option<String>, pub extract: String, pub app: Option<String>, pub map: BTreeMap<String, String>, pub cabs: Vec<Cab> }
+/// [[source.cab]]: files taken out of a cabinet among the installer's files (cabextract), put in a folder of C:
+pub struct Cab { pub cab: String, pub files: Vec<String>, pub to: String }
 pub struct Recipe {
     pub dir: PathBuf, pub name: String, pub from: String, pub libraries: Vec<String>, pub source: Source,
     pub exe: String, pub display: Option<String>, pub args: Vec<String>,
@@ -97,6 +99,16 @@ pub fn load_recipe(dir: &Path) -> R<Recipe> {
     let build = table(&t, "build")?.cloned().unwrap_or_default();
     let mut map = BTreeMap::new();
     for (k, v) in table(src, "map")?.into_iter().flatten() { map.insert(k.clone(), v.as_str().ok_or("source.map: strings")?.to_string()); }
+    let mut cabs = Vec::new();
+    match src.get("cab") {
+        None => {}
+        Some(Value::Array(a)) => for c in a {
+            let c = c.as_table().ok_or("[[source.cab]]: tables")?;
+            cabs.push(Cab { cab: s(c, "cab").ok_or("[[source.cab]] cab = 'C:\\...\\x.cab'")?, files: strs(c, "files")?.filter(|f| !f.is_empty()).ok_or("[[source.cab]] files = [\"name.dll\"]")?,
+                to: s(c, "to").ok_or("[[source.cab]] to = 'C:\\WINDOWS\\system32'")? });
+        },
+        Some(_) => return Err("[[source.cab]]: an array of tables".into()),
+    }
     let mut dll = BTreeMap::new();
     for (k, v) in table(&t, "dll")?.into_iter().flatten() {
         let how = v.as_str().ok_or("[dll]: \"name.dll\" = \"builtin\"")?;
@@ -107,7 +119,7 @@ pub fn load_recipe(dir: &Path) -> R<Recipe> {
         name: s(&t, "name").ok_or("recipe: no name")?,
         from: s(&t, "from").ok_or("recipe: no from (a base, e.g. \"base/windows-x86:1\")")?,
         libraries: strs(&t, "libraries")?.unwrap_or_default(),
-        source: Source { file: s(src, "file").ok_or("[source] file")?, sha256: s(src, "sha256").map(|x| x.to_ascii_lowercase()), extract: s(src, "extract").unwrap_or("file".into()), app: s(src, "app"), map },
+        source: Source { file: s(src, "file").ok_or("[source] file")?, sha256: s(src, "sha256").map(|x| x.to_ascii_lowercase()), extract: s(src, "extract").unwrap_or("file".into()), app: s(src, "app"), map, cabs },
         exe: s(run, "exe").ok_or("[run] exe")?,
         display: s(run, "display"),
         args: strs(run, "args")?.unwrap_or_default(),
