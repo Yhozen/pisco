@@ -1634,6 +1634,20 @@ fn discover32(img: &Image, roots: &BTreeSet<u64>, forced: &BTreeSet<u64>) -> Fou
             }
         }
     }
+    // An image that merges its read-only data into its code section (D3DX's .text holds its import table and the C
+    // runtime's tables of initializers): a relocated pointer there is a candidate as well. Pointers that are part of
+    // an instruction (`push offset f`) are found by decoding too; a candidate inside known code is rejected below.
+    // (every relocation that is not an import slot: the stretch of the code section that holds data is not "code")
+    for &r in &img.relocs {
+        if slots.contains(&r) {
+            continue;
+        }
+        if let Some(t) = img.u32(r).map(u64::from) {
+            if img.is_code(t) {
+                cand.insert(t);
+            }
+        }
+    }
     let in_data = cand.clone();
     cand.extend(forced.iter().copied());
     let mut soft: BTreeSet<u64> = BTreeSet::new();
@@ -1959,6 +1973,7 @@ fn lift() {
         img.imports.extend(m.imports.iter().cloned());
         img.exports.extend(m.exports.iter().cloned());
         img.ranges.extend(m.ranges.iter().cloned());
+        img.relocs.extend(m.relocs.iter().copied());   // (discover32 takes relocated pointers as candidates)
     }
     // function entries: the entry point, the exception table, then every call target, to a fixpoint
     let mut entries: BTreeSet<u64> = img.pdata.keys().copied().collect();
