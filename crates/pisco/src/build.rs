@@ -109,7 +109,14 @@ fn extract(r: &Recipe, src: &Path, sha: &str, cache: &Path) -> R<Extracted> {
                 io(std::fs::create_dir_all(tmp.join("app")), &tmp)?;
                 io(std::fs::copy(src, tmp.join("app").join(name)), src)?;
             }
-            x => return Err(format!("[source] extract = \"{x}\": known are \"innosetup\" and \"file\"")),
+            "folder" => { // the folder's files go to the exe's folder ({app}), as they are
+                if !src.is_dir() { return Err(format!("{}: extract = \"folder\" wants a folder", src.display())); }
+                let (mut fs, mut ds) = (Vec::new(), Vec::new()); walk(src, "", &mut fs, &mut ds)?;
+                for d in ds { io(std::fs::create_dir_all(tmp.join("app").join(&d)), &tmp)?; }
+                io(std::fs::create_dir_all(tmp.join("app")), &tmp)?;
+                for (rel, p) in fs { io(std::fs::copy(&p, tmp.join("app").join(&rel)), &p)?; }
+            }
+            x => return Err(format!("[source] extract = \"{x}\": known are \"innosetup\", \"file\" and \"folder\"")),
         }
         publish(&tmp, &dir)?;
         say(&format!("extract: {} with {} ({:.1} s)", src.display(), r.source.extract, t.elapsed().as_secs_f64()));
@@ -229,7 +236,7 @@ fn rt_deps(root: &Path) -> R<String> {
     walk(&root.join("rt"), "rt", &mut fs, &mut ds)?;
     let mut h = String::new();
     for (rel, p) in fs {
-        let unit = rel.ends_with(".c") && rel.matches('/').count() <= 2; // rt/*.c and rt/<runtime>/*.c
+        let unit = rel.ends_with(".c") && rel.matches('/').count() <= 2; // a file of rt/ or of one runtime folder: a unit a base can list
         if !unit { h.push_str(&format!("{rel} {}\n", oci::sha256(&io(std::fs::read(&p), &p)?))); }
     }
     Ok(oci::sha256(h.as_bytes()))
@@ -272,8 +279,12 @@ pub fn build(root: &Path, o: &Opts) -> R<()> {
 
     // 1. the source, then its files
     let src = o.source.clone().unwrap_or(r.dir.join(&r.source.file));
-    let data = io(std::fs::read(&src), &src)?;
-    let sha = oci::sha256(&data); drop(data);
+    // a folder (extract = "folder", a title the user built or copied) is hashed as its list of files and their hashes
+    let sha = if src.is_dir() {
+        let (mut fs, mut ds) = (Vec::new(), Vec::new()); walk(&src, "", &mut fs, &mut ds)?;
+        let mut h = String::new(); for (rel, p) in fs { h.push_str(&format!("{rel} {}\n", oci::sha256(&io(std::fs::read(&p), &p)?))); }
+        oci::sha256(h.as_bytes())
+    } else { let data = io(std::fs::read(&src), &src)?; oci::sha256(&data) };
     match &r.source.sha256 {
         Some(w) if *w != sha => return Err(format!("{}: sha256 {sha}, the recipe wants {w}: not the installer the recipe is for", src.display())),
         Some(_) => say(&format!("source: {} has the recipe's sha256", src.display())),
@@ -309,7 +320,8 @@ pub fn build(root: &Path, o: &Opts) -> R<()> {
     let st = Command::new(root.join("tools/gen-imports.sh")).arg(lifted.bits.to_string()).arg(&lifted.dir).arg(gen.join("imports.gen.c")).args(sources.iter().map(|s| root.join(s))).status().map_err(|e| e.to_string())?;
     if !st.success() { return Err("tools/gen-imports.sh failed".into()); }
     let features = r.cpu.clone().unwrap_or(base.cpu.clone());
-    let cpu_toml = format!("[cpu]\nfeatures = [{}]\n", features.iter().map(|f| format!("\"{f}\"")).collect::<Vec<_>>().join(", "));
+    let mut cpu_toml = format!("[cpu]\nfeatures = [{}]\n", features.iter().map(|f| format!("\"{f}\"")).collect::<Vec<_>>().join(", "));
+    if let Some(b) = r.heap_fill { cpu_toml.push_str(&format!("[quirks]\nheap_fill = {b}\n")); }
     io(std::fs::write(gen.join("cpu.toml"), &cpu_toml), &gen)?;
     let o2 = Command::new("python3").args(["-I", &root.join("tools/recipe-gen.py").to_string_lossy(), "cpu.toml"]).current_dir(&gen).output().map_err(|e| e.to_string())?;
     if !o2.status.success() { return Err(format!("tools/recipe-gen.py: {}", String::from_utf8_lossy(&o2.stderr))); }

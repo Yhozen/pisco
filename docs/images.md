@@ -63,7 +63,7 @@ and nothing in them depends on the time or the machine, so the same inputs give 
 
 ```json
 {
-  "architecture": "386", "os": "windows", "base": "base/win32-x86:1", "title": "narbacular-drop",
+  "architecture": "386", "os": "windows", "base": "base/windows-x86:1", "title": "narbacular-drop",
   "run": { "exe": "C:\\Program Files\\Narbacular Drop\\Narbacular Drop.exe", "display": "640x480", "args": [] },
   "guest": { "bits": 32, "image": ["0x400000", "0x57c000"] },
   "cpu": { "features": ["fpu", "tsc", "cx8"] },
@@ -99,13 +99,14 @@ The old invocation keeps working: `node web/run-node.mjs title.wasm <the title's
 
 ```toml
 name = "narbacular-drop"
-from = "base/win32-x86:1"                 # bases/win32-x86/1/base.toml
+from = "base/windows-x86:1"                 # bases/windows-x86/1/base.toml
 libraries = ["d3d9", "dinput8", "fmod3"]  # the base's libraries this title links; checked against its imports
 
 [source]
 file = "narbacular_drop_setup.exe"        # looked for beside the recipe unless `pisco build --source` names it
 sha256 = "0966948f..."                    # checked before anything else; without it the build says so and goes on
-extract = "innosetup"                     # innoextract (tools/setup-toolchain.sh innoextract); or "file": the source is the exe
+extract = "innosetup"                     # innoextract (tools/setup-toolchain.sh innoextract); or "file": the source is the exe;
+                                          # or "folder": the source is a folder (a title the user built), copied to {app}
 # app = 'C:\Program Files\Narbacular Drop'  where {app} goes (default: the exe's folder)
 # map = { commonappdata = 'C:\Documents and Settings\All Users\Application Data' }  the installer's other folders
 
@@ -130,13 +131,28 @@ entries = []                              # extra function entries (hex), as run
 
 [build]
 opt = "-O1"                               # clang's level for the lifted C (default -O2; the runtime has the base's)
+
+[quirks]
+heap_fill = 0xCD                          # what a heap block the title did not ask to be zeroed holds (default: whatever
+                                          # the runtime's allocator left); Narbacular Drop depends on it being non-zero
 ```
 
-`tools/build-title.sh` reads the same recipe (`RECIPE=...`: `[cpu]`, `[registry]` built into the module, `[dll]`).
+`tools/build-title.sh` reads the same recipe (`RECIPE=...`: `[cpu]`, `[registry]` built into the module, `[dll]`,
+`[quirks]`, and the base and libraries for the runtime's files).
 
 ## Bases and libraries
 
-`bases/<name>/<version>/base.toml` defines what a recipe's `from` names. `base/win32-x86:1` has:
+`bases/<name>/<version>/base.toml` defines what a recipe's `from` names: one base per runtime, and the only list of
+the runtime's files (`pisco sources <base | recipe>` prints a title's; `tools/build-title.sh` asks it; `tests/run.sh
+layout` checks that no other list exists and that every file is in a base):
+
+| Base | Runtime | Sources | Titles (recipes) |
+|---|---|---|---|
+| `base/windows-x86:1` | Windows x86 | `rt/*.c`, `rt/windows-x86/*.c` | hello32, Narbacular Drop |
+| `base/windows-x64:1` | Windows x64 | `rt/*.c`, `rt/gdk/*.c`, `rt/windows-x64/*.c` | hello64, SimpleTriangleDesktop, SimplePBR (folders the user built) |
+| `base/xbox-series:1` | Xbox Series | `rt/*.c`, `rt/gdk/*.c`, `rt/xbox-series/*.c` | Doom (`out/doom/game`, built by tests/gfx/doom.sh) |
+
+`base/windows-x86:1` has:
 
 - `[cpu] features`: the default virtual CPU (every feature the lifter supports);
 - `[runtime]`: the core runtime sources (`rt/*.c`, `rt/windows-x86/*.c` less the libraries'),
@@ -175,6 +191,6 @@ first version of `pisco`, linking to a temporary name, made the second clean bui
 
 ## Tests
 
-`tests/run.sh images` (tests/images.sh): hello32 and Narbacular Drop built twice each with empty caches (the same
-manifest digests), their shared base layer, a registry-only rebuild, then `pisco run` of the menu-to-level session in
+`tests/run.sh images` (tests/images.sh): hello32, hello64, Doom and Narbacular Drop (one title of each base) built twice
+each with empty caches (the same manifest digests), their shared base layer, a registry-only rebuild, then `pisco run` of the menu-to-level session in
 Node, with the checkpoints `tests/run.sh nd` checks, and the image's registry read by advapi32.

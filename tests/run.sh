@@ -3,6 +3,7 @@
 # tests/run.sh [step...]: the one entry point. Builds the test titles from their sources, then runs the checks.
 #   build    hello, threads, bench (cargo) and cxx, dll (llvm-mingw), where tests/regress.sh looks for them;
 #            the 32-bit titles: hello again for i686, and fixtures/x87
+#   layout   tests/layout.sh: the runtime's files are listed only by the bases, and every one is in some base
 #   node     tests/regress.sh: every title in Node (XCL's title and Stockfish too when their files are there)
 #   bench    the benchmark title's checksums against the same work built natively
 #   win32    the 32-bit titles in Node: hello, and the x87 and crt32 titles against what they printed under Wine
@@ -41,7 +42,7 @@
 #            the SDKs in WINSDK by tools/build-gdk-sample-pbr.sh) or REDIST (minutes)
 #   xcl      tests/gfx/xcl.sh: XCL's console test title in Chrome, when it has been built into out/xcltitle-game
 #   audio    tests/audio/run.sh: the XMA2 / Opus decoders (builds FFmpeg's the first time)
-# Default: build node bench win32 ffp gdi. Needs tools/setup-toolchain.sh to have run. Exit status 1 if a step fails.
+# Default: build layout node bench win32 ffp gdi. Needs tools/setup-toolchain.sh to have run. Exit status 1 if a step fails.
 set -uo pipefail
 root=$(cd "$(dirname "$0")/.." && pwd); cd "$root"; mkdir -p out
 MINGW=${MINGW:-$HOME/tools/llvm-mingw-20261117-ucrt-ubuntu-22.04-x86_64}; CXX=$MINGW/bin/x86_64-w64-mingw32-clang++
@@ -53,7 +54,7 @@ step() { # name, command...: one line, the log's tail on failure
   else echo "FAIL  $name (see $log)"; tail -6 "$log" | sed 's/^/        /'; fail=1; fi
 }
 build() {
-  cargo build -q --release -p pisco-lifter -p pisco-shaders || return 1
+  cargo build -q --release -p pisco-lifter -p pisco-shaders -p pisco || return 1
   for t in hello threads bench bench-native; do (cd "fixtures/$t" && cargo build -q --release) || return 1; done
   # one C++ runtime inside each image (-static): nothing but the title's own DLL is shipped beside it
   "$CXX" -O2 -static fixtures/cxx/eh.cpp -o fixtures/cxx/eh.exe || return 1
@@ -143,8 +144,9 @@ nd_session() { SW_STRICT=1 SW_CLOCK=16667 SW_D3D9_STATS=1 SW_SESSION=recipes/nar
 ND=${ND:-$HOME/.pisco/oracle/prefix-narbacular-drop/drive_c/Program Files (x86)/Narbacular Drop}
 REDIST=${REDIST:-$HOME/untrusted/vcredist/x/Contents/VC/Redist/MSVC/14.44.35112/x64/Microsoft.VC143.CRT}; export REDIST
 WINSDK=${WINSDK:-$HOME/winsdk}
-for s in ${*:-build node bench win32 ffp gdi}; do case $s in
+for s in ${*:-build layout node bench win32 ffp gdi}; do case $s in
   build)  step build build ;;
+  layout) step layout tests/layout.sh ;;
   node)   LINES_SHOWN=8 step node tests/regress.sh ;;
   bench)  step bench bench ;;
   win32)  LINES_SHOWN=3 step win32 win32 ;;

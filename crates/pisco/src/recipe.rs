@@ -18,6 +18,7 @@ pub struct Recipe {
     pub exe: String, pub display: Option<String>, pub args: Vec<String>,
     pub cpu: Option<Vec<String>>, pub dll: BTreeMap<String, String>, pub registry: Vec<RegValue>,
     pub split: usize, pub entries: Vec<u64>, pub base_address: Option<u64>, pub opt: String,
+    pub heap_fill: Option<u8>, // [quirks] heap_fill: the byte a heap block the title did not ask to be zeroed holds
 }
 pub struct Library { pub description: String, pub sources: Vec<String> }
 pub struct Base {
@@ -88,7 +89,7 @@ pub fn load_recipe(dir: &Path) -> R<Recipe> {
     let path = if dir.is_dir() { dir.join("title.toml") } else { dir.to_path_buf() };
     let t = load(&path)?;
     let dir = path.parent().unwrap().to_path_buf();
-    let known = ["name", "from", "libraries", "source", "run", "cpu", "dll", "registry", "lifter", "build"];
+    let known = ["name", "from", "libraries", "source", "run", "cpu", "dll", "registry", "lifter", "build", "quirks"];
     if let Some(k) = t.keys().find(|k| !known.contains(&k.as_str())) { return Err(format!("{}: {k} is not a recipe key ({})", path.display(), known.join(", "))); }
     let src = table(&t, "source")?.ok_or(format!("{}: no [source]", path.display()))?;
     let run = table(&t, "run")?.ok_or(format!("{}: no [run]", path.display()))?;
@@ -104,7 +105,7 @@ pub fn load_recipe(dir: &Path) -> R<Recipe> {
     }
     Ok(Recipe {
         name: s(&t, "name").ok_or("recipe: no name")?,
-        from: s(&t, "from").ok_or("recipe: no from (a base, e.g. \"base/win32-x86:1\")")?,
+        from: s(&t, "from").ok_or("recipe: no from (a base, e.g. \"base/windows-x86:1\")")?,
         libraries: strs(&t, "libraries")?.unwrap_or_default(),
         source: Source { file: s(src, "file").ok_or("[source] file")?, sha256: s(src, "sha256").map(|x| x.to_ascii_lowercase()), extract: s(src, "extract").unwrap_or("file".into()), app: s(src, "app"), map },
         exe: s(run, "exe").ok_or("[run] exe")?,
@@ -117,11 +118,15 @@ pub fn load_recipe(dir: &Path) -> R<Recipe> {
         entries: match lifter.get("entries") { Some(Value::Array(a)) => a.iter().map(|v| int(v, "lifter.entries")).collect::<R<_>>()?, _ => vec![] },
         base_address: lifter.get("base").map(|v| int(v, "lifter.base")).transpose()?,
         opt: s(&build, "opt").unwrap_or("-O2".into()),
+        heap_fill: match table(&t, "quirks")?.and_then(|q| q.get("heap_fill")) {
+            None => None,
+            Some(v) => Some(v.as_integer().filter(|n| (0..=255).contains(n)).ok_or("quirks.heap_fill: a byte, 0 to 255")? as u8),
+        },
         dir,
     })
 }
 
-/// "base/win32-x86:1" -> <root>/bases/win32-x86/1/base.toml
+/// "base/windows-x86:1" -> <root>/bases/windows-x86/1/base.toml
 pub fn load_base(root: &Path, from: &str) -> R<Base> {
     let (name, version) = from.split_once(':').ok_or(format!("from = \"{from}\": <base>:<version>"))?;
     let short = name.strip_prefix("base/").ok_or(format!("from = \"{from}\": bases are named base/<name>"))?;

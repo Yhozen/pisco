@@ -258,14 +258,10 @@ IMP(kernel32, GetProcessHeap) { RET(0x7000); }
 // Drop's player, as it starts a level, attaches the camera to itself only if a pointer it sets a few lines later
 // is already non-zero (0x41d9cb tests [this+0x1e4], 0x41da5e sets it), and without the camera the level's first
 // frame reads through a stale index. Here the heap is the runtime's malloc, whose leftovers depend on the runtime
-// and the host as much as on the title, so a 32-bit title's small blocks are filled with one non-zero byte instead:
-// the same on every host, and non-zero as the game's runs under Wine show it found there.
+// and the host as much as on the title, so a recipe can ask for small blocks filled with one byte instead
+// ([quirks] heap_fill = 0xCD: the same on every host, and non-zero as the game's runs under Wine show it found there).
 static void heap_fresh(void *p, u64 from, u64 to) {
-#if GUEST_BITS == 32
-  if (p && to > from) memset((u8 *)p + from, to >= 0x7F000 ? 0 : 0xCD, to - from);   // 0x7F000: above it Windows' heap allocates fresh pages
-#else
-  (void)p; (void)from; (void)to;
-#endif
+  if (p && to > from && rt_heap_fill >= 0) memset((u8 *)p + from, to >= 0x7F000 ? 0 : rt_heap_fill, to - from);   // 0x7F000: above it Windows' heap allocates fresh pages
 }
 IMP(kernel32, HeapAlloc) { u64 n = ARG(2); void *p = (ARG(1) & 8) ? calloc(1, n ? n : 1) : malloc(n ? n : 1); if (!(ARG(1) & 8)) heap_fresh(p, 0, n); RET((uptr)p); }
 IMP(kernel32, HeapFree) { free((void *)GP(ARG(2))); RET(1); }

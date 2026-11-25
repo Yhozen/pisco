@@ -1,0 +1,16 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# base/xbox-series:1, what an Xbox Series title (the GDK's console build) is built FROM (docs/images.md): the core
+# runtime, what it shares with Windows x64 (rt/gdk/) and the console's own libraries (rt/xbox-series/: kernelx,
+# XMem, the console's screen, D3D12.X's additions, XG, DirectStorage). Its title's drives are the game's folder.
+name = "base/xbox-series"
+version = 1
+architecture = "amd64"   # the console's CPU: x86-64 (Zen 2)
+os = "windows"           # OCI's nearest: the console runs a Windows kernel
+
+[cpu]
+features = ["fpu", "tsc", "cx8", "cmov", "mmx", "fxsr", "sse", "sse2", "sse3", "ssse3", "sse4.1", "sse4.2", "popcnt", "cx16", "pclmul"]
+
+[runtime]
+sources = ["rt/*.c", "rt/gdk/*.c", "rt/xbox-series/*.c"]
+opt = "-O2"
+

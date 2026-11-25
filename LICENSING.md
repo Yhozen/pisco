@@ -59,10 +59,10 @@ result is distributed under GPL-2.0, with GPL-3.0 code under GPL-3.0. The two ca
 
 Today no code from XCL is linked into `title.wasm`: `crates/shaders` is a command-line tool, and the runtime
 uses XCL only as a source of facts about the console (see `THIRD_PARTY.md`). To keep each build's set of
-licences checkable, a title links only the runtime files of its profile (`tools/build-title.sh`, `PROFILE`):
-`console` is the core (`rt/*.c`) plus the 64-bit runtimes' folders (`rt/gdk/`, `rt/xbox-series/`, `rt/windows-x64/`);
-`win32`, for Windows desktop titles, is the core plus `rt/windows-x86/`, without the 64-bit runtimes' libraries (the
-GDK, the D3D12 and DirectStorage front ends, XAudio2, the FFmpeg decoders).
+licences checkable, a title links only the runtime files of its base (`bases/<runtime>/1/base.toml`, the one list of
+them; `pisco sources` prints it): `base/windows-x86` is the core (`rt/*.c`) plus `rt/windows-x86/`;
+`base/windows-x64` the core, `rt/gdk/` and `rt/windows-x64/`; `base/xbox-series` the core, `rt/gdk/` and
+`rt/xbox-series/`. A recipe's libraries add files of its base only.
 
 ## Title images
 

@@ -190,6 +190,7 @@ u64 rt_stub_import(const char *full);                     // a named address tha
 enum { CPU_FPU = 1, CPU_TSC = 2, CPU_CX8 = 4, CPU_CMOV = 8, CPU_MMX = 0x10, CPU_FXSR = 0x20, CPU_SSE = 0x40, CPU_SSE2 = 0x80, CPU_SSE3 = 0x100,
        CPU_SSSE3 = 0x200, CPU_SSE41 = 0x400, CPU_SSE42 = 0x800, CPU_POPCNT = 0x1000, CPU_CX16 = 0x2000, CPU_PCLMUL = 0x4000 };
 extern const unsigned rt_cpu_features;
+extern const int rt_heap_fill;   // [quirks] heap_fill, or -1
 // registry values: `key` is the full key path ("HKEY_LOCAL_MACHINE\\Software\\..."), a number (REG_DWORD) or a string (REG_SZ)
 typedef struct { const char *key, *name, *string; unsigned number; } RegistryValue;
 extern const RegistryValue rt_registry[]; extern const unsigned rt_registry_count;

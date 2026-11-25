@@ -8,7 +8,7 @@
 set -euo pipefail
 root=$(cd "$(dirname "$0")/../.." && pwd); d=$root/out/doom; mkdir -p "$d/ref"
 "$root/fixtures/doom/build.sh" > "$d/ref/build.log" 2>&1
-"$root/tools/build-title.sh" "$d/game/doom.exe" "$d/wasm" > "$d/ref/build-wasm.log" 2>&1
+BASE=xbox-series "$root/tools/build-title.sh" "$d/game/doom.exe" "$d/wasm" > "$d/ref/build-wasm.log" 2>&1
 cd "$d/ref"
 for i in 1 2 3; do ../native/doom -iwad ../freedoom1.wad -timedemo demo1 2>/dev/null | grep '^frame' > native-t$i.txt || true; done
 (cd ../game && SW_STRICT=1 SW_PACE=off node "$root/web/run-node.mjs" ../wasm/title.wasm doom.exe -hashframes -timedemo demo1 > ../ref/node-t.txt 2>&1 || true)

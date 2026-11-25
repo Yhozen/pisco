@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
-# base/win32-x86:1, what a 32-bit Windows desktop title is built FROM (docs/images.md): the virtual CPU's default,
+# base/windows-x86:1, what a 32-bit Windows desktop title is built FROM (docs/images.md): the virtual CPU's default,
 # the runtime's core profile, the default registry, the files of its C: drive (its own layer), and the libraries a
 # recipe can add: runtime sources for a DLL a title imports, each with a layer of its own.
-name = "base/win32-x86"
+name = "base/windows-x86"
 version = 1
 architecture = "386"     # as OCI names it: 32-bit x86
 os = "windows"

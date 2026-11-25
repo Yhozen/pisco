@@ -59,7 +59,7 @@ check quits from the main menu; by hand it was not tried), ADPCM WAVs, Doppler a
 runs, Wine's TrueType hinting (glyph edges differ by up to half a pixel), bold faces and other font families, a full
 playthrough by hand and a recording of one. The installer's `fmod.dll` is never run: the runtime's FMOD answers.
 
-What Windows desktop titles have since M6: a recipe `FROM` a base (`bases/win32-x86/1`) with named libraries, built
+What Windows desktop titles have since M6: a recipe `FROM` a base (`bases/windows-x86/1`) with named libraries, built
 by `pisco` into a title image whose layers make the C: drive and whose config gives the registry to advapi32
 ([images.md](images.md)); both hosts run an image (`web/image.mjs`).
 

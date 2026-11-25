@@ -2,7 +2,7 @@
 # fixtures/hello built for i686 (tests/run.sh build makes it), as an image FROM the same base as Narbacular Drop:
 # its base layer is the same blob (tests/run.sh images). It needs none of the base's libraries.
 name = "hello32"
-from = "base/win32-x86:1"
+from = "base/windows-x86:1"
 
 [source]
 # built from source in this repository, so no sha256: whatever cargo made
