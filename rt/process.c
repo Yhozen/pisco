@@ -466,9 +466,21 @@ static void set_security_cookie(const ModuleDef *m) {
   if (cookie >= m->base && cookie < m->base + m->size) M32(cookie) = 0x5EC0C1E5u;
 }
 
+// The image's headers at its base, as Windows maps them (code reads them: MSVC 8's C runtime looks at its own exe's
+// sections before it starts floating point, _IsNonwritableInCurrentImage), with the base the image has here
+static void map_headers(const ModuleDef *m) {
+  u64 first = m->base + m->size;
+  for (unsigned i = 0; i < m->section_count; i++) if (m->sections[i].va < first) first = m->sections[i].va;
+  u64 n = first > m->base ? first - m->base : 0; if (n > 0x1000) n = 0x1000;
+  if (n < 0x200 || host_read_file(m->name, (u32)strlen(m->name), 0, (u32)n, m->base) != n) return;
+  u32 pe = M32(m->base + 0x3C);
+  if (pe > n - 0x80 || M32(m->base + pe) != 0x4550) return;
+  if (M16(m->base + pe + 24) == 0x10B) M32(m->base + pe + 24 + 28) = (u32)m->base; else M64(m->base + pe + 24 + 24) = m->base;   // ImageBase
+}
 static void load_modules(void) {
   for (unsigned k = 0; k < rt_module_count; k++) {
     const ModuleDef *m = &rt_modules[k];
+    map_headers(m);
     for (unsigned i = 0; i < m->section_count; i++) {
       u64 va = m->sections[i].va, n = m->sections[i].len;
       if (n && host_read_file(m->name, (u32)strlen(m->name), m->sections[i].off, n, va) != n) rt_fatal("cannot read section %u of %s", i, m->name);
