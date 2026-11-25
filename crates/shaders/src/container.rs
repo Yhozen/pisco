@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-only
 // From XCL (https://github.com/ivall/xcl, GPL-2.0-only), crates/xcl/src/gpu/shader.rs at 6025201: the DXBC part table.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Part {

@@ -1,0 +1,11 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+[package]
+name = "sw"
+version = "0.1.0"
+edition = "2021"
+license = "GPL-2.0-or-later"
+description = "Builds, runs and inspects series-web title images (docs/images.md)"
+[dependencies]
+sha2 = "0.10"
+toml = { version = "0.8", default-features = false, features = ["parse"] }
+serde_json = "1"

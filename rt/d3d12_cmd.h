@@ -1,5 +1,7 @@
-// The stream between the D3D12 front end (rt/d3d12.c, on the title's threads) and the GPU back end
-// (web/gpu/backend.js on the page, web/gpu/null.js in Node). tools/gen-cmd-js.mjs turns every
+// SPDX-License-Identifier: GPL-2.0-or-later
+// The stream between the graphics front ends (on the title's threads: rt/d3d12.c for Direct3D 12 and the
+// console's D3D12.X; rt/win32/d3d9_gpu.c for Direct3D 9, with the explicit records further down) and the GPU back
+// end (web/gpu/backend.js on the page, web/gpu/null.js in Node). tools/gen-cmd-js.mjs turns every
 // `#define GPU_<NAME> <value>` line of this file into web/gpu/cmd.gen.js: keep one define per line.
 //
 // The ring lives in shared memory: a header, then GPU_RING_BYTES of records. A record is
@@ -44,8 +46,65 @@
 #define GPU_R_WAIT 7
 // resource id, frame token lo, token hi, sync interval
 #define GPU_R_PRESENT 8
-// a mark for traces: bytes of text follow
+// a mark for traces: bytes of text follow. "shot <name>": the page saves the frame presented last under that name
 #define GPU_R_MARK 9
+
+// ---- explicit records: a front end that is not Direct3D 12 says what WebGPU should do, in WebGPU's own terms.
+// Direct3D 9 (rt/win32/d3d9_gpu.c) is the first: no root signatures, no pipeline-state descriptions, no command
+// lists. It shares GPU_R_RESOURCE / GPU_R_DESTROY (buffers and textures, without guest backing), GPU_R_PRESENT and
+// GPU_R_MARK with the records above, and with them the ids, the DXGI format numbers and the D3D12 numbers of
+// blend factors, blend operations, comparisons and address modes (Direct3D 9's own are the same numbers).
+// All of them are run in order: a write lands before the draws recorded after it and after the ones before.
+// id, bytes of text, then the WGSL text. A module has one entry point, `main`
+#define GPU_R_SHADER 10
+// id, address mode u, v, w (1 repeat, 2 mirror, 3 clamp), magnification filter, minification filter, mip filter
+// (0 nearest, 1 linear), largest anisotropy, largest level of detail (float bits)
+#define GPU_R_SAMPLER 11
+// id, vertex shader id, fragment shader id, topology (GPU_L_TOPOLOGY's numbers: 1 points ... 5 triangle strip),
+// cull (0 none, 1 front, 2 back), front face (0 counter-clockwise, 1 clockwise),
+// colour target format (DXGI; 0: none), colour write mask, blending on, source, destination, operation, and the
+// same three for alpha,
+// depth format (DXGI; 0: none), depth comparison, depth write, depth bias (signed), slope-scaled bias (float bits),
+// binding count, vertex buffer count, attribute count; then
+//   a binding: number in group 0, kind (GPU_BIND_*), least size in bytes (a uniform block)
+//   a vertex buffer: stride, step (0 a vertex, 1 an instance)
+//   an attribute: shader location, vertex buffer, offset, format (DXGI)
+// The bind layout is exactly these bindings: a draw gives one resource for each, in this order.
+#define GPU_R_PIPELINE 12
+#define GPU_PIPELINE_WORDS 24
+#define GPU_BIND_UNIFORM 1
+#define GPU_BIND_TEXTURE_2D 2
+#define GPU_BIND_TEXTURE_3D 3
+#define GPU_BIND_SAMPLER 4
+// buffer id, offset, bytes, mode (GPU_WRITE_*), then the bytes
+#define GPU_R_WRITE_BUFFER 13
+// the bytes replace what earlier draws read: those draws still see the old bytes
+#define GPU_WRITE_ORDERED 0
+// the bytes are ones no earlier draw read (Direct3D's NOOVERWRITE)
+#define GPU_WRITE_APPEND 1
+// nothing of the buffer's old contents is needed after this (Direct3D's DISCARD): the back end may hand out new storage
+#define GPU_WRITE_DISCARD 2
+// texture id, mip level, x, y, z, width, height, depth, bytes a row, then the rows (depth slices one after another)
+#define GPU_R_WRITE_TEXTURE 14
+// A render pass begins (the one before ends): colour texture id, its mip level, depth texture id (0: none),
+// flags (GPU_PASS_*), clear colour r g b a (float bits), clear depth (float bits), clear stencil.
+// What is not cleared is loaded. The viewport and the scissor rectangle stay as GPU_R_VIEWPORT last set them.
+#define GPU_R_PASS 15
+#define GPU_PASS_CLEAR_COLOR 1
+#define GPU_PASS_CLEAR_DEPTH 2
+#define GPU_PASS_CLEAR_STENCIL 4
+// x, y, width, height, least depth, greatest depth (float bits), then the scissor rectangle: x, y, width, height
+#define GPU_R_VIEWPORT 16
+// One draw in the pass: pipeline id, flags (GPU_DRAW_*), count (indices or vertices), instances, first (index or
+// vertex), base vertex (signed), first instance, index buffer id, offset into it in bytes, vertex buffer count,
+// binding count, uniform bytes; then
+//   a vertex buffer: buffer id, offset in bytes
+//   a binding, in the pipeline's order: the texture's or the sampler's id (0 for the uniform block)
+//   the uniform block's bytes
+#define GPU_R_DRAW 17
+#define GPU_DRAW_WORDS 12
+#define GPU_DRAW_INDEXED 1
+#define GPU_DRAW_INDEX32 2
 
 // ---- command list words: [u16 op | u16 words of payload << 16][payload] ----
 #define GPU_L_CLEAR_RTV 1

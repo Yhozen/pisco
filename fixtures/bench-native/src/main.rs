@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 #[path = "../../bench/src/work.rs"] mod work;
 fn main() {
     let (mut b, mut w, mut t, mut v) = (vec![0u8; work::BYTES], vec![0u32; work::WORDS], vec![0u32; work::TABLE], vec![[0f32; 4]; work::VECS]);

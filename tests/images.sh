@@ -1,0 +1,84 @@
+#!/bin/bash
+# SPDX-License-Identifier: GPL-2.0-or-later
+# tests/images.sh: title images (milestone M6, docs/images.md), built by `sw build` and run by `sw run`.
+#   1. hello32 (recipes/hello32) built twice, each time with an empty cache: the same manifest digest; its image run in
+#      Node passes its 7 checks
+#   2. Narbacular Drop from the user's installer (ND_SETUP; skipped when it is not found), the same: two builds with
+#      empty caches give the same manifest digest. With the Wine-installed game there (ND) the extracted files are
+#      compared with it (the differences are printed)
+#   3. hello32's base layer is the same blob as Narbacular Drop's (both are FROM base/win32-x86:1)
+#   4. a recipe that differs only in its registry, built with the first build's cache: nothing lifted, compiled or
+#      linked again (the build's log says so; its time is printed), the same module blob, another config
+#   5. `sw run` of the first image with the menu-to-level session in Node: the checkpoints of tests/run.sh nd
+#      (recipes/narbacular-drop/traces/menu-to-level.txt), and the null GPU back end finds every record consistent;
+#      the changed registry reaches advapi32 at run time (the second image's first 2 s, traced: D3DX opens its key after
+#      the first frame)
+# Environment: ND_SETUP (narbacular_drop_setup.exe), ND (the installed game's folder, for the comparison), KEEP=1 to
+# keep the second build's cache (out/images-test/cache-b; it is large).
+set -uo pipefail
+root=$(cd "$(dirname "$0")/.." && pwd); cd "$root"
+T=out/images-test; rm -rf $T; mkdir -p $T
+SW=target/release/sw
+ND=${ND:-$HOME/.series-web/oracle/prefix-narbacular-drop/drive_c/Program Files (x86)/Narbacular Drop}
+cargo build -q --release -p sw -p lifter || { echo "cargo build failed"; exit 1; }
+if [ -z "${ND_SETUP:-}" ]; then
+  for f in recipes/narbacular-drop/narbacular_drop_setup.exe "$HOME/Downloads/narbacular_drop_setup.exe" .context/attachments/*/narbacular_drop_setup.exe .context/attachments/*/*/narbacular_drop_setup.exe; do
+    [ -f "$f" ] && { ND_SETUP=$f; break; }; done
+fi
+# the digest of an image's blob: its manifest's layer of a role (base, library, game, module), or "config"
+blob() { python3 -I -c 'import json, sys
+d = sys.argv[1]; idx = json.load(open(d + "/index.json"))
+m = json.load(open(d + "/blobs/sha256/" + idx["manifests"][0]["digest"][7:]))
+role = sys.argv[2]
+print(" ".join([m["config"]["digest"]] if role == "config" else [l["digest"] for l in m["layers"] if l.get("annotations", {}).get("org.series-web.layer.role") == role]))' "$1" "$2"; }
+build() { # name, recipe, out, cache, more...: the manifest digest; the log in $T/<name>.log
+  local name=$1 recipe=$2 out=$3 cache=$4; shift 4
+  local t0=$(date +%s.%N)
+  $SW build "$recipe" --out "$out" --cache "$cache" "$@" > $T/$name.out 2> $T/$name.log || { echo "$name: sw build failed:" >&2; tail -4 $T/$name.log >&2; return 1; }
+  awk -v a="$t0" -v b="$(date +%s.%N)" 'BEGIN { print b - a }' > $T/$name.time
+  tail -1 $T/$name.out
+}
+
+# 1. hello32
+a=$(build hello32-a recipes/hello32 $T/hello32-a $T/cache-a) || exit 1
+b=$(build hello32-b recipes/hello32 $T/hello32-b $T/cache-b) || exit 1
+[ "$a" = "$b" ] || { echo "hello32: two builds with empty caches differ ($a, $b)"; exit 1; }
+pass=$(SW_STRICT=1 $SW run $T/hello32-a 2>&1 | grep -c '^\[PASS\]')
+[ "$pass" = 7 ] || { echo "hello32: its image passed $pass of 7"; exit 1; }
+echo "hello32: two builds with empty caches give manifest $a; the image passes 7 of 7 in Node"
+
+if [ -z "${ND_SETUP:-}" ] || [ ! -f "$ND_SETUP" ]; then echo "Narbacular Drop: no installer found (ND_SETUP): its image is not built"; exit 0; fi
+# 2. Narbacular Drop, twice from nothing
+cmp=(); [ -d "$ND" ] && cmp=(--compare "$ND")
+a=$(build nd-a recipes/narbacular-drop $T/nd-a $T/cache-a --source "$ND_SETUP" "${cmp[@]}") || exit 1
+b=$(build nd-b recipes/narbacular-drop $T/nd-b $T/cache-b --source "$ND_SETUP") || exit 1
+[ "${KEEP:-0}" = 1 ] || rm -rf $T/cache-b
+[ "$a" = "$b" ] || { echo "Narbacular Drop: two builds with empty caches differ ($a, $b)"; diff <(ls -R $T/nd-a/blobs) <(ls -R $T/nd-b/blobs) | head -6; exit 1; }
+echo "Narbacular Drop: two builds with empty caches give manifest $a ($(printf '%.0f' "$(cat $T/nd-a.time)") s and $(printf '%.0f' "$(cat $T/nd-b.time)") s)"
+grep '^sw: compare' $T/nd-a.log | sed 's/^sw: compare: */  installer against the Wine install: /; s/^  installer against the Wine install:   /    /' | sed "s|$ND|ND|g"
+
+# 3. the base, shared
+hb=$(blob $T/hello32-a base); nb=$(blob $T/nd-a base)
+[ -n "$hb" ] && [ "$hb" = "$nb" ] || { echo "the base layers differ: hello32 $hb, Narbacular Drop $nb"; exit 1; }
+echo "hello32 and Narbacular Drop share their base layer: $hb ($(stat -c %s $T/nd-a/blobs/sha256/${hb#sha256:}) bytes)"
+
+# 4. the registry alone changed
+mkdir -p $T/nd-reg
+{ cat recipes/narbacular-drop/title.toml; printf "\n[registry.'HKCU\\\\Software\\\\series-web\\\\images-test']\nRebuilt = 1\n"; } > $T/nd-reg/title.toml
+r=$(build nd-reg $T/nd-reg $T/nd-reg/image $T/cache-a --source "$ND_SETUP") || exit 1
+grep -q '^sw: lift: cached' $T/nd-reg.log && grep -q '^sw: runtime: [0-9]* sources, 0 compiled' $T/nd-reg.log && grep -q '^sw: link: cached' $T/nd-reg.log || { echo "a registry-only change built something again:"; grep -E '^sw: (lift|runtime|link)' $T/nd-reg.log; exit 1; }
+[ "$(blob $T/nd-reg/image module)" = "$(blob $T/nd-a module)" ] || { echo "a registry-only change made another module"; exit 1; }
+[ "$(blob $T/nd-reg/image config)" != "$(blob $T/nd-a config)" ] && [ "$r" != "$a" ] || { echo "a registry-only change left the config as it was"; exit 1; }
+echo "a registry-only change: rebuilt in $(printf '%.1f' "$(cat $T/nd-reg.time)") s (the first build took $(printf '%.0f' "$(cat $T/nd-a.time)") s), nothing lifted, compiled or linked again; the same module, another config: manifest $r"
+
+# 5. sw run: the session in Node, and the registry at run time
+want=recipes/narbacular-drop/traces/menu-to-level.txt
+SW_STRICT=1 SW_CLOCK=16667 SW_D3D9_STATS=1 timeout 900 $SW run $T/nd-a --session recipes/narbacular-drop/sessions/menu-to-level.json > $T/nd.session.log 2>&1 || { echo "sw run: the session ended with exit code $?:"; tail -3 $T/nd.session.log | cut -c1-300; exit 1; }
+grep -E '^series-web: (checkpoint |session done)' $T/nd.session.log | sed 's/^series-web: //' > $T/nd.checkpoints.txt
+diff <(grep -v '^#' $want) $T/nd.checkpoints.txt > $T/nd.checkpoints.diff || { echo "sw run: the checkpoints are not the recorded ones (< $want, > this run):"; head -6 $T/nd.checkpoints.diff; exit 1; }
+grep -q '^series-web: gpu (null back end): .* 0 of the records were inconsistent$' $T/nd.session.log || { echo "sw run: the null GPU back end did not find the records consistent"; exit 1; }
+echo "sw run (Node): menu-to-level, $(grep -c '^checkpoint ' $T/nd.checkpoints.txt) checkpoints as recorded, $(sed -n 's/^session done: .*, \([0-9]*\) frames$/\1/p' $T/nd.checkpoints.txt) frames, every GPU record consistent"
+SW_STRICT=1 SW_TRACE=1 SW_CLOCK=16667 SW_SESSION_STEPS='wait 2000' timeout 300 $SW run $T/nd-reg/image > $T/nd-reg.run.log 2>&1
+n=$(python3 -I -c 'import json, sys; d = sys.argv[1]; idx = json.load(open(d + "/index.json")); m = json.load(open(d + "/blobs/sha256/" + idx["manifests"][0]["digest"][7:])); print(len(json.load(open(d + "/blobs/sha256/" + m["config"]["digest"][7:]))["registry"]))' $T/nd-reg/image)
+grep -q "^series-web: registry: $n values$" $T/nd-reg.run.log && grep -q '^series-web: registry: HKEY_LOCAL_MACHINE\\Software\\Microsoft\\Direct3D\\DisableMMX = 1$' $T/nd-reg.run.log || { echo "the image's registry did not reach advapi32:"; grep 'registry' $T/nd-reg.run.log | head -3; exit 1; }
+echo "the registry at run time: advapi32 has the config's $n values (the module has none built in), D3DX reads DisableMMX = 1 $(grep -c 'DisableMMX = 1$' $T/nd-reg.run.log) times"

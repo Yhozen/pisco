@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 // node tools/shader-prep.mjs <file>... [--out <dir>]: every DXIL shader container in the files (a title's exe and
 // DLLs, or .cso files) becomes <dir>/<digest>.wgsl + <digest>.json, the names the GPU back end looks up (the
 // container's own 16-byte digest, in hex). <dir> defaults to `shaders/` beside the first file.

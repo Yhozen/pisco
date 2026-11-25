@@ -1,0 +1,152 @@
+{
+ "title": "narbacular-drop",
+ "about": "menu-to-level's steps into the first level, then play: look down at the cage's floor and place the blue portal there (left button), look up and place the red one on a wall beyond the grate (right button), look down through the linked portals, then walk into the floor portal and out of the cage. Each shot is of a still view, a second or more after the last motion (the oracle's clock is the wall's, ours is virtual).",
+ "steps": [
+  {
+   "wait": 40000
+  },
+  {
+   "focus": true
+  },
+  {
+   "wait": 1500
+  },
+  {
+   "shot": "menu"
+  },
+  {
+   "move": [
+    -208,
+    -95
+   ],
+   "ms": 600
+  },
+  {
+   "wait": 800
+  },
+  {
+   "click": "left"
+  },
+  {
+   "wait": 5000
+  },
+  {
+   "click": "left"
+  },
+  {
+   "wait": 5000
+  },
+  {
+   "click": "left"
+  },
+  {
+   "wait": 5000
+  },
+  {
+   "click": "left"
+  },
+  {
+   "wait": 5000
+  },
+  {
+   "click": "left"
+  },
+  {
+   "wait": 5000
+  },
+  {
+   "click": "left"
+  },
+  {
+   "wait": 5000
+  },
+  {
+   "click": "left"
+  },
+  {
+   "wait": 5000
+  },
+  {
+   "click": "left"
+  },
+  {
+   "wait": 5000
+  },
+  {
+   "click": "left"
+  },
+  {
+   "wait": 9000
+  },
+  {
+   "shot": "level-hint"
+  },
+  {
+   "move": [
+    0,
+    120
+   ],
+   "ms": 400
+  },
+  {
+   "wait": 1500
+  },
+  {
+   "shot": "look-down"
+  },
+  {
+   "click": "left"
+  },
+  {
+   "wait": 2000
+  },
+  {
+   "shot": "blue"
+  },
+  {
+   "move": [
+    0,
+    -120
+   ],
+   "ms": 400
+  },
+  {
+   "wait": 1000
+  },
+  {
+   "click": "right"
+  },
+  {
+   "wait": 2000
+  },
+  {
+   "shot": "red"
+  },
+  {
+   "move": [
+    0,
+    120
+   ],
+   "ms": 400
+  },
+  {
+   "wait": 2000
+  },
+  {
+   "shot": "linked"
+  },
+  {
+   "key": "w",
+   "ms": 800
+  },
+  {
+   "wait": 3000
+  },
+  {
+   "shot": "escaped"
+  },
+  {
+   "wait": 1000
+  }
+ ]
+}

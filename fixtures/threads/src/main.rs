@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 #![no_std]
 #![no_main]
 // Threads and synchronisation as a title uses them: our own test code, built as a Windows executable.

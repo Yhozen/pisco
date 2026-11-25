@@ -1,4 +1,5 @@
 #!/bin/bash
+# SPDX-License-Identifier: GPL-2.0-or-later
 # build.sh: builds dxil2spv against a dxil-spirv build (DXIL_SPIRV, default ~/scratch/deps/dxil-spirv; its build/ folder)
 set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd); D=${DXIL_SPIRV:-$HOME/scratch/deps/dxil-spirv}

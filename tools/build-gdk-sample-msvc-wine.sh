@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: GPL-2.0-or-later
 # Build Microsoft's SimpleTriangleDesktop (Xbox-GDK-Samples) for Windows x64 Release with the real
 # MSVC toolchain (cl.exe, rc.exe, link.exe) running under Wine on Ubuntu 24.04 x86_64.
 # Run on a throwaway VM (written for a boat.dev sandbox). Downloading MSVC/SDK/GDK means accepting

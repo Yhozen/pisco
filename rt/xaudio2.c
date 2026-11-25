@@ -1,23 +1,19 @@
-// XAudio2 (xaudio2_9.dll): source voices mixed here, in C, into one ring of 48 kHz stereo float frames in shared
-// memory that the host plays (an AudioWorklet in the browser; Node has no output and the ring just turns).
-// The mixer runs on wall-clock time a little ahead of now, so the title's voices advance in real time even
-// with no listener. PCM (8-bit unsigned, 16-bit, float) at any rate, any channel count, through each voice's
+// SPDX-License-Identifier: GPL-2.0-or-later
+// XAudio2 (xaudio2_9.dll): source voices mixed here, in C, into the title's sound output (mixer.c: one ring of
+// 48 kHz stereo float frames in shared memory that the host plays). PCM (8-bit unsigned, 16-bit, float) at any rate, any channel count, through each voice's
 // output matrix; submix voices pass through. XMA1 / XMA2 and Opus (the console's tag 0x704F, packets each behind
 // a 16-bit length) are decoded to PCM16 when a buffer is submitted (rt/audio_codec.c, FFmpeg's decoders);
 // ADPCM / WMA are not (the voice stays silent). XAudio2's structures are packed (pack(1)).
-// Voice callbacks (OnBufferStart, OnBufferEnd, OnStreamEnd, OnVoiceProcessingPassStart) run on the mixer thread.
+// Voice callbacks (OnBufferStart, OnBufferEnd, OnStreamEnd, OnVoiceProcessingPassStart) run on the mixer thread
+// (none when a virtual clock makes the title's own thread mix: mixer.h).
 #include <math.h>
-#include <time.h>
 #include "rt.h"
+#include "mixer.h"
 #include "audio_codec.h"
 
-HOST("audio_open") void host_audio_open(u32 ring);
-u64 rt_spawn_native(void (*fn)(Cpu *, void *), void *arg);
 #define S_OK 0
 #define E_INVALIDARG 0x80070057u
-#define RATE 48000
-#define RING_FRAMES 16384
-#define LEAD 2400 // frames mixed ahead of the clock (50 ms)
+#define RATE MIXER_RATE
 
 typedef struct { u32 flags, bytes; u64 data; u32 begin, length, loop_begin, loop_length, loop_count; u64 context; void *decoded; } Buf;
 #define QMAX 64
@@ -35,10 +31,8 @@ typedef struct Voice {
 } Voice;
 #define VMAGIC 0x58415632u
 static Voice *voices;
-static pthread_mutex_t mix_lock = PTHREAD_MUTEX_INITIALIZER;
+#define mix_lock mixer_lock
 static u64 engine, vt_engine, vt_source, vt_master, vt_submix;
-static u32 *ring; static float *ring_data;
-static int mixer_running;
 
 static Voice *voice(u64 p) { Voice *v = (Voice *)GP(p); return p && v->magic == VMAGIC ? v : 0; }
 static float sample(Voice *v, Buf *b, u64 frame, u32 ch) {
@@ -51,14 +45,14 @@ static float sample(Voice *v, Buf *b, u64 frame, u32 ch) {
   return 0;
 }
 static void callback(Cpu *c, Voice *v, int slot, u64 arg) {
-  if (!v->callback) return;
+  if (!v->callback || !c) return;
   u64 vt = M64(v->callback); u64 fn = M64(vt + 8 * slot);
   if (fn) rt_guest_call(c, fn, v->callback, arg, 0, 0);
 }
 static u32 buf_frames(Voice *v, Buf *b) { u32 total = v->block ? b->bytes / v->block : 0; if (b->length) return b->length; return total > b->begin ? total - b->begin : 0; }
-// mixes `n` frames of every started source voice into out (stereo)
-static void mix(Cpu *c, float *out, u32 n) {
-  memset(out, 0, sizeof(float) * 2 * n);
+// adds `n` frames of every started source voice into out (stereo): the mixer's source (mixer.h)
+static void mix(Cpu *c, float *out, u32 n, void *ctx) {
+  (void)ctx;
   for (Voice *v = voices; v; v = v->next) {
     if (v->kind != 0 || !v->started || !v->qn || !v->supported) continue;
     if (v->callback) callback(c, v, 0, (u64)n * v->block);
@@ -91,33 +85,7 @@ static void mix(Cpu *c, float *out, u32 n) {
     }
   }
 }
-static void mixer_main(Cpu *c, void *arg) {
-  (void)arg;
-  struct timespec t0; clock_gettime(CLOCK_MONOTONIC, &t0);
-  static float tmp[2 * 1024];
-  for (;;) {
-    struct timespec now; clock_gettime(CLOCK_MONOTONIC, &now);
-    u64 target = (u64)(((double)(now.tv_sec - t0.tv_sec) + (now.tv_nsec - t0.tv_nsec) / 1e9) * RATE) + LEAD;
-    u32 w = __atomic_load_n(&ring[0], __ATOMIC_ACQUIRE);
-    while ((u64)w < target) {
-      u32 n = (u32)(target - w); if (n > 1024) n = 1024;
-      pthread_mutex_lock(&mix_lock); mix(c, tmp, n); pthread_mutex_unlock(&mix_lock);
-      for (u32 i = 0; i < n; i++) { u32 at = (w + i) % RING_FRAMES; ring_data[2 * at] = tmp[2 * i]; ring_data[2 * at + 1] = tmp[2 * i + 1]; }
-      w += n; __atomic_store_n(&ring[0], w, __ATOMIC_RELEASE);
-    }
-    struct timespec ts = {0, 5000000}; nanosleep(&ts, 0);
-  }
-}
-static void start_mixer(void) {
-  if (mixer_running) return;
-  mixer_running = 1;
-  ring = aligned_alloc(64, 64 + sizeof(float) * 2 * RING_FRAMES);
-  memset(ring, 0, 64 + sizeof(float) * 2 * RING_FRAMES);
-  ring[2] = RING_FRAMES; ring[3] = RATE; ring[4] = 2;
-  ring_data = (float *)(ring + 16);
-  host_audio_open((u32)(uptr)ring);
-  rt_spawn_native(mixer_main, 0);
-}
+static void start_mixer(void) { static int added; if (!added) { added = 1; mixer_add_source(mix, 0); } mixer_start(); }
 
 static u64 table(const char *const *names, unsigned n) {
   u64 *vt = calloc(n, 8);

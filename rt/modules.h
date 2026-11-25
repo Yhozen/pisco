@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 // The images the lifter lifted, in load order: the title's exe first, then the DLLs it ships.
 #pragma once
 typedef struct { unsigned long long va, off; unsigned len, vsize; } ModuleSection;

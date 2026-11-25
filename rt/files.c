@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 // kernel32's file functions over the title's file system (vfs.c), and the standard handles.
 #include <ctype.h>
 #include "rt.h"
@@ -229,6 +230,24 @@ IMP(kernel32, FindNextFileW) {
   Object *o = rt_handle_get(ARG(0)); Find *f = o ? (Find *)GP(o->view) : 0;
   if (!f || f->at >= f->n) { SET_LAST_ERROR(18); RET(0); return; } // ERROR_NO_MORE_FILES
   fill(ARG(1), &f->e[f->at++]); RET(1);
+}
+// the ANSI forms: WIN32_FIND_DATAA has the same head, then the name as bytes at +44
+static void fill_a(u64 b, const Entry *e) {
+  memset((void *)GP(b), 0, 320);
+  M32(b) = e->dir ? ATTR_DIR : ATTR_NORMAL; M64(b + 4) = FT; M64(b + 12) = FT; M64(b + 20) = FT;
+  M32(b + 28) = (u32)(e->size >> 32); M32(b + 32) = (u32)e->size;
+  strncpy(GSTR(b + 44), e->name, 259);
+}
+IMP(kernel32, FindFirstFileA) {
+  u64 out = ARG(1); u64 tmp = (uptr)malloc(592);
+  u64 h = find_first(c, GSTR(ARG(0)), tmp);
+  if (h != INVALID) { Object *o = rt_handle_get(h); Find *f = (Find *)GP(o->view); fill_a(out, &f->e[f->at - 1]); }
+  free((void *)GP(tmp)); RET(h);
+}
+IMP(kernel32, FindNextFileA) {
+  Object *o = rt_handle_get(ARG(0)); Find *f = o ? (Find *)GP(o->view) : 0;
+  if (!f || f->at >= f->n) { SET_LAST_ERROR(18); RET(0); return; } // ERROR_NO_MORE_FILES
+  fill_a(ARG(1), &f->e[f->at++]); RET(1);
 }
 IMP(kernel32, FindClose) { Object *o = rt_handle_get(ARG(0)); if (o && o->view) { Find *f = (Find *)GP(o->view); free(f->e); free(f); o->view = 0; } rt_handle_close(ARG(0)); RET(1); }
 

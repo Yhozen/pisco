@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 // XMA1 / XMA2 / Opus to interleaved PCM16 over FFmpeg's libavcodec (declarations and contract: audio_codec.h).
 // Built with -DSW_AUDIO_CODECS -I out/ffmpeg/include, linked with out/ffmpeg/lib/{libavcodec,libswresample,
 // libavutil}.a (tools/build-ffmpeg-audio.sh). Without SW_AUDIO_CODECS only failing stubs are compiled.

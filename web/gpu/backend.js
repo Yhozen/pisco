@@ -1,11 +1,16 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 // The WebGPU back end: interprets the front end's ring (rt/d3d12_cmd.h) on the page's main thread (it never
 // blocks: it waits with Atomics.waitAsync and awaits WebGPU's promises). D3D12 state becomes WebGPU passes,
 // pipelines and bind groups; CPU-visible buffers are uploaded from guest memory when a submission uses them;
 // a present draws the frame into the canvas. Shaders come translated ahead of time (tools/shader-prep.mjs):
 // <title folder>/shaders/<container digest>.wgsl + .json, bindings by register (dxil2spv.cpp's scheme).
+// A front end that is not Direct3D 12 (Direct3D 9) sends explicit records instead: explicit.js runs those, on
+// the same resources and with the same present.
 import { GPU } from './cmd.gen.js';
 import { Ring, words } from './ring.js';
 import { memWrite, memFill, memCopy, memWait } from './memops.js';
+import { startExplicit } from './explicit.js';
+import { isExplicit } from './records.js';
 
 const FORMATS = {
   1: 'rgba32float', 2: 'rgba32float', 3: 'rgba32uint', 4: 'rgba32sint', 9: 'rgba16float', 10: 'rgba16float', 11: 'rgba16unorm', 12: 'rgba16uint', 13: 'rgba16snorm', 14: 'rgba16sint',
@@ -88,7 +93,7 @@ export function titleLayout(r) {
   return { subs: out, size: off };
 }
 
-export async function startBackend({ memory, ring: ringAddr, device, canvas, dir, log = console.log, onFrame = null, keepAll = false }) {
+export async function startBackend({ memory, ring: ringAddr, device, canvas, dir, log = console.log, onFrame = null, keepAll = false, onShot = null }) {
   const ring = new Ring(memory, ringAddr), g = ring.g;
   const res = new Map(), rootsigs = new Map(), psos = new Map(), shaders = new Map(), queryHeaps = new Map();
   const vas = []; // buffers by address: [va, end, r]
@@ -163,6 +168,8 @@ export async function startBackend({ memory, ring: ringAddr, device, canvas, dir
       device.queue.writeTexture(dst, src.slice(), layout, size);
     }
   };
+
+  const explicit = startExplicit({ device, g, res, view, writeBuf, log, stats, tables: { FORMATS, VERTEX_FORMATS, BLEND, BLEND_OP, COMPARE, TOPOLOGY, ADDRESS } });
 
   // ---- shaders and pipelines ----
   const shader = (digest) => {
@@ -531,9 +538,10 @@ export async function startBackend({ memory, ring: ringAddr, device, canvas, dir
 @vertex fn vs(@builtin(vertex_index) i: u32) -> @builtin(position) vec4f { let p = vec2f(f32((i << 1u) & 2u), f32(i & 2u)); return vec4f(p * vec2f(2, -2) + vec2f(-1, 1), 0, 1); }
 @fragment fn fs(@builtin(position) p: vec4f) -> @location(0) vec4f { return vec4f(textureLoad(t, vec2i(p.xy), 0).rgb, 1); }` });
   const blit = device.createRenderPipeline({ layout: 'auto', vertex: { module: blitModule, entryPoint: 'vs' }, fragment: { module: blitModule, entryPoint: 'fs', targets: [{ format: canvasFormat }] }, primitive: { topology: 'triangle-list' } });
-  let capturing = 0;
+  let capturing = 0, shown = null;
   async function present(w) {
     const r = res.get(w[0]);
+    shown = r;
     if (r && r.dim !== 0) {
       if (canvas.width !== r.width || canvas.height !== r.height) { canvas.width = r.width; canvas.height = r.height; }
       const enc = device.createCommandEncoder();
@@ -562,12 +570,25 @@ export async function startBackend({ memory, ring: ringAddr, device, canvas, dir
     presents++; stats.presents = presents;
     device.queue.onSubmittedWorkDone().then(() => { ring.set(GPU.H_PRESENTS, presents); ring.bump(); });
   }
+  // "shot <name>" (GPU_R_MARK): the frame presented last, read back and handed to onShot (the page saves it)
+  async function mark(text) {
+    const r = shown, name = text.startsWith('shot ') ? text.slice(5) : null;
+    if (!name || !onShot || !r || r.dim === 0) return;
+    const pitch = Math.ceil(r.width * 4 / 256) * 256, rb = device.createBuffer({ size: pitch * r.height, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ }), enc = device.createCommandEncoder();
+    enc.copyTextureToBuffer({ texture: r.gpu }, { buffer: rb, bytesPerRow: pitch }, { width: r.width, height: r.height });
+    device.queue.submit([enc.finish()]);
+    await rb.mapAsync(GPUMapMode.READ);
+    const src = new Uint8Array(rb.getMappedRange()), px = new Uint8Array(r.width * r.height * 4);
+    for (let y = 0; y < r.height; y++) px.set(src.subarray(y * pitch, y * pitch + r.width * 4), y * r.width * 4);
+    rb.unmap(); rb.destroy();
+    await onShot({ name, index: presents - 1, width: r.width, height: r.height, format: r.format, pixels: px });
+  }
 
   // ---- the ring ----
   ring.run(async (op, at, n) => {
     switch (op) {
     case GPU.R_RESOURCE: createResource(words(g, at, 14)); break;
-    case GPU.R_DESTROY: { const r = res.get(g.u32[at >>> 2]); if (r) { res.delete(r.id); const k = vas.findIndex((e) => e[2] === r); if (k >= 0) vas.splice(k, 1); const gpu = r.gpu; device.queue.onSubmittedWorkDone().then(() => gpu.destroy()); } break; }
+    case GPU.R_DESTROY: { const r = res.get(g.u32[at >>> 2]); if (r) { res.delete(r.id); const k = vas.findIndex((e) => e[2] === r); if (k >= 0) vas.splice(k, 1); const gpu = r.gpu; if (!explicit.retire(r)) device.queue.onSubmittedWorkDone().then(() => gpu.destroy()); } break; }
     case GPU.R_ROOTSIG: { const id = g.u32[at >>> 2], len = g.u32[(at >>> 2) + 1]; rootsigs.set(id, parseRootSignature(g.copy(at + 8, len))); break; }
     case GPU.R_PSO: createPSO(at, n); { const p = psos.get(g.u32[at >>> 2]); if (p && !rootsigs.get(p.rootId) && p.vsBlob) { p.rootId = -p.id; rootsigs.set(p.rootId, parseRootSignature(p.vsBlob)); } } break;
     case GPU.R_EXECUTE: await execute(at + 4, n - 4); break;
@@ -577,8 +598,9 @@ export async function startBackend({ memory, ring: ringAddr, device, canvas, dir
       break;
     }
     case GPU.R_WAIT: { const fence = g.u32[at >>> 2], v = BigInt(g.u32[(at >>> 2) + 1]) | BigInt(g.u32[(at >>> 2) + 2]) << 32n; while (g.u64(fence + GPU.FENCE_VALUE) < v) await ring.waitEpoch(); break; }
-    case GPU.R_PRESENT: await present(words(g, at, 4)); break;
-    default: break;
+    case GPU.R_PRESENT: explicit.flush(); await present(words(g, at, 4)); break;
+    case GPU.R_MARK: explicit.flush(); await mark(new TextDecoder().decode(g.copy(at, n)).replace(/\0+$/, '')); break;
+    default: if (isExplicit(op)) await explicit.handle(op, at); break;
     }
   });
   return stats;

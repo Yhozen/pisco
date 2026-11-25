@@ -1,4 +1,8 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 // One guest thread. Output and exit go through a BroadcastChannel: the page reads it, whichever worker writes.
+// The title's files come from its folder's URL (`dir`), or for a title image from its drive (`drive`: the file layers,
+// served by tools/serve.mjs) where its folder is `folder` (web/image.mjs).
+import { driveName } from '../image.mjs';
 const bus = new BroadcastChannel('series-web');
 bus.onmessage = (e) => { if (e.data.stop) close(); };
 const kinds = ['trap', 'instruction not lifted', 'import not implemented', 'indirect call to unknown code', 'image does not fit', 'fatal'];
@@ -14,7 +18,7 @@ onmessage = (e) => {
   } else run(e.data);
 };
 function run(d) {
-  const { module, memory, dir, tids, tid, args, env, start, pool, store = [], t0 = 0 } = d;
+  const { module, memory, dir, drive = null, folder = null, tids, tid, args, env, start, pool, store = [], t0 = 0 } = d;
   // one monotonic clock for every thread: each worker's performance.now() counts from its own start
   const clock = () => performance.timeOrigin + performance.now() - t0;
   const u8 = () => new Uint8Array(memory.buffer), dv = () => new DataView(memory.buffer);
@@ -52,10 +56,14 @@ function run(d) {
   };
   // the title's files, fetched on first use (a synchronous request: workers may block)
   const files = new Map();
+  const enc_ = (p) => p.split('/').map(encodeURIComponent).join('/');
+  // a name the runtime asks for: in the title's folder, or "c:/..." on the drive (only a title image has one)
+  const urlOf = (name) => (drive ? drive + enc_(driveName(name, folder)) : /^c:(\/|$)/i.test(name) ? null : dir + enc_(name));
   const file = (name) => {
-    if (!files.has(name)) { const x = new XMLHttpRequest(); x.open('GET', dir + name.split('/').map(encodeURIComponent).join('/'), false); x.responseType = 'arraybuffer'; x.send(); files.set(name, x.status === 200 ? new Uint8Array(x.response) : null); }
+    if (!files.has(name)) { const u = urlOf(name); let data = null; if (u) { const x = new XMLHttpRequest(); x.open('GET', u, false); x.responseType = 'arraybuffer'; x.send(); if (x.status === 200) data = new Uint8Array(x.response); } files.set(name, data); }
     return files.get(name);
   };
+  const ask = (name, what) => { const u = urlOf(name); if (!u) return null; const x = new XMLHttpRequest(); x.open('GET', `${u}?${what}`, false); x.send(); return x.status === 200 ? x.responseText : null; };
   const host = {
     fault: (kind, a) => { bus.postMessage({ out: `series-web: ${kinds[kind]}${kind === 5 ? '' : ` at 0x${BigInt.asUintN(64, a).toString(16)}`}\n` }); exit(120); },
     now_us: () => clock() * 1000,
@@ -63,10 +71,10 @@ function run(d) {
       const f = file(text(name, nlen)); if (!f) return 0;
       const o = Number(off), src = f.subarray(o, o + Number(len)); u8().set(src, Number(dst)); return src.length;
     },
-    stat: (name, nlen) => { const x = new XMLHttpRequest(); x.open('GET', dir + text(name, nlen).split('/').map(encodeURIComponent).join('/') + '?stat', false); x.send(); return x.status === 200 ? BigInt(x.responseText) : -1n; },
+    stat: (name, nlen) => { const r = ask(text(name, nlen), 'stat'); return r === null ? -1n : BigInt(r); },
     list: (name, nlen, buf, cap) => {
-      const x = new XMLHttpRequest(); x.open('GET', dir + text(name, nlen).split('/').map(encodeURIComponent).join('/') + '?list', false); x.send();
-      if (x.status !== 200) return 0; const b = enc.encode(x.responseText); if (buf && cap >= b.length) u8().set(b, buf); return b.length;
+      const r = ask(text(name, nlen), 'list'); if (r === null) return 0;
+      const b = enc.encode(r); if (buf && cap >= b.length) u8().set(b, buf); return b.length;
     },
     log: (p, n) => bus.postMessage({ out: `series-web: ${text(p, n)}\n` }),
     // the title's persistent storage: the page loaded it from OPFS before the title started, and saves changes there
@@ -76,7 +84,9 @@ function run(d) {
     store_remove: (name, len) => bus.postMessage({ remove: text(name, len) }),
     gpu_open: (ring) => bus.postMessage({ gpu: ring >>> 0 }),     // the page runs the GPU back end on this ring
     audio_open: (ring) => bus.postMessage({ audio: ring >>> 0 }), // and plays this one
+    audio_dump: () => {}, // SW_AUDIO_WAV is Node's: a recording in the browser reads the ring (main.js)
     input_open: (block) => bus.postMessage({ input: block >>> 0 }), // and writes the keyboard and gamepad here
+    win32_input_open: (ring) => bus.postMessage({ win32input: ring >>> 0 }), // a desktop title's keyboard and mouse events (rt/win32/input.c)
     exit: (code) => exit(code),
   };
   // a new guest thread: claim an idle pooled worker (the page cannot start one for us while we block)

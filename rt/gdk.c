@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 // The console's system libraries, offline: kernelx and XMem, XGameRuntime (task queues, XAsync, XUser, saves,
 // persistent local storage, package, networking hints), the ntuser and DWM functions a title's window uses,
 // and GameInput's object. Behaviour follows XCL's findings on retail titles (github.com/ivall/xcl, GPL-2.0).

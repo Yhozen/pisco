@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 // Runtime internals shared by the import modules. Include libc headers before this file:
 // cpu.h defines the short register macros (R, X) lifted code uses.
 #pragma once
@@ -11,6 +12,14 @@
 #define HOST(name) __attribute__((import_module("host"), import_name(name)))
 HOST("fault") __attribute__((noreturn)) void host_fault(u32 kind, u64 addr);
 HOST("now_us") double host_now_us(void);
+// The title's clock, in microseconds since 1970: the host's, or with SW_CLOCK=<microseconds a frame> a virtual one
+// that starts at a fixed date and moves by that step when a frame is presented and by the time asked for on Sleep
+// (kernel32.c). The Win32 time functions of a 32-bit title read it; rt_uptime_us is the same clock since "boot".
+u64 rt_now_us(void);
+u64 rt_uptime_us(void);
+int rt_clock_virtual(void);
+void rt_clock_advance(u64 us);       // nothing unless the clock is virtual
+void rt_clock_advance_frame(void);   // a frame was presented
 HOST("read_file") u32 host_read_file(const char *name, u32 name_len, u64 offset, u64 len, u64 dst); // from the title's folder
 HOST("log") void host_log(const char *text, u32 len);
 HOST("gpu_open") void host_gpu_open(u32 ring);            // the GPU back end starts reading this ring (rt/d3d12_cmd.h)
@@ -28,21 +37,39 @@ const ModuleDef *rt_module_named(const char *name);       // by file name, case-
 u64 rt_module_export(const ModuleDef *m, const char *name); // from its export directory in guest memory
 
 // ---- guest calls ----
+// The runtime is built for one guest width (GUEST_BITS, from the title: cpu.h defaults it to 64).
+#if GUEST_BITS == 32
+// Arguments of a 32-bit call (stdcall or cdecl), as an import sees them: all on the stack, above the return
+// address ESP points at. The import returns normally; rt_call then removes the return address and, for a
+// stdcall function, its arguments (the sizes come from tools/stdcall-sizes.sh).
+#define ARG(n) ((u64)M32(R[RSP] + 4 + 4 * (n)))
+#define FARG(n) MF64(R[RSP] + 4 + 8 * (n))  // right when every argument is a double (the C runtime's math functions)
+#define RET(v) (R[RAX] = (u32)(v))
+#define RET64(v) do { u64 v_ = (u64)(v); R[RAX] = (u32)v_; R[RDX] = (u32)(v_ >> 32); } while (0)
+#define MP(a) M32(a)   // a pointer-sized value in guest memory
+#define PTR_SIZE 4
+#else
 // Arguments of a Win64 call, as an import sees them: RSP points at the return address.
 #define ARG(n) ((n) == 0 ? R[RCX] : (n) == 1 ? R[RDX] : (n) == 2 ? R[8] : (n) == 3 ? R[9] : M64(R[RSP] + 8 + 8 * (n)))
 #define FARG(n) (X[n].pd[0])
 #define RET(v) (R[RAX] = (u64)(v))
+#define RET64(v) RET(v)
+#define MP(a) M64(a)
+#define PTR_SIZE 8
+#endif
 #define GSTR(a) ((char *)GP(a))
 typedef u16 wchar16;
 #define GWSTR(a) ((wchar16 *)GP(a))
 
-// Calls a guest function with up to four integer arguments and returns RAX.
+// Calls a guest function with up to four integer arguments and returns RAX (EAX for a 32-bit guest, where the
+// arguments go on the stack and it does not matter whether the callee removes them).
 u64 rt_guest_call(Cpu *c, u64 fn, u64 a0, u64 a1, u64 a2, u64 a3);
 
 // ---- logging ----
 void rt_log(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 __attribute__((noreturn)) void rt_fatal(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 extern int rt_trace;
+extern void (*rt_exit_hook)(void);   // called once when the process ends, before the host is told (statistics)
 
 // ---- memory ----
 u64 rt_valloc(u64 size, u64 align); // zeroed guest memory, never freed (VirtualAlloc, stacks, TEBs)
@@ -73,6 +100,19 @@ void rt_thread_attach(Thread *t, int reason); // runs the image's TLS callbacks
 __attribute__((noreturn)) void rt_thread_exit(Cpu *c, u32 code);
 
 // TEB fields
+#if GUEST_BITS == 32
+#define TEB_SEH 0x00   // the head of the exception handler chain; -1: empty
+#define TEB_STACK_BASE 0x04
+#define TEB_STACK_LIMIT 0x08
+#define TEB_SELF 0x18
+#define TEB_PID 0x20
+#define TEB_TID 0x24
+#define TEB_TLS_POINTER 0x2C
+#define TEB_PEB 0x30
+#define TEB_LAST_ERROR 0x34
+#define TEB_TLS_SLOTS 0xE10
+#define PEB_IMAGE_BASE 0x08
+#else
 #define TEB_STACK_BASE 0x08
 #define TEB_STACK_LIMIT 0x10
 #define TEB_SELF 0x30
@@ -82,6 +122,8 @@ __attribute__((noreturn)) void rt_thread_exit(Cpu *c, u32 code);
 #define TEB_PEB 0x60
 #define TEB_LAST_ERROR 0x68
 #define TEB_TLS_SLOTS 0x1480
+#define PEB_IMAGE_BASE 0x10
+#endif
 #define TEB_ERRNO 0x1900 // ours: msvcrt's per-thread errno
 #define TEB_SIZE 0x2000
 #define SET_LAST_ERROR(e) (M32(THREAD(c)->teb + TEB_LAST_ERROR) = (e))
@@ -106,8 +148,13 @@ u64 rt_handle_new(Object *o);
 Object *rt_handle_get(u64 h);
 Object *rt_object_new(int type);
 void rt_handle_close(u64 h);
+#if GUEST_BITS == 32
+#define PSEUDO_PROCESS 0xFFFFFFFFull
+#define PSEUDO_THREAD 0xFFFFFFFEull
+#else
 #define PSEUDO_PROCESS 0xFFFFFFFFFFFFFFFFull
 #define PSEUDO_THREAD 0xFFFFFFFFFFFFFFFEull
+#endif
 // every wait and every signal go through this lock and condition
 extern pthread_mutex_t rt_wait_lock;
 extern pthread_cond_t rt_wait_cond;
@@ -122,6 +169,15 @@ u64 rt_data_import(const char *name);
 u64 rt_dynamic_import(const char *dll, const char *name); // GetProcAddress
 const char *rt_import_name(u64 addr);
 u64 rt_stub_import(const char *full);                     // a named address that only logs (unknown vtable slots)
+
+// ---- the title's recipe (recipe.gen.c, from tools/recipe-gen.py) ----
+// The virtual CPU's features, one bit each. Without a recipe a title gets all of them.
+enum { CPU_FPU = 1, CPU_TSC = 2, CPU_CX8 = 4, CPU_CMOV = 8, CPU_MMX = 0x10, CPU_FXSR = 0x20, CPU_SSE = 0x40, CPU_SSE2 = 0x80, CPU_SSE3 = 0x100,
+       CPU_SSSE3 = 0x200, CPU_SSE41 = 0x400, CPU_SSE42 = 0x800, CPU_POPCNT = 0x1000, CPU_CX16 = 0x2000, CPU_PCLMUL = 0x4000 };
+extern const unsigned rt_cpu_features;
+// registry values: `key` is the full key path ("HKEY_LOCAL_MACHINE\\Software\\..."), a number (REG_DWORD) or a string (REG_SZ)
+typedef struct { const char *key, *name, *string; unsigned number; } RegistryValue;
+extern const RegistryValue rt_registry[]; extern const unsigned rt_registry_count;
 
 // ---- strings ----
 size_t rt_wcslen(const wchar16 *s);

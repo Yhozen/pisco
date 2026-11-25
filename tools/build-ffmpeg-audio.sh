@@ -1,4 +1,5 @@
 #!/bin/bash
+# SPDX-License-Identifier: GPL-2.0-or-later
 # build-ffmpeg-audio.sh: a minimal FFmpeg for wasm32 (wasi-sdk) with only the XMA1/XMA2 (wmaprodec.c) and Opus
 # audio decoders, for rt/audio_codec.c (built with -DSW_AUDIO_CODECS).
 #   out/ffmpeg/lib/{libavcodec,libswresample,libavutil}.a   link in this order

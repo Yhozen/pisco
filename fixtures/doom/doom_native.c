@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 // The reference for fixtures/doom: doomgeneric on Linux with no window, the same virtual time and the same frame
 // hash as doom_xbox.c's -hashframes. ./doom -iwad freedoom1.wad -timedemo demo1 prints one line per frame.
 #include <stdio.h>

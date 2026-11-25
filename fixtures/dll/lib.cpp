@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 // A DLL "shipped with the game": exports, DllMain, thread_local, and an exception that leaves it.
 #include <stdexcept>
 static int attached, thread_attached;

@@ -5,10 +5,17 @@ it ahead of time and supplying the operating system underneath it. The target is
 Minecraft; until those files are here it is tested on titles we build ourselves and on a real program
 (Stockfish 19's official Windows build).
 
-Licence: GPL-2.0-only (so code from [XCL](https://github.com/ivall/xcl) can be used).
+A second kind of title is under way: ordinary 32-bit Windows PC games, with Narbacular Drop (2005) first.
+It plays a scripted session from its menu into its first level, in Node and in headless Chrome, where its
+fixed-function Direct3D 9 is drawn with WebGPU and its screens match Wine's; text, sound and input from the
+page are the milestones ahead ([status](docs/status.md)).
+
+Licence: GPL-2.0-or-later for our own code; code from other projects keeps its own licence (the shader tools
+from [XCL](https://github.com/ivall/xcl) are GPL-2.0-only). See [LICENSING.md](LICENSING.md).
 
 Docs: [the journey so far](docs/journey.md) (what was built, measured and learned, roadblocks) ·
-[status and next steps](docs/status.md) · [first run of a real title](docs/first-run.md) · [wasm32 or wasm64](docs/memory.md)
+[status and next steps](docs/status.md) · [first run of a real title](docs/first-run.md) · [wasm32 or wasm64](docs/memory.md) ·
+[Narbacular Drop, the first Windows PC title](docs/narbacular-drop.md)
 
 ## How it works
 
@@ -28,6 +35,9 @@ runtime (rt/, C on wasi-libc, linked into the same module) ◄──────
               queues, XAsync, XUser, saves, PLS, package), the console screen (user32 / DWM), GameInput
   d3d12.c     D3D12 / D3D12.X front end (+ XG, D3DCompile from precompiled shaders); dxgi.c (DXGI, MFPlat);
               dstorage.c (DirectStorage); xaudio2.c + audio_codec.c (XAudio2, XMA2 / Opus via FFmpeg)
+  gpu_ring.c  the ring of records a GPU back end reads (web/gpu/): what D3D12 and Direct3D 9 both write to
+  win32/      Windows desktop titles: user32, gdi32, the registry, DirectInput 8, FMOD 3, and Direct3D 9
+              (d3d9*.c: the device; d3d9_ffp.c: its fixed-function pipeline as WGSL; d3d9_gpu.c: its draws)
 Imports nothing implements become stubs that log their first call and return 0 (E_NOTIMPL for the console's
 HRESULT APIs), as in XCL; SW_STRICT=1 stops at them instead.
 host (web/)   WASI calls, one worker per guest thread over one shared memory
@@ -40,6 +50,11 @@ host (web/)   WASI calls, one worker per guest thread over one shared memory
   It reports what it could not lift. AVX-and-later functions are left out: the virtual CPU's CPUID reports
   SSE4.2 and POPCNT only, so titles pick their SSE paths.
 - **Registers** live in a `Cpu` struct passed as `restrict`, so clang keeps them in wasm locals between calls.
+- **32-bit titles**: the same lifter in a 32-bit mode. Without an exception table, functions come from the
+  entry point and call targets, then from code addresses in data and immediates; `jmp [reg*4+table]`
+  switches are recovered; x87 keeps its control word (rounding, 24-bit precision). The runtime is built for
+  the guest's width (stdcall arguments on the stack, the TEB on `fs`). MMX and 3DNow are not lifted; a
+  32-bit title's virtual CPU will stop reporting MMX (next milestone: a CPU feature set per title).
 - **Guest memory** is linear memory: a guest address is a wasm address. Images are rebased below 4 GiB.
   wasm32 by default; see [docs/memory.md](docs/memory.md) for wasm64.
 - **Threads**: a guest thread is a pthread of the runtime, i.e. a worker. In the browser they come from a
@@ -50,7 +65,8 @@ host (web/)   WASI calls, one worker per guest thread over one shared memory
 ## Try it
 
 Needs Rust, Node 24, [wasi-sdk](https://github.com/WebAssembly/wasi-sdk) 34 in `~/tools`, and for the C++
-test [llvm-mingw](https://github.com/mstorsjo/llvm-mingw).
+tests [llvm-mingw](https://github.com/mstorsjo/llvm-mingw). `tools/setup-toolchain.sh` fetches them (and the
+shader tools the Doom test needs); `tests/run.sh` builds and runs every test title.
 
 ```sh
 cargo build --release -p lifter
@@ -60,7 +76,25 @@ node web/run-node.mjs out/hello/title.wasm fixtures/hello/target/x86_64-pc-windo
 node tools/run-chrome.mjs out/hello/title.wasm <the .exe>          # the same in headless Chrome
 ```
 
-`SW_TRACE=1` logs missing imports and exception dispatch; `SW_TRACE=2` every import call.
+A Windows PC title is built from its recipe and your own installer into a title image (an OCI image layout:
+[docs/images.md](docs/images.md)); the installer is checked by its sha256, extracted with innoextract
+(`tools/setup-toolchain.sh innoextract`), and never copied into the repository:
+
+```sh
+cargo build --release -p sw -p lifter
+target/release/sw build recipes/narbacular-drop --source ~/Downloads/narbacular_drop_setup.exe   # -> out/images/narbacular-drop
+target/release/sw run out/images/narbacular-drop --session recipes/narbacular-drop/sessions/menu-to-level.json
+target/release/sw run out/images/narbacular-drop --chrome          # headless Chrome; in a browser of your own:
+node tools/serve.mjs 8000 web out/images/narbacular-drop           # then http://127.0.0.1:8000/browser/index.html?image=/files/0/
+target/release/sw inspect out/images/narbacular-drop               # its layers, config and registry
+target/release/sw census <a title's .exe>                          # what the base and its libraries answer for
+```
+
+`SW_TRACE=1` logs missing imports and exception dispatch; `SW_TRACE=2` every import call. For Windows
+desktop titles: `SW_CLOCK=16667` makes time virtual (it moves by that many microseconds when a frame is
+presented), `SW_SESSION=<session.json>` plays a scripted session of mouse and keyboard input (both hosts; in
+Chrome the frame presented at each of its `shot` steps is saved as a PNG beside the wasm, in `shots/`),
+`SW_D3D9_STATS=1` and `SW_D3D9_FRAMES=1` print what the title asked Direct3D 9 for and the shaders made for it.
 
 ## State (2026-11-24)
 
@@ -78,6 +112,8 @@ and published by `.github/workflows/progress.yml`.
 | `fixtures/threads` (Rust, no_std) | 4 threads, `lock xadd`, critical sections, events, semaphores, TLS, ExitThread, timeouts | 9/9 | 9/9 |
 | `fixtures/cxx` (C++, llvm-mingw, libc++ + libunwind) | throw through frames with destructors, `catch (...)`, `std::exception`, rethrow, throw in catch, in a thread | 7/7 | 7/7 |
 | `fixtures/dll` (C++, llvm-mingw: an exe and the DLL it ships) | static and dynamic imports, DllMain on process and thread attach, `thread_local` in the DLL, an exception crossing from the DLL | 7/7 | – |
+| `hello` again as a 32-bit program (i686), and `fixtures/x87` (C, llvm-mingw, no SSE) | the lifter's 32-bit mode and the runtime for a 32-bit guest: stdcall, the x87 with its control word (rounding, 24-bit precision), the direction flag, EFLAGS.ID, a jump table as Visual C++ writes them. Expected output: what the same programs print under Wine | 7/7; 27 of 27 lines | 7/7; 27 of 27 |
+| **Narbacular Drop** (2005; the user's own copy, built with `recipes/narbacular-drop/title.toml`) | a real 32-bit Windows game from its entry point into its first level: its C runtime, files, window, Direct3D 9 (fixed-function, drawn through shaders the runtime writes), D3DX, DirectInput, FMOD 3 (sound from its MP3, Ogg and WAV files), scripted sessions on a virtual clock, the keyboard and Pointer Lock mouse from the page, files it writes kept between runs | the same calls as under Wine up to `Direct3DCreate9` (81 steps, repeats folded); the session's 13 checkpoints over 6,256 frames, the same log on every run, each frame making the Direct3D calls it makes under Wine, text draws included (strict mode); its 539,750 draws reach the null GPU back end as consistent records; a second session places both portals and walks out of the cage, its sound the same on every run, its FMOD calls Wine's up to the game's first random choice of a sound; `system.opt`, written on Quit, read by the next run | the session drawn with WebGPU, a PNG at each checkpoint: the 8 still screens within one level in 255 of Wine's (with D3DX's plain code, as here), the menu and the level within what two runs of Wine differ by, the level's title and hint drawn by GDI where Wine draws them; 12 to 20 frames a second on SwiftShader (`tests/run.sh ndgfx`); the portal session's level views within 1 to 2 levels of Wine's on average, `system.opt` kept across a reload in OPFS (`tests/run.sh ndplay`); a recording with sound (`recipes/narbacular-drop/video.sh`) |
 | **XCL's console test title** (`tests/testtitle` + its game DLL, Rust std, built for `x86_64-pc-windows-gnullvm`) | XCL's own checks of a console title: TLS, panics, kernelx, XMem, the console screen, GameInput, modules, game DLL, the VFS, XGameRuntime, XUser, saves, PLS; D3D12.X (UMA memory, the console device and list methods, DMA queue, derived pipelines, depth bias, queries, textures in title memory), DirectStorage, MFPlat, XAudio2 with XMA2 and Opus | 46/50 (the 4 checks that read pixels need WebGPU) | **50/50** (`tests/gfx/xcl.sh`) |
 | **Stockfish 19, official Windows x64 build** (MinGW, 103 MB) | `bench`: 2.9 M instructions lifted, worker threads, NNUE (109 MB) in shared memory | **2,497,913 nodes = the published signature**, 105,700 nodes/s | **2,497,913 nodes**, 110,821 nodes/s, 22.5 s |
 | **Doom as a console title** (`fixtures/doom`: doomgeneric + Freedoom on D3D12.X, GameInput, XAudio2, XGameSave; llvm-mingw) | D3D12.X → WebGPU, `PresentX` and the frame clock, sound, keyboard / gamepad, saves that survive a reload | `-timedemo` frames equal native on every deterministic frame (null GPU back end) | frames **read back from WebGPU** equal native's; ~35 fps on SwiftShader; video: `fixtures/doom/video.sh` |

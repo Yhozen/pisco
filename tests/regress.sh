@@ -1,4 +1,5 @@
 #!/bin/bash
+# SPDX-License-Identifier: GPL-2.0-or-later
 # tests/regress.sh [names...]: rebuilds the regression titles against the current runtime and runs them in Node.
 # Names: hello threads cxx dll xcl sf (default: all). Logs: out/regress-<name>.{build,run}.log.
 # Expected: every [PASS] line of hello / threads / cxx / dll; XCL's test title 46 of 50 in Node (the 4 checks that

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 // D3D12.X memory operations on guest memory (rt/d3d12_cmd.h GPU_L_MEM_*), shared by the WebGPU and null back
 // ends. Guest addresses may carry a tag above 4 GiB (the console's GPU-visible region): the low 32 bits name
 // the byte. They run once the work before them is done (the back end's business).

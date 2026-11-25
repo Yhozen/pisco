@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-only
 // From XCL (https://github.com/ivall/xcl, GPL-2.0-only), crates/xcl/src/gpu/xbox.rs at 6025201; module paths adapted.
 //! Xbox Series shader containers: precompiled console GPU code (RDNA2), no DXIL.
 //!

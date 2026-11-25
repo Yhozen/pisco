@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 // Doom (doomgeneric, GPL-2.0) as a console title: the platform layer of doomgeneric written against the console's
 // interfaces — D3D12.X (D3D12XboxCreateDevice, display back buffers, the frame clock, PresentX), GameInput
 // (keyboard and gamepad), XAudio2 (sound effects) and XGameRuntime (a user, the save folder).

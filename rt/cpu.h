@@ -1,6 +1,12 @@
-// Guest CPU state and instruction helpers for lifted x86-64 code.
+// SPDX-License-Identifier: GPL-2.0-or-later
+// Guest CPU state and instruction helpers for lifted x86-64 code, and for lifted 32-bit x86 code.
 // Guest address == offset in wasm linear memory (the image is based below 4 GiB).
 #pragma once
+// The guest's width: the lifter defines GUEST_BITS 32 in the files of a 32-bit title, nothing in a 64-bit one's.
+// A 32-bit guest uses r[0..7] (EAX..EDI, zero-extended), fs_base (its TEB), x87 and, when its code has it, x[0..7].
+#ifndef GUEST_BITS
+#define GUEST_BITS 64
+#endif
 typedef unsigned char u8; typedef unsigned short u16; typedef unsigned int u32; typedef unsigned long long u64;
 typedef signed char s8; typedef short s16; typedef int s32; typedef long long s64;
 typedef __int128 s128; typedef unsigned __int128 u128;
@@ -14,9 +20,11 @@ typedef struct Cpu {
   u64 r[16];
   V x[16];
   u64 gs_base;
+  u64 fs_base;    // 32-bit guests: the thread's TEB (FS-prefixed memory operands add it)
   u32 mxcsr;
   u16 fcw, fsw;   // x87 control and status
   u32 ftop;       // x87 stack top (0..7)
+  u32 eflags;     // 32-bit guests: the EFLAGS bits pushfd / popfd carry beside the function's flags (AC, ID)
   double st[8];   // x87 registers, kept as doubles (80-bit precision is not kept)
   struct Landing *landing; // the innermost frame an exception can resume in (rt/seh.c)
 } Cpu;
@@ -25,7 +33,7 @@ typedef struct Landing { void *jb; u64 entry_rsp; u64 resume; struct Landing *pr
 #include <setjmp.h>
 #define LANDING(body) do { jmp_buf jb; Landing L = {&jb, c->r[4], 0, c->landing}; c->landing = &L; \
     u64 resume_at = 0; if (setjmp(jb)) resume_at = L.resume; body(c, resume_at); c->landing = L.prev; } while (0)
-typedef struct { u8 cf, zf, sf, of, pf, af; } Flags;
+typedef struct { u8 cf, zf, sf, of, pf, af, df; } Flags; // df: 32-bit code only (64-bit code assumes it clear)
 
 #define R (c->r)
 #define X (c->x)
@@ -54,6 +62,11 @@ u64 rt_rdtsc(void);
 
 #define PUSH64(v) do { R[RSP] -= 8; M64(R[RSP]) = (v); } while (0)
 #define POP64() (R[RSP] += 8, M64(R[RSP] - 8))
+// 32-bit code: 4-byte stack slots (2-byte ones behind an operand-size prefix); ESP wraps at 4 GiB
+#define PUSH32(v) do { u32 push_v_ = (v); R[RSP] = (u32)(R[RSP] - 4); M32(R[RSP]) = push_v_; } while (0)
+#define POP32() (R[RSP] = (u32)(R[RSP] + 4), M32(R[RSP] - 4))
+#define PUSH16(v) do { u16 push_v_ = (v); R[RSP] = (u32)(R[RSP] - 2); M16(R[RSP]) = push_v_; } while (0)
+#define POP16() (R[RSP] = (u32)(R[RSP] + 2), M16(R[RSP] - 2))
 
 static inline u8 parity(u64 v) { return !__builtin_parity((u8)v); }
 
@@ -80,6 +93,13 @@ static inline U rol##N(Flags *f, U a, u8 n) { n &= MSB; if (!n) return a; U r = 
 static inline U ror##N(Flags *f, U a, u8 n) { n &= MSB; if (!n) return a; U r = (U)(a >> n) | (U)(a << (MSB + 1 - n)); \
   f->cf = r >> MSB; f->of = ((r >> MSB) ^ (r >> (MSB - 1))) & 1; return r; }
 ARITH(8, u8, s8, 7) ARITH(16, u16, s16, 15) ARITH(32, u32, s32, 31) ARITH(64, u64, s64, 63)
+// rotates through carry: the count is taken modulo the operand's bits plus one (OF as for a count of 1)
+#define ROTC(N, U, MSB) \
+static inline U rcl##N(Flags *f, U a, u8 n) { n &= (N == 64 ? 63 : 31); if (N < 32) n %= N + 1; if (!n) return a; \
+  for (u8 k = 0; k < n; k++) { u8 top = (a >> MSB) & 1; a = (U)(a << 1) | (U)f->cf; f->cf = top; } f->of = ((a >> MSB) ^ f->cf) & 1; return a; } \
+static inline U rcr##N(Flags *f, U a, u8 n) { n &= (N == 64 ? 63 : 31); if (N < 32) n %= N + 1; if (!n) return a; f->of = ((a >> MSB) ^ f->cf) & 1; \
+  for (u8 k = 0; k < n; k++) { u8 low = a & 1; a = (U)(a >> 1) | (U)((U)f->cf << MSB); f->cf = low; } return a; }
+ROTC(8, u8, 7) ROTC(16, u16, 15) ROTC(32, u32, 31) ROTC(64, u64, 63)
 
 #define IMUL(N, U, S, W) static inline U imul##N(Flags *f, U a, U b) { W p = (W)(S)a * (W)(S)b; U r = (U)p; \
   f->cf = f->of = (W)(S)r != p; return r; }
@@ -175,6 +195,76 @@ static inline s64 fist(Cpu *c, double v, int bits) {
   if (!(r >= -lim && r < lim)) return bits == 64 ? (s64)0x8000000000000000ull : bits == 32 ? (s64)(s32)0x80000000u : (s64)(s16)0x8000;
   return (s64)r;
 }
+
+// ---- 32-bit code: EFLAGS as a whole, string operations with a direction, the rest of x87 ----
+// pushfd / popfd. The arithmetic flags and DF are the function's; AC and ID round-trip through the CPU state
+// (programs toggle them to tell a 486 from a 386 and to see whether CPUID exists).
+static inline u32 eflags_get(Cpu *c, const Flags *f) {
+  return (u32)f->cf | 2u | (u32)f->pf << 2 | (u32)f->af << 4 | (u32)f->zf << 6 | (u32)f->sf << 7 | 0x200u | (u32)f->df << 10 | (u32)f->of << 11 | (c->eflags & 0x240000u);
+}
+static inline void eflags_set(Cpu *c, Flags *f, u32 v) {
+  f->cf = v & 1; f->pf = (v >> 2) & 1; f->af = (v >> 4) & 1; f->zf = (v >> 6) & 1; f->sf = (v >> 7) & 1; f->df = (v >> 10) & 1; f->of = (v >> 11) & 1;
+  c->eflags = v & 0x240000u;
+}
+// rep movs / rep stos: ECX elements of `size` bytes, upwards or (DF set) downwards from ESI / EDI
+static inline void rep_movs(Cpu *c, u8 df, u32 size) {
+  u32 n = (u32)R[RCX], di = (u32)R[RDI], si = (u32)R[RSI], bytes = n * size;
+  if (!df) {
+    if (di - si >= bytes) __builtin_memmove((void *)GP(di), (void *)GP(si), bytes); // what is read is not written first
+    else if (size == 1) for (u32 k = 0; k < n; k++) M8(di + k) = M8(si + k);
+    else if (size == 2) for (u32 k = 0; k < n; k++) M16(di + 2 * k) = M16(si + 2 * k);
+    else for (u32 k = 0; k < n; k++) M32(di + 4 * k) = M32(si + 4 * k);
+    di += bytes; si += bytes;
+  } else {
+    if (size == 1) for (u32 k = 0; k < n; k++) M8(di - k) = M8(si - k);
+    else if (size == 2) for (u32 k = 0; k < n; k++) M16(di - 2 * k) = M16(si - 2 * k);
+    else for (u32 k = 0; k < n; k++) M32(di - 4 * k) = M32(si - 4 * k);
+    di -= bytes; si -= bytes;
+  }
+  R[RCX] = 0; R[RDI] = di; R[RSI] = si;
+}
+static inline void rep_stos(Cpu *c, u8 df, u32 size) {
+  u32 n = (u32)R[RCX], di = (u32)R[RDI], bytes = n * size;
+  if (!df) {
+    if (size == 1) __builtin_memset((void *)GP(di), (u8)R[0], n);
+    else if (size == 2) for (u32 k = 0; k < n; k++) M16(di + 2 * k) = (u16)R[0];
+    else for (u32 k = 0; k < n; k++) M32(di + 4 * k) = (u32)R[0];
+    di += bytes;
+  } else {
+    if (size == 1) for (u32 k = 0; k < n; k++) M8(di - k) = (u8)R[0];
+    else if (size == 2) for (u32 k = 0; k < n; k++) M16(di - 2 * k) = (u16)R[0];
+    else for (u32 k = 0; k < n; k++) M32(di - 4 * k) = (u32)R[0];
+    di -= bytes;
+  }
+  R[RCX] = 0; R[RDI] = di;
+}
+double sin(double); double cos(double); double tan(double); double atan2(double, double);
+double fmod(double, double); double remainder(double, double); double frexp(double, int *);
+// precision control: with PC = 00 (24 bits; Direct3D 9 selects it) add, sub, mul, div and sqrt round to float;
+// 53 and 64 bits both stay doubles
+static inline double fprec(Cpu *c, double v) { return (c->fcw & 0x300) ? v : (double)(float)v; }
+// fprem / fprem1: the remainder is complete at once (C2 = 0); C0, C3, C1 are the quotient's low three bits
+static inline void fprem(Cpu *c, int nearest) {
+  double a = ST(0), b = ST(1), q = a / b; q = nearest ? __builtin_rint(q) : __builtin_trunc(q);
+  u64 n = (q > -9.0e18 && q < 9.0e18) ? (u64)(q < 0 ? -q : q) : 0;
+  ST(0) = nearest ? remainder(a, b) : fmod(a, b);
+  c->fsw = (u16)((c->fsw & ~0x4700) | ((n & 4) ? 0x100 : 0) | ((n & 2) ? 0x4000 : 0) | ((n & 1) ? 0x200 : 0));
+}
+static inline void fxtract(Cpu *c) {
+  double v = ST(0); int e = 0;
+  if (v == 0) { ST(0) = -__builtin_inf(); fpush(c, v); }
+  else if (v != v || __builtin_isinf(v)) { ST(0) = v != v ? v : __builtin_inf(); fpush(c, v); }
+  else { double m = frexp(v, &e); ST(0) = (double)(e - 1); fpush(c, m * 2); }
+}
+// the 28-byte environment and the 108-byte state of 32-bit protected mode. Which registers are empty is not
+// tracked: the tag word says none is. Instruction and operand pointers are zero.
+static inline void fstenv(Cpu *c, u64 a) {
+  M32(a) = 0xFFFF0000u | c->fcw; M32(a + 4) = 0xFFFF0000u | fstsw(c); M32(a + 8) = 0xFFFF0000u;
+  M32(a + 12) = 0; M32(a + 16) = 0; M32(a + 20) = 0; M32(a + 24) = 0xFFFF0000u;
+}
+static inline void fldenv(Cpu *c, u64 a) { u16 sw = M16(a + 4); c->fcw = M16(a); c->fsw = sw & ~0x3800; c->ftop = (sw >> 11) & 7; }
+static inline void fsave(Cpu *c, u64 a) { fstenv(c, a); for (int i = 0; i < 8; i++) f80_store(a + 28 + 10 * i, ST(i)); c->ftop = 0; c->fcw = 0x37F; c->fsw = 0; }
+static inline void frstor(Cpu *c, u64 a) { fldenv(c, a); for (int i = 0; i < 8; i++) ST(i) = f80_load(a + 28 + 10 * i); }
 
 // ---- more SSE, on WebAssembly SIMD where it has the same operation ----
 #include <wasm_simd128.h>

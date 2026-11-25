@@ -1,0 +1,36 @@
+# The recipe for Narbacular Drop (2005, DigiPen): `sw build recipes/narbacular-drop --source <installer>` makes its
+# image (docs/images.md). tools/build-title.sh reads [cpu], [registry] and [dll] of it too (RECIPE=...).
+name = "narbacular-drop"
+from = "base/win32-x86:1"
+libraries = ["d3d9", "dinput8", "fmod3"]   # checked against the title's imports
+
+[source]
+# the user's own installer: never stored in the repository, nor in any image that leaves the machine
+file = "narbacular_drop_setup.exe"
+sha256 = "0966948f956c5e9362d465e749a70dbfd2be1baadd7104e67b257d73248d7121"
+extract = "innosetup"
+
+[run]
+exe = 'C:\Program Files\Narbacular Drop\Narbacular Drop.exe'
+display = "640x480"
+
+[cpu]
+# A Pentium without MMX: D3DX links hand-written MMX, 3DNow and SSE paths the lifter does not take; without
+# these features it runs its plain x87 code.
+features = ["fpu", "tsc", "cx8"]
+
+[dll]
+# the shipped fmod.dll is UPX-packed; the runtime's own FMOD answers instead
+"fmod.dll" = "builtin"
+
+[registry]
+# D3DX's switches for its processor-specific code, all off: what the virtual CPU makes it do anyway, said
+# explicitly (the oracle's like-for-like screenshots are taken with the same values: tools/oracle-wine/README.md)
+'HKLM\Software\Microsoft\Direct3D' = { DisableMMX = 1, DisablePSGP = 1, DisableD3DXPSGP = 1 }
+
+[lifter]
+split = 16    # the lifted C in 16 files: compiled in parallel
+entries = []  # extra function entries reported by runs (none needed so far)
+
+[build]
+opt = "-O1"   # for the lifted C, as tests/run.sh nd has built it since M3 (the runtime keeps the base's -O2)

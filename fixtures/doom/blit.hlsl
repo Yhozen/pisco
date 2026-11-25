@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 // The frame Doom drew, as a texture, onto the display back buffer: one fullscreen triangle, point sampled at
 // 1:1, so every back-buffer pixel is the frame's pixel. The root signature travels with the shaders.
 #define RS "DescriptorTable(SRV(t0), visibility = SHADER_VISIBILITY_PIXEL), " \

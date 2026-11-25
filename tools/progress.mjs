@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 // node tools/progress.mjs [--refresh] [--out <dir>]: the progress map (progress.svg, progress.json, badges) — what
 // the runtime implements, measured against what real titles use.
 //   --refresh  re-reads the build outputs (the lifter's import tables of our titles in out/, XCL's test-title run)

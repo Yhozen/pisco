@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 // Windows x64 structured exception handling over the image's own unwind tables (.pdata / .xdata):
 // RtlLookupFunctionEntry, RtlVirtualUnwind, RtlCaptureContext, RaiseException's dispatch, RtlUnwindEx,
 // RtlRestoreContext, and msvcrt's __C_specific_handler. Language handlers (GCC's and LLVM's

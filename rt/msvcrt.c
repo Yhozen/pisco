@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 // msvcrt.dll and shell32's CommandLineToArgvW for lifted titles; also the process's exit and the virtual CPU's
 // identity. Guest pointers are runtime pointers in wasm32, so most string functions call wasi-libc directly.
 #include <ctype.h>
@@ -37,8 +38,11 @@ void rt_cpuid(Cpu *c) {
   case 0: a = 0xD; b = 0x756E6547; d = 0x49656E69; cx = 0x6C65746E; break; // GenuineIntel
   case 1:
     a = 0x000906EA; b = (8u << 16) | (8u << 8);
-    cx = (1u << 0) | (1u << 1) | (1u << 9) | (1u << 13) | (1u << 19) | (1u << 20) | (1u << 23); // SSE3 PCLMUL SSSE3 CX16 SSE4.1 SSE4.2 POPCNT
-    d = (1u << 0) | (1u << 4) | (1u << 8) | (1u << 15) | (1u << 23) | (1u << 24) | (1u << 25) | (1u << 26); // FPU TSC CX8 CMOV MMX FXSR SSE SSE2
+    { unsigned f = rt_cpu_features; // the title's recipe may leave features out (an old title must not pick MMX paths)
+      cx = (f & CPU_SSE3 ? 1u << 0 : 0) | (f & CPU_PCLMUL ? 1u << 1 : 0) | (f & CPU_SSSE3 ? 1u << 9 : 0) | (f & CPU_CX16 ? 1u << 13 : 0)
+         | (f & CPU_SSE41 ? 1u << 19 : 0) | (f & CPU_SSE42 ? 1u << 20 : 0) | (f & CPU_POPCNT ? 1u << 23 : 0);
+      d = (f & CPU_FPU ? 1u << 0 : 0) | (f & CPU_TSC ? 1u << 4 : 0) | (f & CPU_CX8 ? 1u << 8 : 0) | (f & CPU_CMOV ? 1u << 15 : 0)
+        | (f & CPU_MMX ? 1u << 23 : 0) | (f & CPU_FXSR ? 1u << 24 : 0) | (f & CPU_SSE ? 1u << 25 : 0) | (f & CPU_SSE2 ? 1u << 26 : 0); }
     break;
   case 0x80000000: a = 0x80000004; break;
   case 0x80000001: cx = 1u << 0; d = (1u << 11) | (1u << 20) | (1u << 29); break; // LAHF; SYSCALL NX LM
@@ -49,7 +53,11 @@ void rt_cpuid(Cpu *c) {
   }
   R[RAX] = a; R[RBX] = b; R[RCX] = cx; R[RDX] = d;
 }
+#if GUEST_BITS == 32
+u64 rt_rdtsc(void) { return rt_uptime_us() * 3000; } // a 3 GHz counter on the title's clock
+#else
 u64 rt_rdtsc(void) { return (u64)(host_now_us() * 3000.0); }
+#endif
 
 // ---- files ----
 int rt_file_write(int fd, const void *p, u32 n) { u32 done = 0; while (done < n) { ssize_t k = write(fd, (const char *)p + done, n - done); if (k <= 0) return done ? (int)done : -1; done += (u32)k; } return (int)done; }
@@ -164,7 +172,8 @@ static u64 atexit_fns[256]; static int atexit_n;
 static pthread_mutex_t exit_lock = PTHREAD_MUTEX_INITIALIZER;
 static int exiting;
 HOST("exit") __attribute__((noreturn)) void host_exit(u32 code);
-void rt_exit_process(u32 code) { host_exit(code); }
+void (*rt_exit_hook)(void);
+void rt_exit_process(u32 code) { void (*hook)(void) = rt_exit_hook; rt_exit_hook = 0; if (hook) hook(); host_exit(code); }
 static void run_atexit(Cpu *c) {
   pthread_mutex_lock(&exit_lock);
   if (exiting) { pthread_mutex_unlock(&exit_lock); return; }

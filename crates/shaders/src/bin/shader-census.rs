@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-only
 //! shader-census <title folder>: every shader container in a title's files, wherever it is stored
 //! (packs, material files, the executable), with the stages, programs and RDNA2 instructions they use.
 //! It reads the title's files and prints counts only; nothing is written.

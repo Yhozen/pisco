@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 // DXGI as a console title reaches it: the D3D12.X device's IDXGIDevice1 (QueryInterface on the device), its
 // adapter (GetDesc with the device's LUID) and no outputs (the page's canvas is the display). Media
 // Foundation's device manager (MFPlat), which console titles reset with the D3D12.X device, is here too.

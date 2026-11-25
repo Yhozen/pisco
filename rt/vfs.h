@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 // The title's file system (vfs.c). Paths are guest paths (UTF-8); errors are Win32 error codes.
 #pragma once
 typedef struct VFile VFile;

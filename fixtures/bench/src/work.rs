@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 // CPU workloads shaped like game code; the same source runs natively and lifted.
 #[inline(never)] pub fn fib(n: u32) -> u64 { if n < 2 { n as u64 } else { fib(n - 1) + fib(n - 2) } }
 #[inline(never)] pub fn fnv(d: &[u8]) -> u64 { let mut h = 0xcbf29ce484222325u64; for &b in d { h ^= b as u64; h = h.wrapping_mul(0x100000001b3); } h }

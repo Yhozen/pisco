@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 // C++ exceptions with the MSVC ABI (clang, x86_64-pc-windows-msvc): __CxxFrameHandler3, _CxxThrowException.
 // Our own test code; no Microsoft SDK or CRT: the entry point is ours, imports come from .def files.
 extern "C" __declspec(dllimport) void *__stdcall GetStdHandle(unsigned long);

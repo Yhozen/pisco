@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 // kernel32.dll (and the ntdll functions it forwards) for lifted titles.
 #include <sched.h>
 #include <time.h>
@@ -50,6 +51,9 @@ IMP(kernel32, GetLargePageMinimum) { RET(0); }
 IMP(kernel32, SwitchToThread) { sched_yield(); RET(1); }
 IMP(kernel32, Sleep) {
   u32 ms = (u32)ARG(0);
+#if GUEST_BITS == 32
+  if (rt_clock_virtual()) { rt_clock_advance(1000ull * ms); return; } // a virtual clock (SW_CLOCK): the time passes at once
+#endif
   if (!ms) { sched_yield(); return; }
   struct timespec ts = {ms / 1000, (long)(ms % 1000) * 1000000};
   nanosleep(&ts, 0);
@@ -62,7 +66,11 @@ IMP(kernel32, GetSystemInfo) {
   M32(p + 36) = 8664; M32(p + 40) = 65536; M16(p + 44) = 6;
 }
 // PF_* numbers: 3 MMX, 6 XMMI, 10 XMMI64, 13 SSE3, 36 SSSE3, 37 SSE4_1, 38 SSE4_2, 39 AVX
-IMP(kernel32, IsProcessorFeaturePresent) { u32 f = (u32)ARG(0); RET(f == 3 || f == 6 || f == 10 || f == 13 || f == 36 || f == 37 || f == 38 || f == 8 || f == 12); }
+IMP(kernel32, IsProcessorFeaturePresent) { // PF_*: 2 CMPXCHG8B, 3 MMX, 6 SSE, 8 RDTSC, 10 SSE2, 12 NX, 13 SSE3, 14 CMPXCHG16B, 36 SSSE3, 37 SSE4.1, 38 SSE4.2
+  u32 f = (u32)ARG(0); unsigned have = rt_cpu_features;
+  RET(f == 2 ? !!(have & CPU_CX8) : f == 3 ? !!(have & CPU_MMX) : f == 6 ? !!(have & CPU_SSE) : f == 8 ? !!(have & CPU_TSC) : f == 10 ? !!(have & CPU_SSE2) : f == 12 ? 1
+    : f == 13 ? !!(have & CPU_SSE3) : f == 14 ? !!(have & CPU_CX16) : f == 36 ? !!(have & CPU_SSSE3) : f == 37 ? !!(have & CPU_SSE41) : f == 38 ? !!(have & CPU_SSE42) : 0);
+}
 
 // ---- errors ----
 IMP(kernel32, GetLastError) { RET(M32(THREAD(c)->teb + TEB_LAST_ERROR)); }
@@ -234,9 +242,27 @@ IMP(kernel32, VirtualQuery) {
   RET(48);
 }
 IMP(kernel32, GetProcessHeap) { RET(0x7000); }
-IMP(kernel32, HeapAlloc) { u64 n = ARG(2); void *p = (ARG(1) & 8) ? calloc(1, n ? n : 1) : malloc(n ? n : 1); RET((uptr)p); }
+// What a block the title did not ask to be zeroed holds. Windows hands back a small block with whatever was there
+// before (only a big one, from fresh pages, is zero), and a title can depend on that by accident: Narbacular
+// Drop's player, as it starts a level, attaches the camera to itself only if a pointer it sets a few lines later
+// is already non-zero (0x41d9cb tests [this+0x1e4], 0x41da5e sets it), and without the camera the level's first
+// frame reads through a stale index. Here the heap is the runtime's malloc, whose leftovers depend on the runtime
+// and the host as much as on the title, so a 32-bit title's small blocks are filled with one non-zero byte instead:
+// the same on every host, and non-zero as the game's runs under Wine show it found there.
+static void heap_fresh(void *p, u64 from, u64 to) {
+#if GUEST_BITS == 32
+  if (p && to > from) memset((u8 *)p + from, to >= 0x7F000 ? 0 : 0xCD, to - from);   // 0x7F000: above it Windows' heap allocates fresh pages
+#else
+  (void)p; (void)from; (void)to;
+#endif
+}
+IMP(kernel32, HeapAlloc) { u64 n = ARG(2); void *p = (ARG(1) & 8) ? calloc(1, n ? n : 1) : malloc(n ? n : 1); if (!(ARG(1) & 8)) heap_fresh(p, 0, n); RET((uptr)p); }
 IMP(kernel32, HeapFree) { free((void *)GP(ARG(2))); RET(1); }
-IMP(kernel32, HeapReAlloc) { RET((uptr)realloc((void *)GP(ARG(2)), ARG(3))); }
+IMP(kernel32, HeapReAlloc) { // (heap, flags, block, size): a grown block's new bytes are zero with HEAP_ZERO_MEMORY (8)
+  void *old = (void *)GP(ARG(2)); u64 n = ARG(3), had = old ? malloc_usable_size(old) : 0; u8 *p = realloc(old, n ? n : 1);
+  if (p && n > had) { if (ARG(1) & 8) memset(p + had, 0, n - had); else heap_fresh(p, had, n); }
+  RET((uptr)p);
+}
 IMP(kernel32, HeapSize) { RET(malloc_usable_size((void *)GP(ARG(2)))); }
 IMP(kernel32, LocalAlloc) { RET((uptr)((ARG(0) & 0x40) ? calloc(1, ARG(1) ? ARG(1) : 1) : malloc(ARG(1) ? ARG(1) : 1))); }
 IMP(kernel32, LocalFree) { free((void *)GP(ARG(0))); RET(0); }
@@ -258,11 +284,35 @@ IMP(kernel32, MapViewOfFile) { Object *o = rt_handle_get(ARG(0)); RET(o && o->ty
 IMP(kernel32, UnmapViewOfFile) { RET(1); }
 
 // ---- time ----
+// The title's clock (rt.h): the host's, or with SW_CLOCK=<microseconds a frame> a virtual one that starts at a
+// fixed date (2005-01-01 12:00 UTC) and moves only when the title presents a frame or sleeps.
+static u64 clock_step, clock_virtual; static int clock_mode; // 0 not asked yet, 1 the host's, 2 virtual
+static void clock_init(void) { const char *e = getenv("SW_CLOCK"); clock_step = e ? strtoull(e, 0, 10) : 0; clock_mode = clock_step ? 2 : 1; }
+int rt_clock_virtual(void) { if (!clock_mode) clock_init(); return clock_mode == 2; }
+u64 rt_now_us(void) {
+  if (rt_clock_virtual()) return 1104580800000000ull + __atomic_load_n(&clock_virtual, __ATOMIC_SEQ_CST);
+  struct timespec t; clock_gettime(CLOCK_REALTIME, &t); return (u64)t.tv_sec * 1000000 + (u64)t.tv_nsec / 1000;
+}
+void mixer_clock_moved(void);   // mixer.c: under a virtual clock the sound is mixed up to the clock as it moves
+void rt_clock_advance(u64 us) { if (rt_clock_virtual()) { __atomic_add_fetch(&clock_virtual, us, __ATOMIC_SEQ_CST); mixer_clock_moved(); } }
+u64 rt_clock_virtual_us(void) { return __atomic_load_n(&clock_virtual, __ATOMIC_SEQ_CST); }   // the virtual clock since it started
+void rt_clock_advance_frame(void) { rt_clock_advance(clock_step); }
+// What the system has been up for: it started a minute before the first time anyone asked
+u64 rt_uptime_us(void) { static u64 boot; u64 now = rt_now_us(); if (!boot) boot = now - 60000000; return now - boot; }
+#if GUEST_BITS == 32
+// 32-bit titles: every clock is the title's clock
+IMP(kernel32, QueryPerformanceCounter) { M64(ARG(0)) = rt_uptime_us(); RET(1); }
+IMP(kernel32, QueryPerformanceFrequency) { M64(ARG(0)) = 1000000; RET(1); }
+IMP(kernel32, GetTickCount) { RET((u32)(rt_uptime_us() / 1000)); }
+IMP(kernel32, GetTickCount64) { RET64(rt_uptime_us() / 1000); }
+static u64 filetime_now(void) { return rt_now_us() * 10 + 116444736000000000ull; }
+#else
 static u64 filetime_now(void) { struct timespec t; clock_gettime(CLOCK_REALTIME, &t); return (u64)t.tv_sec * 10000000 + (u64)t.tv_nsec / 100 + 116444736000000000ull; }
 IMP(kernel32, QueryPerformanceCounter) { M64(ARG(0)) = (u64)host_now_us(); RET(1); }
 IMP(kernel32, QueryPerformanceFrequency) { M64(ARG(0)) = 1000000; RET(1); }
 IMP(kernel32, GetTickCount) { RET((u32)(host_now_us() / 1000)); }
 IMP(kernel32, GetTickCount64) { RET((u64)(host_now_us() / 1000)); }
+#endif
 IMP(kernel32, GetSystemTimeAsFileTime) { M64(ARG(0)) = filetime_now(); }
 IMP(kernel32, GetSystemTimePreciseAsFileTime) { M64(ARG(0)) = filetime_now(); }
 IMP(kernel32, GetSystemTimeAdjustment) { M32(ARG(0)) = 156250; M32(ARG(1)) = 156250; M32(ARG(2)) = 1; RET(1); }
@@ -290,13 +340,24 @@ static const struct { const char *name; u64 h; } system_modules[] = {
   {"user32", 0x7FF70000ull}, {"advapi32", 0x7FF80000ull}, {"gameinput", 0x7FF90000ull}, {"xmem", 0x7FFA0000ull},
   {"d3d12_xs", 0x7FFB0000ull}, {"d3d12", 0x7FFC0000ull}, {"dxgi", 0x7FFD0000ull}, {"xg_xs", 0x7FFE0000ull}, {"xcrdapi", 0x7FFF0000ull},
   {"mfplat", 0x7FE00000ull}, {"d3dcompiler_47", 0x7FE10000ull}, {"xaudio2_9", 0x7FE20000ull},
+#if GUEST_BITS == 32
+  // the desktop's DLLs a title looks functions up in (rt/win32/)
+  {"gdi32", 0x7FD00000ull}, {"d3d9", 0x7FD10000ull}, {"dinput8", 0x7FD20000ull}, {"winmm", 0x7FD30000ull},
+#endif
   // API sets and console variants: the DLL behind them
   {"ntuser", 0x7FF70000ull}, {"minuser", 0x7FF70000ull}, {"advapi32legacy", 0x7FF80000ull}, {"api-ms-win-core", 0x7FF00000ull},
 };
 static u64 module_handle(const char *n) {
   const ModuleDef *m = rt_module_named(n);
   if (m) return m->base;
+#if GUEST_BITS == 32
+  // a desktop title names a DLL exactly: "d3d9d.dll" (Direct3D's debug build, which D3DX looks for) is not "d3d9.dll"
+  const char *base = strrchr(n, '\\'); base = base ? base + 1 : n;
+  size_t len = strlen(base); if (len > 4 && !strcasecmp(base + len - 4, ".dll")) len -= 4;
+  for (unsigned i = 0; i < sizeof system_modules / sizeof system_modules[0]; i++) if (strlen(system_modules[i].name) == len && !strncasecmp(base, system_modules[i].name, len)) return system_modules[i].h;
+#else
   for (unsigned i = 0; i < sizeof system_modules / sizeof system_modules[0]; i++) if (strcasestr(n, system_modules[i].name)) return system_modules[i].h;
+#endif
   return 0;
 }
 static const char *system_name(u64 h) {
@@ -362,7 +423,7 @@ IMP(kernel32, GetProcAddress) {
 // ---- strings and code pages ----
 IMP(kernel32, GetCommandLineA) { static u64 p; if (!p) { p = (uptr)strdup(rt_command_line); } RET(p); }
 IMP(kernel32, GetCommandLineW) { static u64 p; if (!p) p = (uptr)rt_widen_guest(rt_command_line); RET(p); }
-IMP(kernel32, GetACP) { RET(65001); }
+IMP(kernel32, GetACP) { RET(GUEST_BITS == 32 ? 1252 : 65001); } // an old 32-bit title's C runtime builds its tables from a single-byte code page
 IMP(kernel32, GetOEMCP) { RET(437); }
 IMP(kernel32, GetCPInfo) { u64 p = ARG(1); memset((void *)GP(p), 0, 20); M32(p) = 1; M8(p + 4) = '?'; RET(1); }
 IMP(kernel32, SetConsoleCP) { RET(1); }
@@ -372,6 +433,12 @@ IMP(kernel32, GetConsoleMode) { RET(0); }
 IMP(kernel32, MultiByteToWideChar) {
   const u8 *s = (const u8 *)GP(ARG(2)); s32 n = (s32)ARG(3); wchar16 *out = GWSTR(ARG(4)); s32 cap = (s32)ARG(5);
   if (n < 0) n = (s32)strlen((const char *)s) + 1;
+#if GUEST_BITS == 32
+  if ((u32)ARG(0) != 65001) { // a single-byte code page (1252, read as Latin-1): one character a byte
+    if (cap) { if (n > cap) { SET_LAST_ERROR(122); RET(0); return; } for (s32 i = 0; i < n; i++) out[i] = s[i]; }
+    RET(n); return;
+  }
+#endif
   s32 o = 0;
   for (s32 i = 0; i < n;) {
     u32 cp = s[i++];
@@ -384,6 +451,12 @@ IMP(kernel32, MultiByteToWideChar) {
 IMP(kernel32, WideCharToMultiByte) {
   const wchar16 *s = GWSTR(ARG(2)); s32 n = (s32)ARG(3); u8 *out = (u8 *)GP(ARG(4)); s32 cap = (s32)ARG(5);
   if (n < 0) n = (s32)rt_wcslen(s) + 1;
+#if GUEST_BITS == 32
+  if ((u32)ARG(0) != 65001) { // a single-byte code page: one byte a character, '?' for what it lacks
+    if (cap) { if (n > cap) { SET_LAST_ERROR(122); RET(0); return; } for (s32 i = 0; i < n; i++) out[i] = s[i] < 0x100 ? (u8)s[i] : '?'; }
+    RET(n); return;
+  }
+#endif
   s32 o = 0;
   for (s32 i = 0; i < n; i++) {
     u32 cp = s[i];

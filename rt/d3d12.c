@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 // D3D12 and D3D12.X, the front end: COM objects whose methods answer on the calling thread, command lists
 // recorded into words, and one ordered ring of records (rt/d3d12_cmd.h) that a GPU back end consumes
 // (web/gpu/backend.js in the browser, web/gpu/null.js in Node). Nothing here waits for the GPU except
@@ -42,50 +43,13 @@ static Device *the_device[2]; // [console]
 static u32 next_id = 1;
 static pthread_mutex_t d3d_lock = PTHREAD_MUTEX_INITIALIZER;
 
-// ---- the ring ----
-static u32 *ring;  // header words, then the records
-static u8 *ring_data;
-static pthread_mutex_t ring_lock = PTHREAD_MUTEX_INITIALIZER;
-static void gpu_open(void) {
-  if (ring) return;
-  u32 *r = aligned_alloc(64, GPU_H_WORDS * 4 + GPU_RING_BYTES);
-  memset(r, 0, GPU_H_WORDS * 4);
-  r[GPU_H_SIZE] = GPU_RING_BYTES;
-  ring_data = (u8 *)(r + GPU_H_WORDS);
-  ring = r;
-  host_gpu_open((u32)(uptr)r);
-}
-static u32 rec_pos;
-// room for a record of `payload` bytes; the caller fills it and calls rec_end. Holds ring_lock.
-static u8 *rec_begin(u32 op, u32 payload) {
-  gpu_open();
-  u32 bytes = (8 + payload + 3) & ~3u;
-  if (bytes > GPU_RING_BYTES / 2) rt_fatal("d3d12: a record of %u bytes does not fit the ring", bytes);
-  pthread_mutex_lock(&ring_lock);
-  u32 head = ring[GPU_H_HEAD], pos = head % GPU_RING_BYTES, need = bytes;
-  if (pos + bytes > GPU_RING_BYTES) need += GPU_RING_BYTES - pos;
-  for (;;) {
-    u32 tail = __atomic_load_n(&ring[GPU_H_TAIL], __ATOMIC_ACQUIRE);
-    if (GPU_RING_BYTES - (head - tail) >= need) break;
-    __builtin_wasm_memory_atomic_wait32((int *)&ring[GPU_H_TAIL], (int)tail, 50000000);
-  }
-  if (pos + bytes > GPU_RING_BYTES) {
-    u32 skip = GPU_RING_BYTES - pos;
-    ((u32 *)(ring_data + pos))[0] = GPU_R_WRAP; ((u32 *)(ring_data + pos))[1] = skip;
-    head += skip; __atomic_store_n(&ring[GPU_H_HEAD], head, __ATOMIC_RELEASE);
-    pos = 0;
-  }
-  u32 *h = (u32 *)(ring_data + pos); h[0] = op; h[1] = bytes;
-  memset(h + 2, 0, bytes - 8);
-  rec_pos = bytes;
-  return (u8 *)(h + 2);
-}
-static void rec_end(void) {
-  __atomic_store_n(&ring[GPU_H_HEAD], ring[GPU_H_HEAD] + rec_pos, __ATOMIC_RELEASE);
-  __builtin_wasm_memory_atomic_notify((int *)&ring[GPU_H_HEAD], 4);
-  pthread_mutex_unlock(&ring_lock);
-}
-static void rec_words(u32 op, const u32 *w, u32 n) { u8 *p = rec_begin(op, 4 * n); memcpy(p, w, 4 * n); rec_end(); }
+// ---- the ring: its writer is rt/gpu_ring.c, shared with the other front ends ----
+#include "gpu_ring.h"
+#define ring rt_gpu_ring
+#define gpu_open rt_gpu_open
+#define rec_begin rt_gpu_rec_begin
+#define rec_end rt_gpu_rec_end
+#define rec_words rt_gpu_rec_words
 
 // ---- fences: the back end writes `completed`, then bumps the epoch word and wakes its waiters ----
 static u64 fence_value(Fence *f) { return __atomic_load_n(&f->completed, __ATOMIC_ACQUIRE); }
@@ -642,17 +606,6 @@ IMP(d3d12, CommandQueue_GetDesc) { u64 ret = ARG(1); THIS(Queue); M32(ret) = sel
 IMP(d3d12, CommandQueue_SetMarker) {}
 IMP(d3d12, CommandQueue_BeginEvent) {}
 IMP(d3d12, CommandQueue_EndEvent) {}
-static u32 presents;
-void rt_gpu_present(u32 resource, u64 token, u32 interval) { // also DXGI's Present (rt/dxgi.c)
-  u32 w[4] = {resource, (u32)token, (u32)(token >> 32), interval}; rec_words(GPU_R_PRESENT, w, 4);
-  presents++;
-  // two frames in flight at most: wait until the back end shows the one before last
-  while (__atomic_load_n(&ring[GPU_H_PRESENTS], __ATOMIC_ACQUIRE) + 2 < presents) {
-    u32 e = __atomic_load_n(&ring[GPU_H_EPOCH], __ATOMIC_ACQUIRE);
-    if (__atomic_load_n(&ring[GPU_H_PRESENTS], __ATOMIC_ACQUIRE) + 2 >= presents) break;
-    __builtin_wasm_memory_atomic_wait32((int *)&ring[GPU_H_EPOCH], (int)e, 100000000);
-  }
-}
 IMP(d3d12, CommandQueue_PresentX) { // (plane count, planes, parameters); a plane: token, resource count, resources, ...
   u64 planes = ARG(2);
   if (!ARG(1) || !planes || !M32(planes + 8)) { RET(S_OK); return; }

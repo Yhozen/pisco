@@ -1,4 +1,5 @@
 #!/bin/bash
+# SPDX-License-Identifier: GPL-2.0-or-later
 # tests/gfx/doom.sh: step 3's check. Builds Doom (fixtures/doom/build.sh) and its wasm, runs `-timedemo demo1`
 # natively three times (frames that differ between those runs draw pointer bytes: Doom's own nondeterminism),
 # then in headless Chrome (WebGPU on SwiftShader) with every presented frame read back and hashed, and in Node
