@@ -936,7 +936,7 @@ fn ea32(i: &Instruction) -> String {
         s = format!("(u16)({s})");
     }
     if !seg.is_empty() {
-        write!(s, "+{seg}").unwrap();
+        write!(s, " + {seg}").unwrap();   // (spaced: `0x4e+c->fs_base` would be one number token to C, an exponent)
     }
     format!("((u32)({s}))")
 }
