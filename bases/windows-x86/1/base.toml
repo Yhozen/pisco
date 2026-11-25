@@ -44,3 +44,7 @@ sources = ["rt/windows-x86/dinput8.c"]
 [libraries.fmod3]
 description = "FMOD 3 (fmod.dll's FSOUND_ functions) on the runtime's mixer, with WAV, Ogg Vorbis and MP3 decoders"
 sources = ["rt/windows-x86/fmod3.c", "rt/windows-x86/audio_decode.c"]
+
+[libraries.fmodex]
+description = "FMOD Ex (fmodex.dll's System, Sound and Channel methods) on the runtime's mixer, with WAV, Ogg Vorbis and MP3 decoders"
+sources = ["rt/windows-x86/fmodex.c", "rt/windows-x86/audio_decode.c"]

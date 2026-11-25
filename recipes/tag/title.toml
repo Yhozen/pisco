@@ -1,9 +1,9 @@
 # The recipe for Tag: The Power of Paint (2008, DigiPen; Direct3D 9): `pisco build recipes/tag --source <installer>`
 # makes its image (docs/images.md). What is known of the title so far: docs/tag.md (milestone T0 of the plan). The
-# image is not yet runnable: the lifter takes the exe only, and the runtime has no FMOD Ex nor ws2_32 (T1 to T5).
+# image runs with D3DX lifted beside it and the runtime's FMOD Ex (milestones T1 to T6 of the plan).
 name = "tag"
 from = "base/windows-x86:1"
-libraries = ["d3d9", "dinput8"]   # checked against the title's imports; FMOD Ex (fmodex.dll) has no library yet (T5)
+libraries = ["d3d9", "dinput8", "fmodex"]   # checked against the title's imports
 
 [source]
 # the user's own installer: never stored in the repository, nor in any image that leaves the machine
@@ -33,7 +33,7 @@ features = ["fpu", "tsc", "cx8"]
 'HKLM\Software\Microsoft\Direct3D' = { DisableMMX = 1, DisablePSGP = 1, DisableD3DXPSGP = 1 }
 
 [dll]
-# the shipped fmodex.dll is UPX-packed; the runtime's own FMOD Ex is to answer instead (T5)
+# the shipped fmodex.dll is UPX-packed; the runtime's own FMOD Ex answers instead (rt/windows-x86/fmodex.c)
 "fmodex.dll" = "builtin"
 
 [lifter]

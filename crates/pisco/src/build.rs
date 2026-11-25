@@ -357,7 +357,7 @@ pub fn build(root: &Path, o: &Opts) -> R<()> {
     let t3 = Instant::now();
     let mut sources = base.sources.clone();
     for l in &r.libraries { sources.extend(base.libraries[l].sources.iter().cloned()); }
-    sources.sort();
+    sources.sort(); sources.dedup();   // (two libraries may share a file: the decoders of FMOD 3 and FMOD Ex)
     let deps = rt_deps(root)?;
     let rt_flags = cflags(&t, &cache, &base.opt, lifted.bits);
     let items = sources.iter().map(|s| { let p = root.join(s); let c = std::fs::read(&p).map(|d| oci::sha256(&d)).unwrap_or_default(); (s.clone(), p, format!("source {s} {c}\ndeps {deps}")) }).collect();
