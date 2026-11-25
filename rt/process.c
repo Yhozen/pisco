@@ -64,6 +64,21 @@ u64 rt_guest_call(Cpu *c, u64 fn, u64 a0, u64 a1, u64 a2, u64 a3) {
 }
 
 volatile u32 rt_last_pc;
+// --trace-pc: the last 256 blocks entered, and SW_BREAK=<hex address>: when that block is entered, the registers,
+// the top of the stack and the blocks before it are logged (the run goes on)
+static u32 pc_ring[256], pc_at; static s64 break_at = -2;
+void rt_pc(Cpu *c, u32 pc) {
+  rt_last_pc = pc; pc_ring[pc_at++ & 255] = pc;
+  if (break_at == -2) { const char *e = getenv("SW_BREAK"); break_at = e ? (s64)strtoull(e, 0, 16) : -1; }
+  if ((s64)pc != break_at) return;
+  rt_log("break at 0x%x: eax %08x ecx %08x edx %08x ebx %08x esp %08x ebp %08x esi %08x edi %08x", pc, (u32)R[0], (u32)R[1], (u32)R[2], (u32)R[3], (u32)R[4], (u32)R[5], (u32)R[6], (u32)R[7]);
+  char line[200]; int n = 0;
+  for (int i = 0; i < 8; i++) n += snprintf(line + n, sizeof line - n, " %08x", M32(R[4] + 4 * i));
+  rt_log("  stack:%s", line);
+  if (R[5] >= 0x1000) { n = 0; for (int i = 0; i < 8; i++) n += snprintf(line + n, sizeof line - n, " %08x", M32(R[5] + 4 * i)); rt_log("  [ebp]:%s", line); }
+  n = 0; for (int i = 32; i >= 1; i--) n += snprintf(line + n, sizeof line - n, " %x", pc_ring[(pc_at - 1 - i) & 255]);
+  rt_log("  blocks before:%s", line);
+}
 
 // ---- imports ----
 typedef struct { const char *name; ImportFn fn; } ImportDef;

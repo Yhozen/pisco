@@ -1515,7 +1515,7 @@ impl Emit<'_> {
             }
             if f.leaders.contains(&ip) {
                 writeln!(s, "L_{ip:x}:;").unwrap();
-                if self.trace_pc { writeln!(s, "rt_last_pc=0x{ip:x}u;").unwrap(); }
+                if self.trace_pc { writeln!(s, "rt_pc(c,0x{ip:x}u);").unwrap(); }
             }
             let body = self.insn(i, f, entries, entry);
             if !body.is_empty() {

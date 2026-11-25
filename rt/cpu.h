@@ -36,6 +36,7 @@ typedef struct Landing { void *jb; u64 entry_rsp; u64 resume; struct Landing *pr
 typedef struct { u8 cf, zf, sf, of, pf, af, df; } Flags; // df: 32-bit code only (64-bit code assumes it clear)
 
 extern volatile u32 rt_last_pc;   // a title lifted with --trace-pc: the guest address of the block last entered
+struct Cpu; void rt_pc(struct Cpu *c, u32 pc);   // --trace-pc: each block calls it (rt_last_pc, a ring of the last blocks, SW_BREAK)
 #define R (c->r)
 #define X (c->x)
 enum { RAX, RCX, RDX, RBX, RSP, RBP, RSI, RDI };

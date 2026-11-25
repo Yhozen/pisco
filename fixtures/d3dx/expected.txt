@@ -1,0 +1,39 @@
+include open: type 0 name "scene.h"
+preprocess: 0x00000000 bytes 578 fnv 0xad489b7d
+float4 tint = float4 ( 0.5 , 0.25 , 1.0 , 1.0 ) ;
+float4x4 wvp ;
+sampler2D tex ;
+struct V 
+{
+    float4 p : POSITION ;
+    float2 t : TEXCOORD0 ;
+    float3 n : NORMAL ;
+}
+;
+struct P 
+{
+    float4 p : POSITION ;
+    float2 t : TEXCOORD0 ;
+    float3 n : TEXCOORD1 ;
+}
+;
+P vs ( V v ) 
+{
+    P o ;
+    o . p = mul ( v . p , wvp ) ;
+    o . t = v . t * 2.0 ;
+    o . n = normalize ( v . n ) ;
+    return o ;
+}
+float4 ps ( P i ) : COLOR0 
+{
+    float d = saturate ( dot ( normalize ( i . n ) , float3 ( 0 , 1 , 0 ) ) ) ;
+    return tex2D ( tex , i . t ) * tint * pow ( d , 4 ) ;
+}
+
+include open: type 0 name "scene.h"
+vs_2_0: 0x00000000 bytes 300 fnv 0x3bbb2533
+include open: type 0 name "scene.h"
+ps_2_0: 0x00000000 bytes 372 fnv 0xb43cca87
+include open: type 0 name "scene.h"
+ps_2_a: 0x00000000 bytes 372 fnv 0x512f3ea4

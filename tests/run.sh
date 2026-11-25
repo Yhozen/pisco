@@ -22,6 +22,9 @@
 #   sm       tests/gfx/d3d9-sm.sh: Direct3D 9's shader translator (rt/windows-x86/d3d9_sm.c), built natively: shaders
 #            assembled to cover shader models 1.1 to 2.x, each one's WGSL validated with naga (SM_CAPTURED: a folder of
 #            a title's captured bytecode, translated too)
+#   d3dx     fixtures/d3dx: Microsoft's D3DX (the user's own d3dx9_35.dll: D3DX_DLL, default ~/untrusted/tag/cab/) lifted
+#            with a 32-bit program that preprocesses and compiles HLSL through it; what it prints must be what it prints
+#            under Wine with the same DLL (fixtures/d3dx/expected.txt). Skipped without the DLL
 #   gdi      rt/windows-x86/font.c (gdi32's fonts) built natively by tests/gdi/fonts.c, which asks it what
 #            tools/oracle-wine/gdiprobe.c asks Wine's GDI; with the probe's answers (out/oracle/narbacular-drop/
 #            gdiprobe.txt) every measurement D3DX and the game read must be Wine's (tools/oracle-wine/gdi-compare.py),
@@ -144,6 +147,13 @@ nd() {
   echo "session: $n checkpoints as recorded, $(sed -n 's/^session done: .*, \([0-9]*\) frames$/\1/p' out/nd.session.checkpoints.txt) frames, two runs give the same log"
   echo "$(sed -n 's/^pisco: gpu (null back end): \(.*\); 0 of the records were inconsistent$/\1/p' out/nd.session.log), all consistent, and $shaders"
 }
+d3dx() {
+  fixtures/d3dx/build.sh out/d3dx "$D3DX_DLL" > /dev/null || return 1
+  tools/build-title.sh out/d3dx/d3dx.exe out/d3dx/wasm > out/d3dx.build.log 2>&1 || { echo "build failed (out/d3dx.build.log)"; return 1; }
+  SW_STRICT=1 timeout 600 node web/run-node.mjs out/d3dx/wasm/title.wasm out/d3dx/d3dx.exe > out/d3dx/got.txt 2>&1
+  if cmp -s out/d3dx/got.txt fixtures/d3dx/expected.txt; then echo "the preprocessed text and 3 bytecodes equal what Microsoft's D3DX makes under Wine"
+  else echo "differs from Wine's (< ours, > Wine):"; diff out/d3dx/got.txt fixtures/d3dx/expected.txt | head -8; return 1; fi
+}
 gdi() {
   mkdir -p out/gdi
   cc -O1 -DFONT_NO_EMBED -Irt/windows-x86 tests/gdi/fonts.c rt/windows-x86/font.c -lm -o out/gdi/fonts || return 1
@@ -154,6 +164,7 @@ gdi() {
 }
 nd_session() { SW_STRICT=1 SW_CLOCK=16667 SW_D3D9_STATS=1 SW_SESSION=recipes/narbacular-drop/sessions/menu-to-level.json timeout 600 node web/run-node.mjs out/nd/title.wasm "$ND/Narbacular Drop.exe"; }
 ND=${ND:-$HOME/.pisco/oracle/prefix-narbacular-drop/drive_c/Program Files (x86)/Narbacular Drop}
+D3DX_DLL=${D3DX_DLL:-$HOME/untrusted/tag/cab/d3dx9_35.dll}
 REDIST=${REDIST:-$HOME/untrusted/vcredist/x/Contents/VC/Redist/MSVC/14.44.35112/x64/Microsoft.VC143.CRT}; export REDIST
 WINSDK=${WINSDK:-$HOME/winsdk}
 for s in ${*:-build layout node bench win32 ffp sm gdi}; do case $s in
@@ -167,6 +178,7 @@ for s in ${*:-build layout node bench win32 ffp sm gdi}; do case $s in
   ffp)    if command -v naga > /dev/null; then step ffp tests/gfx/d3d9-ffp.sh; else echo "skip  ffp: naga is not installed (tools/setup-toolchain.sh naga)"; fi ;;
   sm)     if command -v naga > /dev/null; then step sm tests/gfx/d3d9-sm.sh ${SM_CAPTURED:+$SM_CAPTURED/*}; else echo "skip  sm: naga is not installed (tools/setup-toolchain.sh naga)"; fi ;;
   gdi)    LINES_SHOWN=5 step gdi gdi ;;
+  d3dx)   if [ -f "$D3DX_DLL" ]; then step d3dx d3dx; else echo "skip  d3dx: no d3dx9_35.dll in D3DX_DLL=$D3DX_DLL (Tag's installer has one)"; fi ;;
   ndgfx)  if [ -f "$ND/Narbacular Drop.exe" ]; then LINES_SHOWN=16 ND=$ND step ndgfx tests/gfx/nd.sh; else echo "skip  ndgfx: the game is not installed (ND=$ND)"; fi ;;
   ndplay) if [ -f "$ND/Narbacular Drop.exe" ]; then LINES_SHOWN=16 ND=$ND step ndplay tests/gfx/ndplay.sh; else echo "skip  ndplay: the game is not installed (ND=$ND)"; fi ;;
   doom)   LINES_SHOWN=4 step doom tests/gfx/doom.sh ;;
