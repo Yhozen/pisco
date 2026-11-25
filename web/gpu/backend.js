@@ -126,9 +126,10 @@ export async function startBackend({ memory, ring: ringAddr, device, canvas, dir
     if (dim === 0) {
       r.size = r.width;
       const usage = GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST | GPUBufferUsage.VERTEX | GPUBufferUsage.INDEX | GPUBufferUsage.UNIFORM | GPUBufferUsage.STORAGE | GPUBufferUsage.INDIRECT;
-      // 64 KiB past the end: a constant buffer view near the end still has the 64 KiB its translated shader
-      // declares (D3D12's limit; WebGPU checks the bound range against it). Only the real size is ever uploaded.
-      r.gpu = device.createBuffer({ size: Math.ceil(r.size / 4) * 4 + 65536, usage });
+      // A D3D12 buffer (flag 0x80000000) gets 64 KiB past the end: a constant buffer view near the end still has
+      // the 64 KiB its translated shader declares (D3D12's limit; WebGPU checks the bound range against it).
+      // Direct3D 9's buffers are their own size. Only the real size is ever uploaded.
+      r.gpu = device.createBuffer({ size: Math.ceil(r.size / 4) * 4 + (flags & 0x80000000 ? 65536 : 0), usage });
       const at = vas.findIndex((e) => e[0] > r.va); vas.splice(at < 0 ? vas.length : at, 0, [r.va, r.va + r.size, r]);
     } else {
       let f = r.format;

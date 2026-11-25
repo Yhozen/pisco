@@ -452,7 +452,7 @@ static u32 create_resource(Obj *dev, u32 heap, u32 cpu_page, u64 desc, u64 at, u
     else { pthread_mutex_lock(&d3d_lock); r->va = va_next; va_next += (r->width + 65535) & ~65535ull; pthread_mutex_unlock(&d3d_lock); }
   }
   if (rt_trace) rt_log("d3d12: resource %u dim %u %llux%u format %u heap %u backing 0x%llx va 0x%llx", r->o.id, r->dim, r->width, r->height, r->format, r->heap, r->backing, r->va);
-  u32 w[14] = {r->o.id, r->dim == 1 ? 0 : r->dim - 1, r->format, (u32)r->width, (u32)(r->width >> 32), r->height, r->depth, r->mips, r->samples ? r->samples : 1, r->flags, r->heap, (u32)r->backing, (u32)r->va, (u32)(r->va >> 32)};
+  u32 w[14] = {r->o.id, r->dim == 1 ? 0 : r->dim - 1, r->format, (u32)r->width, (u32)(r->width >> 32), r->height, r->depth, r->mips, r->samples ? r->samples : 1, r->flags | (r->dim == 1 ? GPU_RESOURCE_CBV_TAIL : 0), r->heap, (u32)r->backing, (u32)r->va, (u32)(r->va >> 32)};
   rec_words(GPU_R_RESOURCE, w, 14);
   if (!ppv) return S_FALSE;
   return give(&r->o, riid, ppv);

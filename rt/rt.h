@@ -43,7 +43,15 @@ u64 rt_module_export(const ModuleDef *m, const char *name); // from its export d
 // address ESP points at. The import returns normally; rt_call then removes the return address and, for a
 // stdcall function, its arguments (the sizes come from tools/stdcall-sizes.sh).
 #define ARG(n) ((u64)M32(R[RSP] + 4 + 4 * (n)))
-#define FARG(n) MF64(R[RSP] + 4 + 8 * (n))  // right when every argument is a double (the C runtime's math functions)
+// Floating-point arguments and results (the C runtime's math functions): DA(n) is the nth argument when the ones
+// before it are doubles (8 bytes each on the stack), FA(n) when they are floats (4 bytes); DA_INT / FA_INT an integer
+// or pointer in that place. The result goes on the x87 stack (ST0).
+#define DA(n) MF64(R[RSP] + 4 + 8 * (n))
+#define FA(n) MF32(R[RSP] + 4 + 4 * (n))
+#define DA_INT(n) ((u64)M32(R[RSP] + 4 + 8 * (n)))
+#define FA_INT(n) ((u64)M32(R[RSP] + 4 + 4 * (n)))
+#define DRET(v) fpush(c, (double)(v))
+#define FRET(v) fpush(c, (double)(float)(v))
 #define RET(v) (R[RAX] = (u32)(v))
 #define RET64(v) do { u64 v_ = (u64)(v); R[RAX] = (u32)v_; R[RDX] = (u32)(v_ >> 32); } while (0)
 #define MP(a) M32(a)   // a pointer-sized value in guest memory
@@ -51,7 +59,14 @@ u64 rt_module_export(const ModuleDef *m, const char *name); // from its export d
 #else
 // Arguments of a Win64 call, as an import sees them: RSP points at the return address.
 #define ARG(n) ((n) == 0 ? R[RCX] : (n) == 1 ? R[RDX] : (n) == 2 ? R[8] : (n) == 3 ? R[9] : M64(R[RSP] + 8 + 8 * (n)))
-#define FARG(n) (X[n].pd[0])
+// Win64: the nth floating-point argument is in xmm<n> and an integer one in its integer register, whatever came
+// before; the result is in xmm0's low lane.
+#define DA(n) (X[n].pd[0])
+#define FA(n) (X[n].ps[0])
+#define DA_INT(n) ARG(n)
+#define FA_INT(n) ARG(n)
+#define DRET(v) do { double v_ = (v); memset(&X[0], 0, 16); X[0].pd[0] = v_; } while (0)
+#define FRET(v) do { float v_ = (v); memset(&X[0], 0, 16); X[0].ps[0] = v_; } while (0)
 #define RET(v) (R[RAX] = (u64)(v))
 #define RET64(v) RET(v)
 #define MP(a) M64(a)

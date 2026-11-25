@@ -30,6 +30,9 @@
 // read back after work writes it). A texture with backing: its texels sit in guest memory in the title
 // layout (subresources one after another, as GetCopyableFootprints places them) and the GPU follows them.
 #define GPU_R_RESOURCE 1
+// in its flags, beside D3D12's: a D3D12 buffer, which gets 64 KiB past its end on the GPU (a constant buffer view
+// near the end still has the 64 KiB its translated shader declares; WebGPU checks the bound range against it)
+#define GPU_RESOURCE_CBV_TAIL 0x80000000u
 // id
 #define GPU_R_DESTROY 2
 // id, bytes, the serialized root signature (RTS0 part or a whole container holding one)

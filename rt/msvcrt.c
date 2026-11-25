@@ -99,14 +99,44 @@ static u64 stream_open(Cpu *c, const char *name, const char *mode) {
   return g;
 }
 
-// ---- printf with Win64 arguments ----
-typedef struct { Cpu *c; int idx; u64 va; } Args;
-static u64 arg_n(Cpu *c, int n) { return ARG(n); }
-static u64 next_arg(Args *a) { if (a->va) { u64 v = M64(a->va); a->va += 8; return v; } return arg_n(a->c, a->idx++); }
+// ---- printf: the arguments from the call (from argument `idx` on) or from a va_list (`va`) ----
+// Win64: every argument takes an 8-byte slot. 32-bit: int, char, pointers 4 bytes, double and long long 8.
+typedef struct { Cpu *c; int idx; u64 va; int exp3; } Args; // exp3: msvcrt.dll's exponents of three digits (1e+004); ucrt's have two
+static u64 next_arg(Args *a, int bytes) {
+#if GUEST_BITS == 32
+  Cpu *c = a->c; u64 at = a->va ? a->va : R[RSP] + 4 + 4 * (u64)a->idx;
+  u64 v = bytes == 8 ? M64(at) : M32(at);
+  if (a->va) a->va += bytes == 8 ? 8 : 4; else a->idx += bytes == 8 ? 2 : 1;
+  return v;
+#else
+  (void)bytes; Cpu *c = a->c;
+  if (a->va) { u64 v = M64(a->va); a->va += 8; return v; }
+  return ARG(a->idx++);
+#endif
+}
 typedef struct { char *buf; size_t cap, len; Stream *out; } Sink;
 static void put(Sink *s, const char *p, size_t n) {
   if (s->out) { swrite(s->out, p, (u32)n); s->len += n; return; }
   for (size_t i = 0; i < n; i++, s->len++) if (s->buf && s->len < s->cap) s->buf[s->len] = p[i];
+}
+// msvcrt.dll writes an exponent with at least three digits (1.5e+004); the host's has two. `spec` is a whole
+// conversion ("%-+12.3e"): formatted again without its width, the digit added, then padded to the width.
+static int exp3(char *tmp, size_t cap, const char *spec, double v) {
+  char bare[32]; size_t k = 0, i = 1; int width = 0, left = 0, zero = 0; bare[k++] = '%';
+  for (; strchr("-+ #0", spec[i]) && spec[i]; i++) { if (spec[i] == '-') left = 1; else if (spec[i] == '0') zero = 1; else bare[k++] = spec[i]; }
+  for (; isdigit((u8)spec[i]); i++) width = width * 10 + (spec[i] - '0');
+  while (spec[i] && k < sizeof bare - 1) bare[k++] = spec[i++];
+  bare[k] = 0;
+  char body[400]; int n = snprintf(body, sizeof body, bare, v);
+  if (n < 0 || n >= (int)sizeof body - 2) return snprintf(tmp, cap, spec, v);
+  char *x = strpbrk(body, "eE");
+  if (x && (x[1] == '+' || x[1] == '-') && isdigit((u8)x[2]) && isdigit((u8)x[3]) && !x[4]) { memmove(x + 3, x + 2, 3); x[2] = '0'; n++; }
+  int pad = width > n ? width - n : 0, sign = body[0] == '-' || body[0] == '+' || body[0] == ' ';
+  if ((size_t)(n + pad) >= cap) return snprintf(tmp, cap, spec, v);
+  if (left) { memcpy(tmp, body, (size_t)n); memset(tmp + n, ' ', (size_t)pad); }
+  else if (zero && isdigit((u8)body[sign])) { memcpy(tmp, body, (size_t)sign); memset(tmp + sign, '0', (size_t)pad); memcpy(tmp + sign + pad, body + sign, (size_t)(n - sign)); }
+  else { memset(tmp, ' ', (size_t)pad); memcpy(tmp + pad, body, (size_t)n); }
+  tmp[n + pad] = 0; return n + pad;
 }
 static void format(Sink *out, const char *f, Args *a) {
   char spec[32], tmp[512];
@@ -116,14 +146,15 @@ static void format(Sink *out, const char *f, Args *a) {
     size_t k = 0; spec[k++] = *f++;
     while (strchr("-+ #0", *f) && k < 8) spec[k++] = *f++;
     int width = -1, prec = -1;
-    if (*f == '*') { width = (s32)next_arg(a); f++; } else while (isdigit((u8)*f) && k < 14) spec[k++] = *f++;
-    if (*f == '.') { f++; if (*f == '*') { prec = (s32)next_arg(a); f++; } else { prec = 0; while (isdigit((u8)*f)) prec = prec * 10 + (*f++ - '0'); } }
+    if (*f == '*') { width = (s32)next_arg(a, 4); f++; } else while (isdigit((u8)*f) && k < 14) spec[k++] = *f++;
+    if (*f == '.') { f++; if (*f == '*') { prec = (s32)next_arg(a, 4); f++; } else { prec = 0; while (isdigit((u8)*f)) prec = prec * 10 + (*f++ - '0'); } }
     int big = 0, wide = 0, half = 0;
     for (;;) {
-      if (*f == 'l' && f[1] == 'l') { big = 1; f += 2; }
-      else if (*f == 'I' && f[1] == '6' && f[2] == '4') { big = 1; f += 3; }
+      if (*f == 'l' && f[1] == 'l') { big = 8; f += 2; }
+      else if (*f == 'I' && f[1] == '6' && f[2] == '4') { big = 8; f += 3; }
       else if (*f == 'I' && f[1] == '3' && f[2] == '2') { f += 3; }
-      else if (*f == 'I' || *f == 'z' || *f == 'j' || *f == 't') { big = 1; f++; }
+      else if (*f == 'j') { big = 8; f++; }
+      else if (*f == 'I' || *f == 'z' || *f == 't') { big = PTR_SIZE; f++; }
       else if (*f == 'l' || *f == 'w') { wide = 1; f++; }
       else if (*f == 'h') { half++; f++; }
       else if (*f == 'L') f++;
@@ -135,21 +166,23 @@ static void format(Sink *out, const char *f, Args *a) {
     int n = 0;
     switch (conv) {
     case 'd': case 'i': {
-      s64 v = big ? (s64)next_arg(a) : half == 1 ? (s16)next_arg(a) : half > 1 ? (s8)next_arg(a) : (s32)next_arg(a);
+      s64 v = big == 8 ? (s64)next_arg(a, 8) : half == 1 ? (s16)next_arg(a, 4) : half > 1 ? (s8)next_arg(a, 4) : (s32)next_arg(a, 4);
       memcpy(spec + k, "lld", 4); n = snprintf(tmp, sizeof tmp, spec, v); break;
     }
     case 'u': case 'x': case 'X': case 'o': {
-      u64 v = big ? next_arg(a) : half == 1 ? (u16)next_arg(a) : half > 1 ? (u8)next_arg(a) : (u32)next_arg(a);
+      u64 v = big == 8 ? next_arg(a, 8) : half == 1 ? (u16)next_arg(a, 4) : half > 1 ? (u8)next_arg(a, 4) : (u32)next_arg(a, 4);
       spec[k] = 'l'; spec[k + 1] = 'l'; spec[k + 2] = conv; spec[k + 3] = 0; n = snprintf(tmp, sizeof tmp, spec, v); break;
     }
-    case 'p': n = snprintf(tmp, sizeof tmp, "%016llX", next_arg(a)); break;
+    case 'p': n = snprintf(tmp, sizeof tmp, PTR_SIZE == 8 ? "%016llX" : "%08llX", next_arg(a, PTR_SIZE)); break;
     case 'e': case 'E': case 'f': case 'F': case 'g': case 'G': case 'a': case 'A': {
-      u64 bits = next_arg(a); double v; memcpy(&v, &bits, 8);
-      spec[k] = conv; spec[k + 1] = 0; n = snprintf(tmp, sizeof tmp, spec, v); break;
+      u64 bits = next_arg(a, 8); double v; memcpy(&v, &bits, 8);
+      spec[k] = conv; spec[k + 1] = 0; n = snprintf(tmp, sizeof tmp, spec, v);
+      if (a->exp3 && conv != 'a' && conv != 'A') n = exp3(tmp, sizeof tmp, spec, v);
+      break;
     }
-    case 'c': case 'C': { char ch = (char)next_arg(a); spec[k] = 'c'; spec[k + 1] = 0; n = snprintf(tmp, sizeof tmp, spec, ch); break; }
+    case 'c': case 'C': { char ch = (char)next_arg(a, 4); spec[k] = 'c'; spec[k + 1] = 0; n = snprintf(tmp, sizeof tmp, spec, ch); break; }
     case 's': case 'S': {
-      u64 p = next_arg(a); char *str = 0;
+      u64 p = next_arg(a, PTR_SIZE); char *str = 0;
       if (!p) str = strdup("(null)"); else if (wide || conv == 'S') str = rt_narrow(GWSTR(p));
       spec[k] = 's'; spec[k + 1] = 0;
       int need = snprintf(0, 0, spec, str ? str : GSTR(p));
@@ -159,7 +192,7 @@ static void format(Sink *out, const char *f, Args *a) {
       if (big_buf != tmp) free(big_buf);
       free(str); continue;
     }
-    case 'n': { u64 p = next_arg(a); if (p) M32(p) = (u32)out->len; continue; }
+    case 'n': { u64 p = next_arg(a, PTR_SIZE); if (p) M32(p) = (u32)out->len; continue; }
     default: put(out, spec, k); if (conv) put(out, &conv, 1); continue;
     }
     if (n > (int)sizeof tmp - 1) n = sizeof tmp - 1;
@@ -190,15 +223,15 @@ u64 rt_data_import(const char *name) {
   return 0;
 }
 void rt_crt_init(void) {
-  data_initenv = (uptr)calloc(1, 16); M64(data_initenv) = (uptr)calloc(1, 16);
+  data_initenv = (uptr)calloc(1, 16); MP(data_initenv) = (uptr)calloc(1, 16);
   data_commode = (uptr)calloc(1, 8); data_fmode = (uptr)calloc(1, 8);
   iob = (uptr)calloc(3, 48);
   for (int i = 0; i < 3; i++) streams[i] = (Stream){iob + 48ull * i, i, 0, 0, -1};
   locale_c = (uptr)strdup("C");
   // struct lconv: ten char* fields, then the monetary chars
   lconv_g = (uptr)calloc(1, 128);
-  M64(lconv_g) = (uptr)strdup(".");
-  for (int i = 1; i < 10; i++) M64(lconv_g + 8 * i) = (uptr)strdup("");
+  MP(lconv_g) = (uptr)strdup(".");
+  for (int i = 1; i < 10; i++) MP(lconv_g + PTR_SIZE * i) = (uptr)strdup("");
   memset((void *)GP(lconv_g + 80), 127, 8);
 }
 
@@ -221,30 +254,30 @@ u64 rt_msvcrt_argv(int *out_argc) {
   *out_argc = argc_n;
   return argv_g;
 }
-u64 rt_msvcrt_environ(void) { return M64(data_initenv); }
+u64 rt_msvcrt_environ(void) { return MP(data_initenv); }
 u64 rt_msvcrt_iob(int i) { return iob + 48ull * (u64)i; }
 IMP(msvcrt, __getmainargs) {
   int argc; u64 argv = rt_msvcrt_argv(&argc);
-  M32(ARG(0)) = (u32)argc; M64(ARG(1)) = argv; M64(ARG(2)) = M64(data_initenv);
+  M32(ARG(0)) = (u32)argc; MP(ARG(1)) = argv; MP(ARG(2)) = MP(data_initenv);
   RET(0);
 }
 // formats to a stream (file != 0) or a buffer; *len: the full length
 void rt_msvcrt_format(Cpu *c, u64 file, u64 buf, u64 cap, u64 fmt, u64 va, int *len) {
   Sink o = {GSTR(buf), buf ? cap : 0, 0, file ? stream(file) : 0};
   if (file && !o.out) { *len = -1; return; }
-  Args a = {c, 0, va}; format(&o, GSTR(fmt), &a);
+  Args a = {c, 0, va, 0}; format(&o, GSTR(fmt), &a);
   *len = (int)o.len;
 }
 IMP(msvcrt, __set_app_type) {}
 IMP(msvcrt, __setusermatherr) {}
-IMP(msvcrt, _initterm) { for (u64 p = ARG(0), e = ARG(1); p < e; p += 8) { u64 f = M64(p); if (f) rt_guest_call(c, f, 0, 0, 0, 0); } }
+IMP(msvcrt, _initterm) { for (u64 p = ARG(0), e = ARG(1); p < e; p += PTR_SIZE) { u64 f = MP(p); if (f) rt_guest_call(c, f, 0, 0, 0, 0); } }
 IMP(msvcrt, atexit) { pthread_mutex_lock(&exit_lock); if (atexit_n < 256) atexit_fns[atexit_n++] = ARG(0); pthread_mutex_unlock(&exit_lock); RET(0); }
 IMP(msvcrt, _onexit) { imp_msvcrt_atexit(c); RET(ARG(0)); }
 IMP(msvcrt, exit) { u32 code = (u32)ARG(0); run_atexit(c); rt_exit_process(code); }
 IMP(msvcrt, _exit) { rt_exit_process((u32)ARG(0)); }
 IMP(msvcrt, _cexit) { run_atexit(c); }
 IMP(msvcrt, _amsg_exit) { rt_fatal("runtime error R60%02llu", ARG(0)); }
-IMP(msvcrt, abort) { rt_fatal("abort() called from 0x%llx", M64(R[RSP])); }
+IMP(msvcrt, abort) { rt_fatal("abort() called from 0x%llx", MP(R[RSP])); }
 IMP(msvcrt, _assert) { rt_fatal("assertion failed: %s (%s:%u)", GSTR(ARG(0)), GSTR(ARG(1)), (u32)ARG(2)); }
 IMP(msvcrt, signal) { RET(0); }
 IMP(msvcrt, _errno) { RET(THREAD(c)->teb + TEB_ERRNO); }
@@ -252,7 +285,7 @@ IMP(msvcrt, __iob_func) { RET(iob); }
 IMP(msvcrt, _beginthreadex) { u32 tid = 0; u64 h = rt_create_thread(c, ARG(1), ARG(2), ARG(3), (ARG(4) & 4) != 0, &tid); if (ARG(5)) M32(ARG(5)) = tid; RET(h); }
 IMP(msvcrt, _endthreadex) { rt_thread_exit(c, (u32)ARG(0)); }
 IMP(msvcrt, _setjmp) { RET(0); } // longjmp is not supported yet: a setjmp that only ever returns once
-IMP(msvcrt, longjmp) { rt_fatal("longjmp is not implemented yet (from 0x%llx)", M64(R[RSP])); }
+IMP(msvcrt, longjmp) { rt_fatal("longjmp is not implemented yet (from 0x%llx)", MP(R[RSP])); }
 
 // ---- memory ----
 IMP(msvcrt, malloc) { RET((uptr)calloc(1, ARG(0) ? ARG(0) : 1)); } // zeroed, as fresh pages from the system are: titles that read memory they never wrote see what they would natively
@@ -281,12 +314,12 @@ IMP(msvcrt, strxfrm) { size_t n = strlen(GSTR(ARG(1))); if (ARG(2) > n) strcpy(G
 IMP(msvcrt, strerror) { RET((uptr)strerror((int)ARG(0))); }
 IMP(msvcrt, getenv) { RET(0); }
 // Windows' long is 32 bits, as in wasm32
-static void set_end(Cpu *c, u64 endp, const char *start, char *end) { if (endp) M64(endp) = (uptr)end; (void)start; }
+static void set_end(Cpu *c, u64 endp, const char *start, char *end) { if (endp) MP(endp) = (uptr)end; (void)start; }
 IMP(msvcrt, strtol) { char *e; long v = strtol(GSTR(ARG(0)), &e, (int)ARG(2)); set_end(c, ARG(1), 0, e); RET((s64)(s32)v); }
 IMP(msvcrt, strtoul) { char *e; unsigned long v = strtoul(GSTR(ARG(0)), &e, (int)ARG(2)); set_end(c, ARG(1), 0, e); RET((u32)v); }
 IMP(msvcrt, _strtoi64) { char *e; long long v = strtoll(GSTR(ARG(0)), &e, (int)ARG(2)); set_end(c, ARG(1), 0, e); RET(v); }
 IMP(msvcrt, _strtoui64) { char *e; unsigned long long v = strtoull(GSTR(ARG(0)), &e, (int)ARG(2)); set_end(c, ARG(1), 0, e); RET(v); }
-IMP(msvcrt, strtod) { char *e; double v = strtod(GSTR(ARG(0)), &e); set_end(c, ARG(1), 0, e); X[0] = vzero(); X[0].pd[0] = v; }
+IMP(msvcrt, strtod) { char *e; double v = strtod(GSTR(ARG(0)), &e); set_end(c, ARG(1), 0, e); DRET(v); }
 IMP(msvcrt, atoi) { RET((s64)atoi(GSTR(ARG(0)))); }
 IMP(msvcrt, tolower) { RET((s64)tolower((int)ARG(0))); }
 IMP(msvcrt, toupper) { RET((s64)toupper((int)ARG(0))); }
@@ -297,14 +330,14 @@ IMP(msvcrt, isdigit) { RET(isdigit((int)ARG(0)) ? 4 : 0); }
 IMP(msvcrt, isalpha) { RET(isalpha((int)ARG(0)) ? 0x103 : 0); }
 IMP(msvcrt, isalnum) { RET(isalnum((int)ARG(0)) ? 0x107 : 0); }
 IMP(msvcrt, isxdigit) { RET(isxdigit((int)ARG(0)) ? 0x80 : 0); }
-IMP(msvcrt, ceil) { X[0].pd[0] = ceil(FARG(0)); }
-IMP(msvcrt, floor) { X[0].pd[0] = floor(FARG(0)); }
-IMP(msvcrt, ldexp) { X[0].pd[0] = ldexp(FARG(0), (s32)ARG(1)); }
-IMP(msvcrt, log10) { X[0].pd[0] = log10(FARG(0)); }
-IMP(msvcrt, log) { X[0].pd[0] = log(FARG(0)); }
-IMP(msvcrt, exp) { X[0].pd[0] = exp(FARG(0)); }
-IMP(msvcrt, pow) { X[0].pd[0] = pow(FARG(0), FARG(1)); }
-IMP(msvcrt, sqrt) { X[0].pd[0] = sqrt(FARG(0)); }
+IMP(msvcrt, ceil) { DRET(ceil(DA(0))); }
+IMP(msvcrt, floor) { DRET(floor(DA(0))); }
+IMP(msvcrt, ldexp) { DRET(ldexp(DA(0), (s32)DA_INT(1))); }
+IMP(msvcrt, log10) { DRET(log10(DA(0))); }
+IMP(msvcrt, log) { DRET(log(DA(0))); }
+IMP(msvcrt, exp) { DRET(exp(DA(0))); }
+IMP(msvcrt, pow) { DRET(pow(DA(0), DA(1))); }
+IMP(msvcrt, sqrt) { DRET(sqrt(DA(0))); }
 
 // ---- wide characters are 16 bits on Windows ----
 IMP(msvcrt, wcslen) { RET(rt_wcslen(GWSTR(ARG(0)))); }
@@ -340,8 +373,8 @@ IMP(msvcrt, fopen) { RET(stream_open(c, GSTR(ARG(0)), GSTR(ARG(1)))); }
 IMP(msvcrt, _wfopen) { char *n = rt_narrow(GWSTR(ARG(0))), *m = rt_narrow(GWSTR(ARG(1))); RET(stream_open(c, n, m)); free(n); free(m); }
 IMP(msvcrt, _fsopen) { RET(stream_open(c, GSTR(ARG(0)), GSTR(ARG(1)))); } // (name, mode, share flag)
 IMP(msvcrt, _wfsopen) { char *n = rt_narrow(GWSTR(ARG(0))), *m = rt_narrow(GWSTR(ARG(1))); RET(stream_open(c, n, m)); free(n); free(m); }
-IMP(msvcrt, fopen_s) { u64 g = stream_open(c, GSTR(ARG(1)), GSTR(ARG(2))); M64(ARG(0)) = g; RET(g ? 0 : M32(THREAD(c)->teb + TEB_ERRNO)); }
-IMP(msvcrt, _wfopen_s) { char *n = rt_narrow(GWSTR(ARG(1))), *m = rt_narrow(GWSTR(ARG(2))); u64 g = stream_open(c, n, m); free(n); free(m); M64(ARG(0)) = g; RET(g ? 0 : M32(THREAD(c)->teb + TEB_ERRNO)); }
+IMP(msvcrt, fopen_s) { u64 g = stream_open(c, GSTR(ARG(1)), GSTR(ARG(2))); MP(ARG(0)) = g; RET(g ? 0 : M32(THREAD(c)->teb + TEB_ERRNO)); }
+IMP(msvcrt, _wfopen_s) { char *n = rt_narrow(GWSTR(ARG(1))), *m = rt_narrow(GWSTR(ARG(2))); u64 g = stream_open(c, n, m); free(n); free(m); MP(ARG(0)) = g; RET(g ? 0 : M32(THREAD(c)->teb + TEB_ERRNO)); }
 IMP(msvcrt, fseek) { Stream *s = stream(ARG(0)); if (!s || !s->vf) { RET(-1); return; } s64 d = (s32)ARG(1); u32 how = (u32)ARG(2); u64 *pos = vfs_pos(s->vf); s64 b = how == 0 ? 0 : how == 1 ? (s64)*pos : (s64)vfs_size(s->vf); if (b + d < 0) { RET(-1); return; } *pos = (u64)(b + d); s->eof = 0; s->unget = -1; RET(0); }
 IMP(msvcrt, _fseeki64) { Stream *s = stream(ARG(0)); if (!s || !s->vf) { RET(-1); return; } s64 d = (s64)ARG(1); u32 how = (u32)ARG(2); u64 *pos = vfs_pos(s->vf); s64 b = how == 0 ? 0 : how == 1 ? (s64)*pos : (s64)vfs_size(s->vf); if (b + d < 0) { RET(-1); return; } *pos = (u64)(b + d); s->eof = 0; s->unget = -1; RET(0); }
 IMP(msvcrt, ftell) { Stream *s = stream(ARG(0)); RET(s && s->vf ? (s64)(s32)*vfs_pos(s->vf) - (s->unget >= 0) : -1); }
@@ -388,22 +421,22 @@ IMP(msvcrt, feof) { Stream *s = FILEARG(0); RET(s && s->eof); }
 IMP(msvcrt, ferror) { Stream *s = FILEARG(0); RET(s && s->err); }
 IMP(msvcrt, fgetpos) { Stream *s = stream(ARG(0)); if (!s || !s->vf || !ARG(1)) { RET(-1); return; } M64(ARG(1)) = *vfs_pos(s->vf) - (s->unget >= 0); RET(0); } // fpos_t: a 64-bit offset
 IMP(msvcrt, fsetpos) { Stream *s = stream(ARG(0)); if (!s || !s->vf || !ARG(1)) { RET(-1); return; } *vfs_pos(s->vf) = M64(ARG(1)); s->unget = -1; RET(0); }
-IMP(msvcrt, vfprintf) { Stream *s = FILEARG(0); if (!s) { RET(-1); return; } Sink o = {0, 0, 0, s}; Args a = {c, 0, ARG(2)}; format(&o, GSTR(ARG(1)), &a); RET(o.len); }
-IMP(msvcrt, fprintf) { Stream *s = FILEARG(0); if (!s) { RET(-1); return; } Sink o = {0, 0, 0, s}; Args a = {c, 2, 0}; format(&o, GSTR(ARG(1)), &a); RET(o.len); }
-IMP(msvcrt, printf) { Sink o = {0, 0, 0, &streams[1]}; Args a = {c, 1, 0}; format(&o, GSTR(ARG(0)), &a); RET(o.len); }
-IMP(msvcrt, vprintf) { Sink o = {0, 0, 0, &streams[1]}; Args a = {c, 0, ARG(1)}; format(&o, GSTR(ARG(0)), &a); RET(o.len); }
-IMP(msvcrt, _vscprintf) { Sink o = {0}; Args a = {c, 0, ARG(1)}; format(&o, GSTR(ARG(0)), &a); RET(o.len); }
+IMP(msvcrt, vfprintf) { Stream *s = FILEARG(0); if (!s) { RET(-1); return; } Sink o = {0, 0, 0, s}; Args a = {c, 0, ARG(2), 1}; format(&o, GSTR(ARG(1)), &a); RET(o.len); }
+IMP(msvcrt, fprintf) { Stream *s = FILEARG(0); if (!s) { RET(-1); return; } Sink o = {0, 0, 0, s}; Args a = {c, 2, 0, 1}; format(&o, GSTR(ARG(1)), &a); RET(o.len); }
+IMP(msvcrt, printf) { Sink o = {0, 0, 0, &streams[1]}; Args a = {c, 1, 0, 1}; format(&o, GSTR(ARG(0)), &a); RET(o.len); }
+IMP(msvcrt, vprintf) { Sink o = {0, 0, 0, &streams[1]}; Args a = {c, 0, ARG(1), 1}; format(&o, GSTR(ARG(0)), &a); RET(o.len); }
+IMP(msvcrt, _vscprintf) { Sink o = {0}; Args a = {c, 0, ARG(1), 1}; format(&o, GSTR(ARG(0)), &a); RET(o.len); }
 // msvcrt: -1 and no terminator when the text does not fit
 IMP(msvcrt, _vsnprintf) {
-  Sink o = {GSTR(ARG(0)), ARG(1), 0, 0}; Args a = {c, 0, ARG(3)}; format(&o, GSTR(ARG(2)), &a);
+  Sink o = {GSTR(ARG(0)), ARG(1), 0, 0}; Args a = {c, 0, ARG(3), 1}; format(&o, GSTR(ARG(2)), &a);
   if (o.len < ARG(1)) { GSTR(ARG(0))[o.len] = 0; RET(o.len); } else RET(-1);
 }
 IMP(msvcrt, _snprintf) {
-  Sink o = {GSTR(ARG(0)), ARG(1), 0, 0}; Args a = {c, 3, 0}; format(&o, GSTR(ARG(2)), &a);
+  Sink o = {GSTR(ARG(0)), ARG(1), 0, 0}; Args a = {c, 3, 0, 1}; format(&o, GSTR(ARG(2)), &a);
   if (o.len < ARG(1)) { GSTR(ARG(0))[o.len] = 0; RET(o.len); } else RET(-1);
 }
-IMP(msvcrt, sprintf) { Sink o = {GSTR(ARG(0)), (size_t)-1, 0, 0}; Args a = {c, 2, 0}; format(&o, GSTR(ARG(1)), &a); GSTR(ARG(0))[o.len] = 0; RET(o.len); }
-IMP(msvcrt, vsprintf) { Sink o = {GSTR(ARG(0)), (size_t)-1, 0, 0}; Args a = {c, 0, ARG(2)}; format(&o, GSTR(ARG(1)), &a); GSTR(ARG(0))[o.len] = 0; RET(o.len); }
+IMP(msvcrt, sprintf) { Sink o = {GSTR(ARG(0)), (size_t)-1, 0, 0}; Args a = {c, 2, 0, 1}; format(&o, GSTR(ARG(1)), &a); GSTR(ARG(0))[o.len] = 0; RET(o.len); }
+IMP(msvcrt, vsprintf) { Sink o = {GSTR(ARG(0)), (size_t)-1, 0, 0}; Args a = {c, 0, ARG(2), 1}; format(&o, GSTR(ARG(1)), &a); GSTR(ARG(0))[o.len] = 0; RET(o.len); }
 
 // ---- shell32 ----
 IMP(shell32, CommandLineToArgvW) {
@@ -428,97 +461,97 @@ IMP(shell32, CommandLineToArgvW) {
 
 u64 rt_random64(void) { u64 v = 0; arc4random_buf(&v, sizeof v); return v; }
 
-// ---- the rest of the C math library (Win64: arguments in xmm0 / xmm1, the result in xmm0; floats in the low lane) ----
+// ---- the rest of the C math library (DA / FA / DRET / FRET in rt.h: the argument and result registers of each width) ----
 // (written out: tools/build-title.sh finds runtime functions by their IMP lines)
-IMP(msvcrt, sin) { X[0].pd[0] = sin(X[0].pd[0]); }
-IMP(msvcrt, sinf) { X[0].ps[0] = sinf(X[0].ps[0]); }
-IMP(msvcrt, cos) { X[0].pd[0] = cos(X[0].pd[0]); }
-IMP(msvcrt, cosf) { X[0].ps[0] = cosf(X[0].ps[0]); }
-IMP(msvcrt, tan) { X[0].pd[0] = tan(X[0].pd[0]); }
-IMP(msvcrt, tanf) { X[0].ps[0] = tanf(X[0].ps[0]); }
-IMP(msvcrt, asin) { X[0].pd[0] = asin(X[0].pd[0]); }
-IMP(msvcrt, asinf) { X[0].ps[0] = asinf(X[0].ps[0]); }
-IMP(msvcrt, acos) { X[0].pd[0] = acos(X[0].pd[0]); }
-IMP(msvcrt, acosf) { X[0].ps[0] = acosf(X[0].ps[0]); }
-IMP(msvcrt, atan) { X[0].pd[0] = atan(X[0].pd[0]); }
-IMP(msvcrt, atanf) { X[0].ps[0] = atanf(X[0].ps[0]); }
-IMP(msvcrt, sinh) { X[0].pd[0] = sinh(X[0].pd[0]); }
-IMP(msvcrt, sinhf) { X[0].ps[0] = sinhf(X[0].ps[0]); }
-IMP(msvcrt, cosh) { X[0].pd[0] = cosh(X[0].pd[0]); }
-IMP(msvcrt, coshf) { X[0].ps[0] = coshf(X[0].ps[0]); }
-IMP(msvcrt, tanh) { X[0].pd[0] = tanh(X[0].pd[0]); }
-IMP(msvcrt, tanhf) { X[0].ps[0] = tanhf(X[0].ps[0]); }
-IMP(msvcrt, asinh) { X[0].pd[0] = asinh(X[0].pd[0]); }
-IMP(msvcrt, asinhf) { X[0].ps[0] = asinhf(X[0].ps[0]); }
-IMP(msvcrt, acosh) { X[0].pd[0] = acosh(X[0].pd[0]); }
-IMP(msvcrt, acoshf) { X[0].ps[0] = acoshf(X[0].ps[0]); }
-IMP(msvcrt, atanh) { X[0].pd[0] = atanh(X[0].pd[0]); }
-IMP(msvcrt, atanhf) { X[0].ps[0] = atanhf(X[0].ps[0]); }
-IMP(msvcrt, exp2) { X[0].pd[0] = exp2(X[0].pd[0]); }
-IMP(msvcrt, exp2f) { X[0].ps[0] = exp2f(X[0].ps[0]); }
-IMP(msvcrt, log2) { X[0].pd[0] = log2(X[0].pd[0]); }
-IMP(msvcrt, log2f) { X[0].ps[0] = log2f(X[0].ps[0]); }
-IMP(msvcrt, log1p) { X[0].pd[0] = log1p(X[0].pd[0]); }
-IMP(msvcrt, log1pf) { X[0].ps[0] = log1pf(X[0].ps[0]); }
-IMP(msvcrt, expm1) { X[0].pd[0] = expm1(X[0].pd[0]); }
-IMP(msvcrt, expm1f) { X[0].ps[0] = expm1f(X[0].ps[0]); }
-IMP(msvcrt, cbrt) { X[0].pd[0] = cbrt(X[0].pd[0]); }
-IMP(msvcrt, cbrtf) { X[0].ps[0] = cbrtf(X[0].ps[0]); }
-IMP(msvcrt, round) { X[0].pd[0] = round(X[0].pd[0]); }
-IMP(msvcrt, roundf) { X[0].ps[0] = roundf(X[0].ps[0]); }
-IMP(msvcrt, trunc) { X[0].pd[0] = trunc(X[0].pd[0]); }
-IMP(msvcrt, truncf) { X[0].ps[0] = truncf(X[0].ps[0]); }
-IMP(msvcrt, rint) { X[0].pd[0] = rint(X[0].pd[0]); }
-IMP(msvcrt, rintf) { X[0].ps[0] = rintf(X[0].ps[0]); }
-IMP(msvcrt, nearbyint) { X[0].pd[0] = nearbyint(X[0].pd[0]); }
-IMP(msvcrt, nearbyintf) { X[0].ps[0] = nearbyintf(X[0].ps[0]); }
-IMP(msvcrt, fabs) { X[0].pd[0] = fabs(X[0].pd[0]); }
-IMP(msvcrt, fabsf) { X[0].ps[0] = fabsf(X[0].ps[0]); }
-IMP(msvcrt, erf) { X[0].pd[0] = erf(X[0].pd[0]); }
-IMP(msvcrt, erff) { X[0].ps[0] = erff(X[0].ps[0]); }
-IMP(msvcrt, erfc) { X[0].pd[0] = erfc(X[0].pd[0]); }
-IMP(msvcrt, erfcf) { X[0].ps[0] = erfcf(X[0].ps[0]); }
-IMP(msvcrt, tgamma) { X[0].pd[0] = tgamma(X[0].pd[0]); }
-IMP(msvcrt, tgammaf) { X[0].ps[0] = tgammaf(X[0].ps[0]); }
-IMP(msvcrt, lgamma) { X[0].pd[0] = lgamma(X[0].pd[0]); }
-IMP(msvcrt, lgammaf) { X[0].ps[0] = lgammaf(X[0].ps[0]); }
-IMP(msvcrt, floorf) { X[0].ps[0] = floorf(X[0].ps[0]); }
-IMP(msvcrt, ceilf) { X[0].ps[0] = ceilf(X[0].ps[0]); }
-IMP(msvcrt, sqrtf) { X[0].ps[0] = sqrtf(X[0].ps[0]); }
-IMP(msvcrt, expf) { X[0].ps[0] = expf(X[0].ps[0]); }
-IMP(msvcrt, logf) { X[0].ps[0] = logf(X[0].ps[0]); }
-IMP(msvcrt, log10f) { X[0].ps[0] = log10f(X[0].ps[0]); }
-IMP(msvcrt, atan2) { X[0].pd[0] = atan2(X[0].pd[0], X[1].pd[0]); }
-IMP(msvcrt, atan2f) { X[0].ps[0] = atan2f(X[0].ps[0], X[1].ps[0]); }
-IMP(msvcrt, fmod) { X[0].pd[0] = fmod(X[0].pd[0], X[1].pd[0]); }
-IMP(msvcrt, fmodf) { X[0].ps[0] = fmodf(X[0].ps[0], X[1].ps[0]); }
-IMP(msvcrt, hypot) { X[0].pd[0] = hypot(X[0].pd[0], X[1].pd[0]); }
-IMP(msvcrt, hypotf) { X[0].ps[0] = hypotf(X[0].ps[0], X[1].ps[0]); }
-IMP(msvcrt, fmin) { X[0].pd[0] = fmin(X[0].pd[0], X[1].pd[0]); }
-IMP(msvcrt, fminf) { X[0].ps[0] = fminf(X[0].ps[0], X[1].ps[0]); }
-IMP(msvcrt, fmax) { X[0].pd[0] = fmax(X[0].pd[0], X[1].pd[0]); }
-IMP(msvcrt, fmaxf) { X[0].ps[0] = fmaxf(X[0].ps[0], X[1].ps[0]); }
-IMP(msvcrt, copysign) { X[0].pd[0] = copysign(X[0].pd[0], X[1].pd[0]); }
-IMP(msvcrt, copysignf) { X[0].ps[0] = copysignf(X[0].ps[0], X[1].ps[0]); }
-IMP(msvcrt, remainder) { X[0].pd[0] = remainder(X[0].pd[0], X[1].pd[0]); }
-IMP(msvcrt, remainderf) { X[0].ps[0] = remainderf(X[0].ps[0], X[1].ps[0]); }
-IMP(msvcrt, fdim) { X[0].pd[0] = fdim(X[0].pd[0], X[1].pd[0]); }
-IMP(msvcrt, fdimf) { X[0].ps[0] = fdimf(X[0].ps[0], X[1].ps[0]); }
-IMP(msvcrt, nextafter) { X[0].pd[0] = nextafter(X[0].pd[0], X[1].pd[0]); }
-IMP(msvcrt, nextafterf) { X[0].ps[0] = nextafterf(X[0].ps[0], X[1].ps[0]); }
-IMP(msvcrt, powf) { X[0].ps[0] = powf(X[0].ps[0], X[1].ps[0]); }
-IMP(msvcrt, _hypot) { X[0].pd[0] = hypot(X[0].pd[0], X[1].pd[0]); }
-IMP(msvcrt, _hypotf) { X[0].ps[0] = hypotf(X[0].ps[0], X[1].ps[0]); }
-IMP(msvcrt, _copysign) { X[0].pd[0] = copysign(X[0].pd[0], X[1].pd[0]); }
-IMP(msvcrt, ldexpf) { X[0].ps[0] = ldexpf(X[0].ps[0], (int)R[RDX]); }
-IMP(msvcrt, frexp) { int e; X[0].pd[0] = frexp(X[0].pd[0], &e); M32(R[RDX]) = (u32)e; }
-IMP(msvcrt, modf) { double ip; X[0].pd[0] = modf(X[0].pd[0], &ip); MF64(R[RDX]) = ip; }
-IMP(msvcrt, modff) { float ip; X[0].ps[0] = modff(X[0].ps[0], &ip); MF32(R[RDX]) = ip; }
-IMP(msvcrt, lround) { RET((s64)(s32)lround(X[0].pd[0])); }
-IMP(msvcrt, lroundf) { RET((s64)(s32)lroundf(X[0].ps[0])); }
-IMP(msvcrt, llround) { RET((u64)llround(X[0].pd[0])); }
-IMP(msvcrt, lrint) { RET((s64)(s32)lrint(X[0].pd[0])); }
-IMP(msvcrt, lrintf) { RET((s64)(s32)lrintf(X[0].ps[0])); }
+IMP(msvcrt, sin) { DRET(sin(DA(0))); }
+IMP(msvcrt, sinf) { FRET(sinf(FA(0))); }
+IMP(msvcrt, cos) { DRET(cos(DA(0))); }
+IMP(msvcrt, cosf) { FRET(cosf(FA(0))); }
+IMP(msvcrt, tan) { DRET(tan(DA(0))); }
+IMP(msvcrt, tanf) { FRET(tanf(FA(0))); }
+IMP(msvcrt, asin) { DRET(asin(DA(0))); }
+IMP(msvcrt, asinf) { FRET(asinf(FA(0))); }
+IMP(msvcrt, acos) { DRET(acos(DA(0))); }
+IMP(msvcrt, acosf) { FRET(acosf(FA(0))); }
+IMP(msvcrt, atan) { DRET(atan(DA(0))); }
+IMP(msvcrt, atanf) { FRET(atanf(FA(0))); }
+IMP(msvcrt, sinh) { DRET(sinh(DA(0))); }
+IMP(msvcrt, sinhf) { FRET(sinhf(FA(0))); }
+IMP(msvcrt, cosh) { DRET(cosh(DA(0))); }
+IMP(msvcrt, coshf) { FRET(coshf(FA(0))); }
+IMP(msvcrt, tanh) { DRET(tanh(DA(0))); }
+IMP(msvcrt, tanhf) { FRET(tanhf(FA(0))); }
+IMP(msvcrt, asinh) { DRET(asinh(DA(0))); }
+IMP(msvcrt, asinhf) { FRET(asinhf(FA(0))); }
+IMP(msvcrt, acosh) { DRET(acosh(DA(0))); }
+IMP(msvcrt, acoshf) { FRET(acoshf(FA(0))); }
+IMP(msvcrt, atanh) { DRET(atanh(DA(0))); }
+IMP(msvcrt, atanhf) { FRET(atanhf(FA(0))); }
+IMP(msvcrt, exp2) { DRET(exp2(DA(0))); }
+IMP(msvcrt, exp2f) { FRET(exp2f(FA(0))); }
+IMP(msvcrt, log2) { DRET(log2(DA(0))); }
+IMP(msvcrt, log2f) { FRET(log2f(FA(0))); }
+IMP(msvcrt, log1p) { DRET(log1p(DA(0))); }
+IMP(msvcrt, log1pf) { FRET(log1pf(FA(0))); }
+IMP(msvcrt, expm1) { DRET(expm1(DA(0))); }
+IMP(msvcrt, expm1f) { FRET(expm1f(FA(0))); }
+IMP(msvcrt, cbrt) { DRET(cbrt(DA(0))); }
+IMP(msvcrt, cbrtf) { FRET(cbrtf(FA(0))); }
+IMP(msvcrt, round) { DRET(round(DA(0))); }
+IMP(msvcrt, roundf) { FRET(roundf(FA(0))); }
+IMP(msvcrt, trunc) { DRET(trunc(DA(0))); }
+IMP(msvcrt, truncf) { FRET(truncf(FA(0))); }
+IMP(msvcrt, rint) { DRET(rint(DA(0))); }
+IMP(msvcrt, rintf) { FRET(rintf(FA(0))); }
+IMP(msvcrt, nearbyint) { DRET(nearbyint(DA(0))); }
+IMP(msvcrt, nearbyintf) { FRET(nearbyintf(FA(0))); }
+IMP(msvcrt, fabs) { DRET(fabs(DA(0))); }
+IMP(msvcrt, fabsf) { FRET(fabsf(FA(0))); }
+IMP(msvcrt, erf) { DRET(erf(DA(0))); }
+IMP(msvcrt, erff) { FRET(erff(FA(0))); }
+IMP(msvcrt, erfc) { DRET(erfc(DA(0))); }
+IMP(msvcrt, erfcf) { FRET(erfcf(FA(0))); }
+IMP(msvcrt, tgamma) { DRET(tgamma(DA(0))); }
+IMP(msvcrt, tgammaf) { FRET(tgammaf(FA(0))); }
+IMP(msvcrt, lgamma) { DRET(lgamma(DA(0))); }
+IMP(msvcrt, lgammaf) { FRET(lgammaf(FA(0))); }
+IMP(msvcrt, floorf) { FRET(floorf(FA(0))); }
+IMP(msvcrt, ceilf) { FRET(ceilf(FA(0))); }
+IMP(msvcrt, sqrtf) { FRET(sqrtf(FA(0))); }
+IMP(msvcrt, expf) { FRET(expf(FA(0))); }
+IMP(msvcrt, logf) { FRET(logf(FA(0))); }
+IMP(msvcrt, log10f) { FRET(log10f(FA(0))); }
+IMP(msvcrt, atan2) { DRET(atan2(DA(0), DA(1))); }
+IMP(msvcrt, atan2f) { FRET(atan2f(FA(0), FA(1))); }
+IMP(msvcrt, fmod) { DRET(fmod(DA(0), DA(1))); }
+IMP(msvcrt, fmodf) { FRET(fmodf(FA(0), FA(1))); }
+IMP(msvcrt, hypot) { DRET(hypot(DA(0), DA(1))); }
+IMP(msvcrt, hypotf) { FRET(hypotf(FA(0), FA(1))); }
+IMP(msvcrt, fmin) { DRET(fmin(DA(0), DA(1))); }
+IMP(msvcrt, fminf) { FRET(fminf(FA(0), FA(1))); }
+IMP(msvcrt, fmax) { DRET(fmax(DA(0), DA(1))); }
+IMP(msvcrt, fmaxf) { FRET(fmaxf(FA(0), FA(1))); }
+IMP(msvcrt, copysign) { DRET(copysign(DA(0), DA(1))); }
+IMP(msvcrt, copysignf) { FRET(copysignf(FA(0), FA(1))); }
+IMP(msvcrt, remainder) { DRET(remainder(DA(0), DA(1))); }
+IMP(msvcrt, remainderf) { FRET(remainderf(FA(0), FA(1))); }
+IMP(msvcrt, fdim) { DRET(fdim(DA(0), DA(1))); }
+IMP(msvcrt, fdimf) { FRET(fdimf(FA(0), FA(1))); }
+IMP(msvcrt, nextafter) { DRET(nextafter(DA(0), DA(1))); }
+IMP(msvcrt, nextafterf) { FRET(nextafterf(FA(0), FA(1))); }
+IMP(msvcrt, powf) { FRET(powf(FA(0), FA(1))); }
+IMP(msvcrt, _hypot) { DRET(hypot(DA(0), DA(1))); }
+IMP(msvcrt, _hypotf) { FRET(hypotf(FA(0), FA(1))); }
+IMP(msvcrt, _copysign) { DRET(copysign(DA(0), DA(1))); }
+IMP(msvcrt, ldexpf) { FRET(ldexpf(FA(0), (int)FA_INT(1))); }
+IMP(msvcrt, frexp) { int e; DRET(frexp(DA(0), &e)); M32(DA_INT(1)) = (u32)e; }
+IMP(msvcrt, modf) { double ip; DRET(modf(DA(0), &ip)); MF64(DA_INT(1)) = ip; }
+IMP(msvcrt, modff) { float ip; FRET(modff(FA(0), &ip)); MF32(FA_INT(1)) = ip; }
+IMP(msvcrt, lround) { RET((s64)(s32)lround(DA(0))); }
+IMP(msvcrt, lroundf) { RET((s64)(s32)lroundf(FA(0))); }
+IMP(msvcrt, llround) { RET64((u64)llround(DA(0))); }
+IMP(msvcrt, lrint) { RET((s64)(s32)lrint(DA(0))); }
+IMP(msvcrt, lrintf) { RET((s64)(s32)lrintf(FA(0))); }
 // wide character classes ("C" locale: ASCII only, as the narrow ones)
 IMP(msvcrt, iswspace) { u32 ch = (u16)ARG(0); RET(ch < 128 && isspace((int)ch)); }
 IMP(msvcrt, iswalpha) { u32 ch = (u16)ARG(0); RET(ch < 128 && isalpha((int)ch)); }

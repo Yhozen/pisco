@@ -5,8 +5,8 @@
 #            the 32-bit titles: hello again for i686, and fixtures/x87
 #   node     tests/regress.sh: every title in Node (XCL's title and Stockfish too when their files are there)
 #   bench    the benchmark title's checksums against the same work built natively
-#   win32    the 32-bit titles in Node: hello, and the x87 title against what it printed under Wine
-#            (fixtures/x87/expected.txt; tools/oracle-wine/oracle.sh run makes it again)
+#   win32    the 32-bit titles in Node: hello, and the x87 and crt32 titles against what they printed under Wine
+#            (fixtures/*/expected.txt; tools/oracle-wine/oracle.sh run makes them again)
 #   chrome   hello, threads and cxx again in headless Chrome (WebGPU on SwiftShader), and the 32-bit titles
 #   nd       Narbacular Drop, when the installed game is there (ND: its folder; default: the oracle's prefix):
 #            built with its recipe and run in strict mode. Its calls until it asks for Direct3D 9 must be the
@@ -34,6 +34,11 @@
 #            session in Node with the nd step's checkpoints, and the image's registry read by advapi32 (minutes). The
 #            nd, ndgfx and ndplay steps keep building from the installed folder with tools/build-title.sh
 #   doom     tests/gfx/doom.sh: Doom as a console title in Node and Chrome (minutes)
+#   st       tests/gfx/st.sh: Microsoft's SimpleTriangleDesktop (Windows x64) in Chrome, and fixtures/msvc/eh.exe with
+#            the real vcruntime140.dll in Node; skipped without the user-built sample (out/gdk-samples/local, from
+#            tools/build-gdk-sample.sh) or the MSVC runtime DLLs (REDIST)
+#   pbr      tests/gfx/pbr.sh: Microsoft's SimplePBR (Windows x64) in Chrome; skipped without the sample (built from
+#            the SDKs in WINSDK by tools/build-gdk-sample-pbr.sh) or REDIST (minutes)
 #   xcl      tests/gfx/xcl.sh: XCL's console test title in Chrome, when it has been built into out/xcltitle-game
 #   audio    tests/audio/run.sh: the XMA2 / Opus decoders (builds FFmpeg's the first time)
 # Default: build node bench win32 ffp gdi. Needs tools/setup-toolchain.sh to have run. Exit status 1 if a step fails.
@@ -57,7 +62,10 @@ build() {
   "$CXX" -O2 -static fixtures/dll/main.cpp -o fixtures/dll/game/title.exe -Lfixtures/dll/game -lgamelib || return 1
   (cd fixtures/hello && cargo build -q --release --target i686-pc-windows-msvc) || return 1
   fixtures/x87/build.sh out/x87 > /dev/null || return 1
-  echo "built hello threads bench cxx dll, and hello and x87 as 32-bit programs"
+  fixtures/crt32/build.sh out/crt32 > /dev/null || return 1
+  # the MSVC-ABI exceptions title, when clang-cl is there (tests/gfx/st.sh runs it)
+  local msvc=""; if command -v clang-cl > /dev/null && command -v lld-link > /dev/null; then fixtures/msvc/build.sh || return 1; msvc=", msvc's eh"; fi
+  echo "built hello threads bench cxx dll$msvc, and hello, x87 and crt32 as 32-bit programs"
 }
 win32() {
   local ok=0 exe=fixtures/hello/target/i686-pc-windows-msvc/release/hello.exe out pass
@@ -68,6 +76,10 @@ win32() {
   SW_STRICT=1 node web/run-node.mjs out/x87/wasm/title.wasm out/x87/x87.exe > out/x87/got.txt 2>&1
   if cmp -s out/x87/got.txt fixtures/x87/expected.txt; then echo "x87: $(wc -l < fixtures/x87/expected.txt) lines equal what it prints under Wine"
   else echo "x87: differs from what it prints under Wine (< ours, > Wine):"; diff out/x87/got.txt fixtures/x87/expected.txt | head -12; ok=1; fi
+  tools/build-title.sh out/crt32/crt32.exe out/crt32/wasm > out/crt32.build.log 2>&1 || { echo "crt32: build failed (out/crt32.build.log)"; return 1; }
+  SW_STRICT=1 node web/run-node.mjs out/crt32/wasm/title.wasm out/crt32/crt32.exe > out/crt32/got.txt 2>&1
+  if cmp -s out/crt32/got.txt fixtures/crt32/expected.txt; then echo "crt32: $(wc -l < fixtures/crt32/expected.txt) lines (msvcrt.dll maths and printf, SList) equal what it prints under Wine"
+  else echo "crt32: differs from what it prints under Wine (< ours, > Wine):"; diff out/crt32/got.txt fixtures/crt32/expected.txt | head -12; ok=1; fi
   return $ok
 }
 bench() {
@@ -129,11 +141,13 @@ gdi() {
 }
 nd_session() { SW_STRICT=1 SW_CLOCK=16667 SW_D3D9_STATS=1 SW_SESSION=recipes/narbacular-drop/sessions/menu-to-level.json timeout 600 node web/run-node.mjs out/nd/title.wasm "$ND/Narbacular Drop.exe"; }
 ND=${ND:-$HOME/.pisco/oracle/prefix-narbacular-drop/drive_c/Program Files (x86)/Narbacular Drop}
+REDIST=${REDIST:-$HOME/untrusted/vcredist/x/Contents/VC/Redist/MSVC/14.44.35112/x64/Microsoft.VC143.CRT}; export REDIST
+WINSDK=${WINSDK:-$HOME/winsdk}
 for s in ${*:-build node bench win32 ffp gdi}; do case $s in
   build)  step build build ;;
   node)   LINES_SHOWN=8 step node tests/regress.sh ;;
   bench)  step bench bench ;;
-  win32)  LINES_SHOWN=2 step win32 win32 ;;
+  win32)  LINES_SHOWN=3 step win32 win32 ;;
   chrome) LINES_SHOWN=5 step chrome chrome ;;
   nd)     if [ -f "$ND/Narbacular Drop.exe" ]; then LINES_SHOWN=3 step nd nd; else echo "skip  nd: the game is not installed (ND=$ND)"; fi ;;
   ffp)    if command -v naga > /dev/null; then step ffp tests/gfx/d3d9-ffp.sh; else echo "skip  ffp: naga is not installed (tools/setup-toolchain.sh naga)"; fi ;;
@@ -141,6 +155,13 @@ for s in ${*:-build node bench win32 ffp gdi}; do case $s in
   ndgfx)  if [ -f "$ND/Narbacular Drop.exe" ]; then LINES_SHOWN=16 ND=$ND step ndgfx tests/gfx/nd.sh; else echo "skip  ndgfx: the game is not installed (ND=$ND)"; fi ;;
   ndplay) if [ -f "$ND/Narbacular Drop.exe" ]; then LINES_SHOWN=16 ND=$ND step ndplay tests/gfx/ndplay.sh; else echo "skip  ndplay: the game is not installed (ND=$ND)"; fi ;;
   doom)   LINES_SHOWN=4 step doom tests/gfx/doom.sh ;;
+  st)     if [ ! -f "$REDIST/vcruntime140.dll" ]; then echo "skip  st: no MSVC runtime DLLs in REDIST=$REDIST"
+          elif [ ! -f out/gdk-samples/local/SimpleTriangleDesktop.exe ]; then echo "skip  st: out/gdk-samples/local is not built (tools/build-gdk-sample.sh)"
+          elif [ ! -f fixtures/msvc/eh.exe ]; then echo "skip  st: fixtures/msvc/eh.exe is not built (the build step, with clang-cl)"
+          else LINES_SHOWN=4 step st tests/gfx/st.sh; fi ;;
+  pbr)    if [ ! -f "$REDIST/vcruntime140.dll" ]; then echo "skip  pbr: no MSVC runtime DLLs in REDIST=$REDIST"
+          elif [ ! -f out/gdk-samples/pbr-local/SimplePBR.exe ] && [ ! -d "$WINSDK/xwin" ]; then echo "skip  pbr: the sample is not built and there are no SDKs to build it in WINSDK=$WINSDK"
+          else LINES_SHOWN=3 step pbr tests/gfx/pbr.sh; fi ;;
   images) LINES_SHOWN=9 step images tests/images.sh ;;
   audio)  step audio tests/audio/run.sh ;;
   xcl)    if [ -f out/xcltitle-game/xcl_testtitle.exe ]; then LINES_SHOWN=3 step xcl tests/gfx/xcl.sh; else echo "skip  xcl: out/xcltitle-game/xcl_testtitle.exe is not built"; fi ;;

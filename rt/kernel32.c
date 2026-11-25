@@ -40,7 +40,7 @@ IMP(kernel32, GetExitCodeThread) {
 IMP(kernel32, GetThreadPriority) { RET(0); }
 IMP(kernel32, SetThreadPriority) { RET(1); }
 IMP(kernel32, SetThreadGroupAffinity) { if (ARG(2)) memset((void *)GP(ARG(2)), 0, 16); RET(1); }
-IMP(kernel32, GetProcessAffinityMask) { u64 m = (1ull << sysconf(_SC_NPROCESSORS_ONLN)) - 1; if (ARG(1)) M64(ARG(1)) = m; if (ARG(2)) M64(ARG(2)) = m; RET(1); }
+IMP(kernel32, GetProcessAffinityMask) { u64 m = (1ull << sysconf(_SC_NPROCESSORS_ONLN)) - 1; if (ARG(1)) MP(ARG(1)) = m; if (ARG(2)) MP(ARG(2)) = m; RET(1); }
 IMP(kernel32, SetProcessAffinityMask) { RET(1); }
 IMP(kernel32, GetProcessGroupAffinity) { u64 n = ARG(1); if (n && M16(n) >= 1) { M16(n) = 1; if (ARG(2)) M16(ARG(2)) = 0; RET(1); } else { if (n) M16(n) = 1; SET_LAST_ERROR(122); RET(0); } }
 IMP(kernel32, GetActiveProcessorCount) { RET(sysconf(_SC_NPROCESSORS_ONLN)); }
@@ -98,7 +98,7 @@ IMP(kernel32, DuplicateHandle) {
   u64 h = ARG(1);
   Object *o = h == PSEUDO_THREAD ? THREAD(c)->handle : rt_handle_get(h);
   if (!o) { SET_LAST_ERROR(6); RET(0); return; }
-  if (ARG(3)) M64(ARG(3)) = rt_handle_new(o);
+  if (ARG(3)) MP(ARG(3)) = rt_handle_new(o);
   if (ARG(6) & 1) rt_handle_close(h); // DUPLICATE_CLOSE_SOURCE
   RET(1);
 }
@@ -177,7 +177,7 @@ IMP(kernel32, WaitForSingleObject) { u64 h = ARG(0); RET(rt_wait(c, 1, &h, 0, (u
 IMP(kernel32, WaitForSingleObjectEx) { u64 h = ARG(0); RET(rt_wait(c, 1, &h, 0, (u32)ARG(1))); }
 IMP(kernel32, WaitForMultipleObjects) {
   u32 n = (u32)ARG(0); u64 hs[64];
-  for (u32 i = 0; i < n && i < 64; i++) hs[i] = M64(ARG(1) + 8 * i);
+  for (u32 i = 0; i < n && i < 64; i++) hs[i] = MP(ARG(1) + PTR_SIZE * i);
   RET(rt_wait(c, n, hs, ARG(2) != 0, (u32)ARG(3)));
 }
 
@@ -386,7 +386,7 @@ IMP(kernel32, GetModuleHandleExW) {
   if (flags & 4) { const ModuleDef *m = rt_module_of(ARG(1)); h = m ? m->base : 0; } // GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS
   else if (!ARG(1)) h = image_base;
   else { char *n = rt_narrow(GWSTR(ARG(1))); h = module_handle(n); free(n); }
-  M64(ARG(2)) = h; if (!h) SET_LAST_ERROR(126); RET(h != 0);
+  MP(ARG(2)) = h; if (!h) SET_LAST_ERROR(126); RET(h != 0);
 }
 static const char *module_path_of(u64 h) {
   static char buf[16][300]; static int k;
@@ -485,16 +485,21 @@ IMP(kernel32, WideCharToMultiByte) {
 
 // ---- ntdll functions kernel32 forwards: exception handling is not implemented yet ----
 
-// ---- slim reader/writer locks and condition variables: runtime objects behind the guest's 8 bytes ----
+// ---- slim reader/writer locks and condition variables: runtime objects behind the guest's pointer-sized cell ----
 typedef struct { pthread_mutex_t m; pthread_cond_t cv; int readers, writer; } Srw;
 typedef struct { pthread_mutex_t m; pthread_cond_t cv; u64 seq; } Cond;
 static pthread_mutex_t lazy_lock = PTHREAD_MUTEX_INITIALIZER;
+#if GUEST_BITS == 32
+typedef u32 LazyCell;
+#else
+typedef u64 LazyCell;
+#endif
 static void *lazy(u64 at, size_t size) {
-  void *p = (void *)GP(__atomic_load_n((u64 *)GP(at), __ATOMIC_ACQUIRE));
+  void *p = (void *)GP(__atomic_load_n((LazyCell *)GP(at), __ATOMIC_ACQUIRE));
   if (p) return p;
   pthread_mutex_lock(&lazy_lock);
-  p = (void *)GP(M64(at));
-  if (!p) { p = calloc(1, size); pthread_mutex_init((pthread_mutex_t *)p, 0); pthread_cond_init((pthread_cond_t *)((char *)p + sizeof(pthread_mutex_t)), 0); __atomic_store_n((u64 *)GP(at), (u64)(uptr)p, __ATOMIC_RELEASE); }
+  p = (void *)GP(MP(at));
+  if (!p) { p = calloc(1, size); pthread_mutex_init((pthread_mutex_t *)p, 0); pthread_cond_init((pthread_cond_t *)((char *)p + sizeof(pthread_mutex_t)), 0); __atomic_store_n((LazyCell *)GP(at), (LazyCell)(uptr)p, __ATOMIC_RELEASE); }
   pthread_mutex_unlock(&lazy_lock);
   return p;
 }
@@ -514,14 +519,14 @@ static void srw_unlock(u64 at, int excl) {
   if (excl) l->writer = 0; else l->readers--;
   pthread_cond_broadcast(&l->cv); pthread_mutex_unlock(&l->m);
 }
-IMP(kernel32, InitializeSRWLock) { M64(ARG(0)) = 0; }
+IMP(kernel32, InitializeSRWLock) { MP(ARG(0)) = 0; }
 IMP(kernel32, AcquireSRWLockExclusive) { srw_lock(ARG(0), 1); }
 IMP(kernel32, AcquireSRWLockShared) { srw_lock(ARG(0), 0); }
 IMP(kernel32, TryAcquireSRWLockExclusive) { RET(srw_try(ARG(0), 1)); }
 IMP(kernel32, TryAcquireSRWLockShared) { RET(srw_try(ARG(0), 0)); }
 IMP(kernel32, ReleaseSRWLockExclusive) { srw_unlock(ARG(0), 1); }
 IMP(kernel32, ReleaseSRWLockShared) { srw_unlock(ARG(0), 0); }
-IMP(kernel32, InitializeConditionVariable) { M64(ARG(0)) = 0; }
+IMP(kernel32, InitializeConditionVariable) { MP(ARG(0)) = 0; }
 static void cond_wake(u64 at) { Cond *v = lazy(at, sizeof(Cond)); pthread_mutex_lock(&v->m); v->seq++; pthread_cond_broadcast(&v->cv); pthread_mutex_unlock(&v->m); }
 IMP(kernel32, WakeConditionVariable) { cond_wake(ARG(0)); }
 IMP(kernel32, WakeAllConditionVariable) { cond_wake(ARG(0)); }
@@ -611,19 +616,22 @@ static void addr_wake(void) { pthread_mutex_lock(&addr_lock); addr_seq++; pthrea
 IMP(kernel32, WakeByAddressSingle) { addr_wake(); }
 IMP(kernel32, WakeByAddressAll) { addr_wake(); }
 
-// ---- interlocked singly linked lists (SLIST_HEADER: the first entry, then a depth); one lock for all ----
+// ---- interlocked singly linked lists; one lock for all ----
+// SLIST_HEADER: the first entry, then the depth. 32-bit: Next (4 bytes), Depth (2), Sequence (2); 64-bit (the header
+// we write): Next (8), Depth (2 at +8). An entry starts with its Next pointer (pointer-sized).
 static pthread_mutex_t slist_lock = PTHREAD_MUTEX_INITIALIZER;
-IMP(kernel32, InitializeSListHead) { M64(ARG(0)) = 0; M64(ARG(0) + 8) = 0; }
-IMP(kernel32, InterlockedPushEntrySList) { pthread_mutex_lock(&slist_lock); u64 h = ARG(0), e = ARG(1), old = M64(h); M64(e) = old; M64(h) = e; M64(h + 8) += 1; pthread_mutex_unlock(&slist_lock); RET(old); }
-IMP(kernel32, InterlockedPopEntrySList) { pthread_mutex_lock(&slist_lock); u64 h = ARG(0), e = M64(h); if (e) { M64(h) = M64(e); M64(h + 8) -= 1; } pthread_mutex_unlock(&slist_lock); RET(e); }
-IMP(kernel32, InterlockedFlushSList) { pthread_mutex_lock(&slist_lock); u64 h = ARG(0), e = M64(h); M64(h) = 0; M64(h + 8) = 0; pthread_mutex_unlock(&slist_lock); RET(e); }
-IMP(kernel32, QueryDepthSList) { RET((u16)M64(ARG(0) + 8)); }
+#define SL_DEPTH(h) M16((h) + PTR_SIZE)
+IMP(kernel32, InitializeSListHead) { u64 h = ARG(0); M64(h) = 0; if (PTR_SIZE == 8) M64(h + 8) = 0; } // 8 bytes (32-bit) or 16
+IMP(kernel32, InterlockedPushEntrySList) { pthread_mutex_lock(&slist_lock); u64 h = ARG(0), e = ARG(1), old = MP(h); MP(e) = old; MP(h) = e; SL_DEPTH(h) += 1; if (PTR_SIZE == 4) M16(h + 6) += 1; pthread_mutex_unlock(&slist_lock); RET(old); }
+IMP(kernel32, InterlockedPopEntrySList) { pthread_mutex_lock(&slist_lock); u64 h = ARG(0), e = MP(h); if (e) { MP(h) = MP(e); SL_DEPTH(h) -= 1; if (PTR_SIZE == 4) M16(h + 6) += 1; } pthread_mutex_unlock(&slist_lock); RET(e); }
+IMP(kernel32, InterlockedFlushSList) { pthread_mutex_lock(&slist_lock); u64 h = ARG(0), e = MP(h); MP(h) = 0; SL_DEPTH(h) = 0; pthread_mutex_unlock(&slist_lock); RET(e); }
+IMP(kernel32, QueryDepthSList) { RET(SL_DEPTH(ARG(0))); }
 IMP(kernel32, EncodePointer) { RET(ARG(0)); } // no secret to mix in: the identity, which DecodePointer undoes
 IMP(kernel32, DecodePointer) { RET(ARG(0)); }
 IMP(kernel32, DisableThreadLibraryCalls) { RET(1); }
 IMP(kernel32, RtlPcToFileHeader) { // (pc, &base): the image holding pc
   const ModuleDef *m = rt_module_of(ARG(0)); u64 b = m ? m->base : 0;
-  if (ARG(1)) M64(ARG(1)) = b; RET(b);
+  if (ARG(1)) MP(ARG(1)) = b; RET(b);
 }
 // STARTUPINFO: 68 bytes for a 32-bit guest, 104 for a 64-bit one; all zero but its size
 #define STARTUPINFO_SIZE (GUEST_BITS == 32 ? 68 : 104)

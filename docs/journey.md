@@ -414,8 +414,8 @@ headless Chrome and draws its triangle through WebGPU. `tests/gfx/st.sh` checks 
   back into the title (`XAsyncRun`, `XTaskQueueTerminate`, `__C_specific_handler`).
 - **Checks**: frame 120 read back from WebGPU has the clear colour (65,65,65) and a triangle of exactly
   259,200 pixels (960 × 540 / 2) whose centre is 187,137,137, the sample's red/green/blue vertices weighted
-  ½, ¼, ¼ and sRGB-encoded; both builds draw the same pixels. 816 frames in a row hash the same, with no
-  WebGPU error.
+  ½, ¼, ¼ and sRGB-encoded; both builds draw the same pixels. The soak (150 s) hashes every frame the same with no
+  WebGPU error: 816 frames in one run, 2,378 in another (the count depends on the machine; the test asks for 600).
 - **MSVC C++ exceptions (FH3)**: the lifter makes the language handlers named in unwind info, the catch and
   cleanup funclets of each FuncInfo, the functions a throw's ThrowInfo names (destructor, copy constructor)
   and the catch continuations (`lea rax,[continuation]` in each catch funclet) into entries and resume
