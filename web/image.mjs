@@ -34,7 +34,7 @@ export const blobPath = (digest) => `blobs/sha256/${digest.replace(/^sha256:/, '
 
 // What a host needs to start the title: the exe and its folder on the drive ('C:\Program Files\X\x.exe' ->
 // 'Program Files/X/x.exe', 'Program Files/X'), its arguments, and the runtime's settings the image makes:
-// SW_REGISTRY, the registry values rt/win32/advapi32.c reads ("<key>\t<name>\tdword|sz\t<value>" a line)
+// SW_REGISTRY, the registry values rt/windows-x86/advapi32.c reads ("<key>\t<name>\tdword|sz\t<value>" a line)
 export function settings(config) {
   const exe = config.run.exe.replace(/^[cC]:\\/, '').split('\\').filter(Boolean).join('/');
   const folder = exe.includes('/') ? exe.slice(0, exe.lastIndexOf('/')) : '';

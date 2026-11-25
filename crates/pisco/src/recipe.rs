@@ -155,7 +155,7 @@ pub fn load_base(root: &Path, from: &str) -> R<Base> {
     Ok(b)
 }
 
-/// "rt/win32/d3d9*.c" -> the files it names, sorted (a `*` matches within one file name)
+/// "rt/windows-x86/d3d9*.c" -> the files it names, sorted (a `*` matches within one file name)
 pub fn glob(root: &Path, pattern: &str) -> R<Vec<String>> {
     let (dir, pat) = pattern.rsplit_once('/').unwrap_or((".", pattern));
     let mut out = Vec::new();

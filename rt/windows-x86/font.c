@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-// The fonts behind gdi32: Liberation Sans, regular and italic (SIL Open Font License, rt/win32/fonts/), built into
-// the module, rasterised with stb_truetype (rt/win32/third_party/, public domain / MIT).
+// The fonts behind gdi32: Liberation Sans, regular and italic (SIL Open Font License, rt/windows-x86/fonts/), built into
+// the module, rasterised with stb_truetype (rt/windows-x86/third_party/, public domain / MIT).
 //
 // Why these: under Wine on the oracle's machine every font Narbacular Drop and its D3DX ask for (no face name,
 // heights 60, 48 and 24) becomes Liberation Sans, the host's metric-compatible stand-in for Arial; the files here

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-// What the parts of the Windows desktop layer (rt/win32/) ask of one another.
+// What the parts of the Windows desktop layer (rt/windows-x86/) ask of one another.
 #pragma once
 #include "../rt.h"
 

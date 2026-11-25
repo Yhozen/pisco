@@ -1,9 +1,9 @@
 #!/bin/bash
 # SPDX-License-Identifier: GPL-2.0-or-later
 # tests/audio/run.sh: builds the minimal FFmpeg (tools/build-ffmpeg-audio.sh, skipped when already built), links
-# rt/audio_codec.c + audio_codec_test.c into a wasm32-wasip1-threads program the way tools/build-title.sh links
+# rt/gdk/audio_codec.c + audio_codec_test.c into a wasm32-wasip1-threads program the way tools/build-title.sh links
 # a title (shared imported memory, -pthread), runs it under Node's WASI and passes when the test prints PASS.
-# Also checks rt/audio_codec.c still compiles without SW_AUDIO_CODECS (the stubs).
+# Also checks rt/gdk/audio_codec.c still compiles without SW_AUDIO_CODECS (the stubs).
 # Environment: WASI_SDK (default ~/tools/wasi-sdk-34.0-x86_64-linux).
 set -euo pipefail
 root=$(cd "$(dirname "$0")/../.." && pwd); out=$root/out/audio-test; mkdir -p "$out"
@@ -12,8 +12,8 @@ ff=$root/out/ffmpeg
 "$root/tools/build-ffmpeg-audio.sh"
 TARGET="--target=wasm32-wasip1-threads -matomics -mbulk-memory -msimd128 -mnontrapping-fptoint -msign-ext"
 CF="$TARGET -mllvm -wasm-enable-sjlj -O2 -fno-strict-aliasing -I$root/rt -Wall -Wextra -Werror"
-"$W/clang" $CF -c "$root/rt/audio_codec.c" -o "$out/audio_codec_stub.o"
-"$W/clang" $CF -DSW_AUDIO_CODECS -I"$ff/include" -c "$root/rt/audio_codec.c" -o "$out/audio_codec.o"
+"$W/clang" $CF -c "$root/rt/gdk/audio_codec.c" -o "$out/audio_codec_stub.o"
+"$W/clang" $CF -DSW_AUDIO_CODECS -I"$ff/include" -c "$root/rt/gdk/audio_codec.c" -o "$out/audio_codec.o"
 "$W/clang" $CF -c "$root/tests/audio/audio_codec_test.c" -o "$out/audio_codec_test.o"
 # --export-memory as well as --import-memory: Node's WASI looks for an exported memory
 "$W/clang" $TARGET -pthread "$out/audio_codec_test.o" "$out/audio_codec.o" \

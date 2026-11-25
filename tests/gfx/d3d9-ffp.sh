@@ -1,6 +1,6 @@
 #!/bin/bash
 # SPDX-License-Identifier: GPL-2.0-or-later
-# tests/gfx/d3d9-ffp.sh [run.log]: the fixed-function shader generator (rt/win32/d3d9_ffp.c), built natively.
+# tests/gfx/d3d9-ffp.sh [run.log]: the fixed-function shader generator (rt/windows-x86/d3d9_ffp.c), built natively.
 # It writes the WGSL of a representative set of state keys (tests/gfx/d3d9-ffp.c lists them: the vertex formats,
 # lighting, fog, points, texture operations and alpha tests docs/narbacular-drop.md names) and every file must
 # pass naga's validation. With a run's log (SW_D3D9_STATS=1 prints each shader's key) the keys that run made
@@ -8,7 +8,7 @@
 set -euo pipefail
 root=$(cd "$(dirname "$0")/../.." && pwd); out=$root/out/ffp; rm -rf "$out"; mkdir -p "$out"
 command -v naga > /dev/null || { echo "naga is not installed (tools/setup-toolchain.sh naga)"; exit 1; }
-${CC:-cc} -std=c11 -O1 -Wall -Wextra -Werror -Wno-missing-field-initializers -I"$root/rt/win32" "$root/tests/gfx/d3d9-ffp.c" "$root/rt/win32/d3d9_ffp.c" -o "$out/d3d9-ffp"
+${CC:-cc} -std=c11 -O1 -Wall -Wextra -Werror -Wno-missing-field-initializers -I"$root/rt/windows-x86" "$root/tests/gfx/d3d9-ffp.c" "$root/rt/windows-x86/d3d9_ffp.c" -o "$out/d3d9-ffp"
 keys=()
 if [ -n "${1:-}" ]; then sed -n 's/^.*Direct3D 9 shader \(vs\|fs\) \([0-9a-f]*\):.*$/\1 \2/p' "$1" | sort -u > "$out/run-keys.txt"; keys=("$out/run-keys.txt"); fi
 "$out/d3d9-ffp" "$out" "${keys[@]}" > "$out/list.txt" 2> "$out/summary.txt" || { grep FAILED "$out/list.txt" | head -5; cat "$out/summary.txt"; exit 1; }

@@ -352,7 +352,7 @@ static const struct { const char *name; u64 h; } system_modules[] = {
   {"d3d12_xs", 0x7FFB0000ull}, {"d3d12", 0x7FFC0000ull}, {"dxgi", 0x7FFD0000ull}, {"xg_xs", 0x7FFE0000ull}, {"xcrdapi", 0x7FFF0000ull},
   {"mfplat", 0x7FE00000ull}, {"d3dcompiler_47", 0x7FE10000ull}, {"xaudio2_9", 0x7FE20000ull},
 #if GUEST_BITS == 32
-  // the desktop's DLLs a title looks functions up in (rt/win32/)
+  // the desktop's DLLs a title looks functions up in (rt/windows-x86/)
   {"gdi32", 0x7FD00000ull}, {"d3d9", 0x7FD10000ull}, {"dinput8", 0x7FD20000ull}, {"winmm", 0x7FD30000ull},
 #endif
   // API sets and console variants: the DLL behind them

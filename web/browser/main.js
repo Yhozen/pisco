@@ -54,7 +54,7 @@ async function onShot(f) {
   console.log(`shot ${f.name}: frame ${f.index + 1} at ${(now / 1000).toFixed(1)} s, ${reply}; ${frames} frames since the last in ${s.toFixed(1)} s (${(frames / s).toFixed(1)} a second)`);
   lastShot = { index: f.index + 1, time: performance.now() };
 }
-// ---- audio: the title's mixer ring (rt/xaudio2.c) -> an AudioWorklet; recordings read the same ring ----
+// ---- audio: the title's mixer ring (rt/gdk/xaudio2.c) -> an AudioWorklet; recordings read the same ring ----
 async function startAudio(addr) {
   let ctx;
   try {
@@ -81,7 +81,7 @@ async function startAudio(addr) {
     }, 100);
   }
 }
-// ---- input: keys held and the first gamepad, into the title's input block (rt/gdk.c) ----
+// ---- input: keys held and the first gamepad, into the title's input block (rt/gdk/xgameruntime.c) ----
 function startInput(addr) {
   const u32 = new Uint32Array(memory.buffer, addr, 32), f32 = new Float32Array(memory.buffer, addr, 32);
   const held = new Map(); let seq = 0;
@@ -109,7 +109,7 @@ function startInput(addr) {
   }, ms); };
   if (scripted) playKeys(scripted);
 }
-// ---- input for a Windows desktop title (rt/win32/input.c): the keyboard as DirectInput scan codes, the mouse as
+// ---- input for a Windows desktop title (rt/windows-x86/input.c): the keyboard as DirectInput scan codes, the mouse as
 // relative motion under Pointer Lock (a click on the canvas takes the pointer; Escape gives it back, as browsers
 // do, and is passed on to the title as its Escape key) ----
 const DIK = { Escape: 0x01, Minus: 0x0C, Equal: 0x0D, Backspace: 0x0E, Tab: 0x0F, BracketLeft: 0x1A, BracketRight: 0x1B, Enter: 0x1C, ControlLeft: 0x1D,

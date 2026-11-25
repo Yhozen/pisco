@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // gdiprobe: asks the oracle's GDI about the fonts Narbacular Drop asks for, and what their text looks like, one
-// fact a line, so that rt/win32/gdi32.c can be checked against it (tools/oracle-wine/gdi-compare.py):
+// fact a line, so that rt/windows-x86/gdi32.c can be checked against it (tools/oracle-wine/gdi-compare.py):
 //   for each font (the LOGFONTs the game and its D3DX create, measured in our runtime with SW_TRACE=1): the face
 //   GDI chose, TEXTMETRICW, GetFontLanguageInfo, the kerning pairs, GetFontUnicodeRanges, glyph indices, ABC
 //   widths, GetCharacterPlacementA of the session's two texts; then the pixels: every glyph D3DX draws, drawn as

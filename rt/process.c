@@ -158,9 +158,9 @@ u64 rt_stub_import(const char *full) {
   pthread_mutex_unlock(&mem_lock);
   return import_base + 8ull * i;
 }
-// The same for whoever builds a vtable and gives a missing method a named stub: nothing to report (rt/win32/com.c)
+// The same for whoever builds a vtable and gives a missing method a named stub: nothing to report (rt/windows-x86/com.c)
 u64 rt_method_import(const char *dll, const char *name) { dynamic_quiet = 1; u64 a = rt_dynamic_import(dll, name); dynamic_quiet = 0; return a; }
-// A COM method's argument bytes are known to whoever builds its vtable, not to an import library (rt/win32/com.c)
+// A COM method's argument bytes are known to whoever builds its vtable, not to an import library (rt/windows-x86/com.c)
 void rt_import_set_pop(u64 addr, int bytes) {
   if (addr >= import_base && addr < import_base + 8ull * import_total) import_pop[(addr - import_base) / 8] = (short)bytes;
 }

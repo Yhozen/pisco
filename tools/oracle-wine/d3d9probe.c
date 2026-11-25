@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // d3d9probe: asks the oracle's Direct3D 9 what a title can ask before and just after it creates its device, and
 // prints the answers one fact a line, so our own Direct3D 9 can give the same ones (tools/gen-d3d9-oracle.py turns
-// the output into rt/win32/d3d9_oracle.gen.h):
+// the output into rt/windows-x86/d3d9_oracle.gen.h):
 //   the adapter's identity and display modes, CheckDeviceFormat for the usual formats and uses, and a new device's
 //   state: every render state, texture stage state and sampler state, the viewport, the material, what a light is
 //   before it is set. The lines that start with "note" are behaviour checked once and kept for the record.

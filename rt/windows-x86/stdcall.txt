@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
-# Runtime functions of rt/win32/ that no import library describes, with the bytes of arguments each removes from
+# Runtime functions of rt/windows-x86/ that no import library describes, with the bytes of arguments each removes from
 # the stack when it returns: "dll!name bytes", 0 for a cdecl function. A title finds these with GetProcAddress;
 # tools/build-title.sh puts them in front of the table tools/stdcall-sizes.sh makes from the import libraries.
 # D3DX calls DebugSetMute(BOOL) and removes the argument itself (push, call, pop ecx).

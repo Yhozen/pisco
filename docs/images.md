@@ -78,7 +78,7 @@ and nothing in them depends on the time or the machine, so the same inputs give 
 
 The CPU features are built into the module (`rt_cpu_features`, by `tools/recipe-gen.py`); the registry is not:
 the host hands the config's values to the runtime at start (`SW_REGISTRY`, one value a line:
-`<key>\t<name>\tdword|sz\t<value>`), and `rt/win32/advapi32.c` reads them. So a registry change leaves the module
+`<key>\t<name>\tdword|sz\t<value>`), and `rt/windows-x86/advapi32.c` reads them. So a registry change leaves the module
 as it was. `imports` is the title's import table, for `pisco census`.
 
 ### How hosts read an image
@@ -139,11 +139,11 @@ opt = "-O1"                               # clang's level for the lifted C (defa
 `bases/<name>/<version>/base.toml` defines what a recipe's `from` names. `base/win32-x86:1` has:
 
 - `[cpu] features`: the default virtual CPU (every feature the lifter supports);
-- `[runtime]`: the core runtime sources (`rt/*.c`, `rt/win32/*.c` less the console's and less the libraries'),
+- `[runtime]`: the core runtime sources (`rt/*.c`, `rt/windows-x86/*.c` less the libraries'),
   and their optimisation level;
 - `[registry]`: the defaults every title sees (Windows XP SP3's version values, `ProgramFilesDir`);
 - `[files]`: the layer: `files/` (C:\ at its top), empty folders, the fonts, the `system32` placeholders;
-- `[libraries.<name>]`: `d3d9` (`rt/win32/d3d9*.c`), `dinput8`, `fmod3` (`fmod3.c`, `audio_decode.c`). The DLLs a
+- `[libraries.<name>]`: `d3d9` (`rt/windows-x86/d3d9*.c`), `dinput8`, `fmod3` (`fmod3.c`, `audio_decode.c`). The DLLs a
   library answers for are the `IMP(dll, ...)` in its sources. `pisco build` refuses a title that imports from a
   library its recipe does not name, and says which ones a title needs (`pisco census <exe>`).
 

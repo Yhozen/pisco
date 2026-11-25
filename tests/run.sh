@@ -16,9 +16,9 @@
 #            and a second run must give the same log (ND_RECORD=1 records the checkpoints again). Its draws go
 #            through the fixed-function shaders to the null GPU back end, which must find every record consistent;
 #            the shaders it made must pass naga
-#   ffp      tests/gfx/d3d9-ffp.sh: Direct3D 9's fixed-function pipeline as WGSL (rt/win32/d3d9_ffp.c), built
+#   ffp      tests/gfx/d3d9-ffp.sh: Direct3D 9's fixed-function pipeline as WGSL (rt/windows-x86/d3d9_ffp.c), built
 #            natively: the shaders of a representative set of state keys, validated with naga
-#   gdi      rt/win32/font.c (gdi32's fonts) built natively by tests/gdi/fonts.c, which asks it what
+#   gdi      rt/windows-x86/font.c (gdi32's fonts) built natively by tests/gdi/fonts.c, which asks it what
 #            tools/oracle-wine/gdiprobe.c asks Wine's GDI; with the probe's answers (out/oracle/narbacular-drop/
 #            gdiprobe.txt) every measurement D3DX and the game read must be Wine's (tools/oracle-wine/gdi-compare.py),
 #            and the glyph pixels' differences are printed
@@ -133,8 +133,8 @@ nd() {
 }
 gdi() {
   mkdir -p out/gdi
-  cc -O1 -DFONT_NO_EMBED -Irt/win32 tests/gdi/fonts.c rt/win32/font.c -lm -o out/gdi/fonts || return 1
-  out/gdi/fonts rt/win32/fonts > out/gdi/fonts.txt || return 1
+  cc -O1 -DFONT_NO_EMBED -Irt/windows-x86 tests/gdi/fonts.c rt/windows-x86/font.c -lm -o out/gdi/fonts || return 1
+  out/gdi/fonts rt/windows-x86/fonts > out/gdi/fonts.txt || return 1
   local probe=out/oracle/narbacular-drop/gdiprobe.txt
   [ -f $probe ] || { echo "$(grep -c '^font ' out/gdi/fonts.txt) fonts measured; no answers of Wine's in $probe to compare with (tools/oracle-wine/gdiprobe.c)"; return 0; }
   python3 -I tools/oracle-wine/gdi-compare.py $probe out/gdi/fonts.txt

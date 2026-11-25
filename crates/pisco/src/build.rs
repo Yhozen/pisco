@@ -229,7 +229,7 @@ fn rt_deps(root: &Path) -> R<String> {
     walk(&root.join("rt"), "rt", &mut fs, &mut ds)?;
     let mut h = String::new();
     for (rel, p) in fs {
-        let unit = rel.ends_with(".c") && (rel.matches('/').count() == 1 || (rel.starts_with("rt/win32/") && rel.matches('/').count() == 2));
+        let unit = rel.ends_with(".c") && rel.matches('/').count() <= 2; // rt/*.c and rt/<runtime>/*.c
         if !unit { h.push_str(&format!("{rel} {}\n", oci::sha256(&io(std::fs::read(&p), &p)?))); }
     }
     Ok(oci::sha256(h.as_bytes()))

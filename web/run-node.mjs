@@ -40,7 +40,7 @@ if (isMainThread) {
   // the null GPU back end's account of the explicit records (Direct3D 9): a run in which any was inconsistent fails
   let gpu = null; const say = (s) => fs.writeSync(2, `pisco: ${s}\n`);
   EXIT.onmessage = (e) => { const s = gpu?.summary(); if (s) say(s); process.exit(e.data || (gpu?.errors ? 119 : 0)); };
-  // SW_SESSION=<session.json>: the runtime's session player gets its steps (rt/win32/input.c)
+  // SW_SESSION=<session.json>: the runtime's session player gets its steps (rt/windows-x86/input.c)
   const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => k.startsWith('SW_')));
   // the image's settings for the runtime (its registry values: SW_REGISTRY), with the environment's after them
   if (image) for (const [k, v] of Object.entries(image.settings.env)) env[k] = k === 'SW_REGISTRY' && env[k] ? `${v}\n${env[k]}` : v;

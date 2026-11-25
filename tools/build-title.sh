@@ -5,8 +5,9 @@
 # A 32-bit title (the lifter says so in <out dir>/title.env) gets the runtime built for a 32-bit guest
 # (-DGUEST_BITS=32), the stdcall argument sizes of its imports (tools/stdcall-sizes.sh, needs llvm-mingw's
 # import libraries), and its own memory layout: see "the memory layout" below.
-# PROFILE picks the runtime's parts (default: by the title's width). `console`: rt/*.c, the Xbox and D3D12 side.
-# `win32`: Windows desktop titles: the core of rt/ plus rt/win32/ (user32, gdi32, the registry, Direct3D 9, ...),
+# PROFILE picks the runtime's parts (default: by the title's width). `console`: the core (rt/*.c) and the 64-bit
+# runtimes' folders: rt/gdk/ (what the Xbox Series and Windows x64 share), rt/xbox-series/, rt/windows-x64/.
+# `win32`: Windows desktop titles: the core of rt/ plus rt/windows-x86/ (user32, gdi32, the registry, Direct3D 9, ...),
 # without the console's libraries. A title links only its profile (LICENSING.md).
 # RECIPE=<title.toml>: the title's recipe (CPU features, registry values); tools/recipe-gen.py reads it.
 set -euo pipefail
@@ -19,8 +20,8 @@ GUEST_BITS=64; IMAGE_LOW=0; IMAGE_HIGH=0; FIXED_BASE=0
 [ -f "$out/title.env" ] && . "$out/title.env"
 PROFILE=${PROFILE:-$([ "$GUEST_BITS" = 32 ] && echo win32 || echo console)}
 case $PROFILE in
-  win32) RT_FILES=$(ls "$root"/rt/*.c "$root"/rt/win32/*.c | grep -v -E '/rt/(gdk|d3d12|dxgi|dstorage|xaudio2|audio_codec)\.c$') ;;
-  console) RT_FILES=$(ls "$root"/rt/*.c) ;;
+  win32) RT_FILES=$(ls "$root"/rt/*.c "$root"/rt/windows-x86/*.c) ;;
+  console) RT_FILES=$(for d in rt rt/gdk rt/xbox-series rt/windows-x64; do ls "$root/$d"/*.c 2>/dev/null || :; done) ;;
   *) echo "build-title.sh: unknown PROFILE $PROFILE" >&2; exit 2 ;;
 esac
 python3 "$root/tools/recipe-gen.py" ${RECIPE:+"$RECIPE"} > "$out/recipe.gen.c"

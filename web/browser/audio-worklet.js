@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-// Plays the title's mixer ring (rt/xaudio2.c: header words write position, read position, capacity, rate,
+// Plays the title's mixer ring (rt/gdk/xaudio2.c: header words write position, read position, capacity, rate,
 // channels; then stereo float frames) from shared memory, keeping a little behind the writer.
 class Ring extends AudioWorkletProcessor {
   constructor() { super(); this.port.onmessage = (e) => { const { buffer, addr } = e.data; this.u32 = new Uint32Array(buffer, addr, 16); this.cap = this.u32[2]; this.data = new Float32Array(buffer, addr + 64, this.cap * 2); this.read = -1; }; }

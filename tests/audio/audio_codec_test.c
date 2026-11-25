@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-// tests/audio/audio_codec_test.c: decodes one XMA2 packet and one Opus packet through rt/audio_codec.c and prints
+// tests/audio/audio_codec_test.c: decodes one XMA2 packet and one Opus packet through rt/gdk/audio_codec.c and prints
 // frame counts, RMS and an FNV-1a checksum of the PCM16. Built and run by tests/audio/run.sh.
 #include <math.h>
 #include <stdio.h>

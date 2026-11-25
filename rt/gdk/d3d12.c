@@ -5,7 +5,7 @@
 // fences, and they wait on words the back end writes.
 //
 // Two flavours of the same objects: a device from D3D12CreateDevice has the PC vtables (d3d12.h order,
-// rt/d3d12_layout.gen.h); one from D3D12XboxCreateDevice has the console's, whose differences follow
+// rt/gdk/d3d12_layout.gen.h); one from D3D12XboxCreateDevice has the console's, whose differences follow
 // XCL's findings on retail titles (github.com/ivall/xcl, GPL-2.0): the command list's methods from
 // SetDescriptorHeaps on sit 4 slots later, the device's extensions start at #44 (frame clock #78-#80),
 // the queue's PresentX is #30, and descriptor heaps return their start handles in RAX.

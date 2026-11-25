@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-// The stream between the graphics front ends (on the title's threads: rt/d3d12.c for Direct3D 12 and the
-// console's D3D12.X; rt/win32/d3d9_gpu.c for Direct3D 9, with the explicit records further down) and the GPU back
+// The stream between the graphics front ends (on the title's threads: rt/gdk/d3d12.c for Direct3D 12 and the
+// console's D3D12.X; rt/windows-x86/d3d9_gpu.c for Direct3D 9, with the explicit records further down) and the GPU back
 // end (web/gpu/backend.js on the page, web/gpu/null.js in Node). tools/gen-cmd-js.mjs turns every
 // `#define GPU_<NAME> <value>` line of this file into web/gpu/cmd.gen.js: keep one define per line.
 //
@@ -53,7 +53,7 @@
 #define GPU_R_MARK 9
 
 // ---- explicit records: a front end that is not Direct3D 12 says what WebGPU should do, in WebGPU's own terms.
-// Direct3D 9 (rt/win32/d3d9_gpu.c) is the first: no root signatures, no pipeline-state descriptions, no command
+// Direct3D 9 (rt/windows-x86/d3d9_gpu.c) is the first: no root signatures, no pipeline-state descriptions, no command
 // lists. It shares GPU_R_RESOURCE / GPU_R_DESTROY (buffers and textures, without guest backing), GPU_R_PRESENT and
 // GPU_R_MARK with the records above, and with them the ids, the DXGI format numbers and the D3D12 numbers of
 // blend factors, blend operations, comparisons and address modes (Direct3D 9's own are the same numbers).

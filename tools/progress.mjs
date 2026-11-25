@@ -14,8 +14,10 @@ const dataPath = path.join(root, 'docs/progress-data.json');
 
 // ---- the runtime: every IMP(dll, name) and whether it does something ----
 const impls = new Map(); // "dll.dll!name" -> true when it does more than return E_NOTIMPL
-for (const f of fs.readdirSync(path.join(root, 'rt')).filter((f) => f.endsWith('.c'))) {
-  const src = fs.readFileSync(path.join(root, 'rt', f), 'utf8');
+const rtFiles = (dir) => fs.readdirSync(path.join(root, dir), { withFileTypes: true }).flatMap((e) =>
+  e.isDirectory() ? (dir === 'rt' && e.name !== 'windows-x86' ? rtFiles(`${dir}/${e.name}`) : []) : e.name.endsWith('.c') ? [`${dir}/${e.name}`] : []);
+for (const f of rtFiles('rt')) { // the core and the 64-bit runtimes' folders (the Windows x86 runtime is counted on its own: A4)
+  const src = fs.readFileSync(path.join(root, f), 'utf8');
   for (const m of src.matchAll(/^IMP\((\w+), *(\w+)\) *\{(.*)$/gm)) {
     const stub = /^\s*RET\((E_NOTIMPL|0x80004001u?)\);\s*\}/.test(m[3]);
     impls.set(`${m[1]}.dll!${m[2]}`, !stub);
@@ -107,7 +109,7 @@ if (argv.includes('--refresh')) {
 
 // ---- measures ----
 const data = JSON.parse(fs.readFileSync(dataPath, 'utf8'));
-const layout = fs.readFileSync(path.join(root, 'rt/d3d12_layout.gen.h'), 'utf8');
+const layout = fs.readFileSync(path.join(root, 'rt/gdk/d3d12_layout.gen.h'), 'utf8');
 const d3d = [];
 for (const m of layout.matchAll(/\{"(\w+)", "(\w+)", (\d+), (\w+)_methods/g)) {
   const methods = layout.match(new RegExp(`${m[1]}_methods\\[\\] = \\{([^}]*)\\}`))[1].match(/"(\w+)"/g).map((s) => s.slice(1, -1));

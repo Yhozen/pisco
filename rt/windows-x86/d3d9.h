@@ -8,7 +8,7 @@
 #pragma once
 #include "com.h"
 #if GUEST_BITS != 32
-#error "rt/win32 is the runtime of a 32-bit guest"
+#error "rt/windows-x86 is the runtime of a 32-bit guest"
 #endif
 
 #define D3D_OK 0u
