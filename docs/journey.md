@@ -167,7 +167,7 @@ rung, Doom, because it needs the whole shared core anyway; SimpleTriangle and Si
   The other 33 frames (the opening melt, and a few single pixels) are frames where Doom draws bytes of its own
   zone headers, which hold pointers: native Doom disagrees with itself on them from run to run (address
   randomisation), and frame 1817 matches once native's memory is placed below 4 GiB like ours.
-- **The video** (`fixtures/doom/video.sh`, `out/doom/video/doom-series-web.mp4`): headless Chrome with WebGPU on
+- **The video** (`fixtures/doom/video.sh`, `out/doom/video/doom-pisco.mp4`): headless Chrome with WebGPU on
   SwiftShader, every frame read back from WebGPU, with the audio track from the mixer ring: title screen and
   attract demo, a new game from scripted keys, the automap, a save, a page reload (a new title process), the
   save loaded back. About 35 frames per second on the CPU-only renderer.
@@ -371,14 +371,14 @@ Milestone M5. A second session places both portals and walks out of the cage, wi
   its own folder is kept (`SW_SAVES/@game`, OPFS). The game writes only `system.opt`, on Quit, the same 20 bytes
   as under Wine.
 
-### 3.18 Recipes and images: `sw` (2026-11-25)
+### 3.18 Recipes and images: `pisco` (2026-11-25)
 Milestone M6. A recipe and the user's installer become a title image ([images.md](images.md)).
 - **OCI's shape, three changes** (the plan's): no `RUN` in an image (the recipe's steps run on the builder's
   machine), code layered at build time (one module per title), and the game's layer never published.
-- **`sw build`** checks the installer's sha256, extracts it with innoextract, checks the title's imports against
+- **`pisco build`** checks the installer's sha256, extracts it with innoextract, checks the title's imports against
   its base and the libraries it names, lifts and compiles through a cache keyed by digests, and writes the layout:
   base, library and game layers as deterministic tars, the module, a config with the exe, CPU features, DLL choices
-  and registry. `sw run` plays an image in Node or Chrome; `web/image.mjs` makes its layers the C: drive.
+  and registry. `pisco run` plays an image in Node or Chrome; `web/image.mjs` makes its layers the C: drive.
 - **Checked** (`tests/run.sh images`): two clean builds give the same digest (after R34), hello32 `FROM` the same base
   shares its base layer, a registry-only change rebuilds in under a second without lifting, and the image plays the
   sessions with the same checkpoints and screenshots as before.
@@ -486,7 +486,7 @@ headless Chrome: the toy robot, the lettered blocks and the floor with image-bas
 | R31 | The first level crashed, sometimes | the game tests a field (`0x41d9cb`) before it sets it (`0x41da5e`); in a zeroed heap block the camera is never attached and the next frame reads through a stale index. Whether it crashed depended on what the heap had held | a 32-bit title's heap blocks not asked to be zeroed are filled with `0xCD` (the same on every host); Wine crashed the same way once sounds were loaded, until its heap fills blocks too (`warn+heap`) |
 | R32 | No sound to compare with | the oracle had no sound device, so `FSOUND_Init` failed and the game loaded no sounds; ALSA's `null` plugin is not paced (Wine played 7 times faster than real time) | a PipeWire null sink run as the user, paced by its dummy driver, recorded by ffmpeg |
 | R33 | The session's mouse moved differently under Wine | X's pointer acceleration scaled every motion event over 4 pixels | the session player turns acceleration off |
-| R34 | Two clean builds differed by two bytes | wasm-ld writes the output file's name into the module, and `sw` linked to a temporary name | link as `title.wasm` in a folder of its own |
+| R34 | Two clean builds differed by two bytes | wasm-ld writes the output file's name into the module, and `pisco` linked to a temporary name | link as `title.wasm` in a folder of its own |
 | R35 | A scripted Quit from the pause menu | its items take a click in a band a few pixels high, and a fast move lands differently on Wine's real-time frames and on our virtual clock | the scripted check quits from the main menu |
 
 ### Open
@@ -571,7 +571,7 @@ headless Chrome: the toy robot, the lettered blocks and the floor with image-bas
 | `tools/setup-toolchain.sh`, `tests/run.sh` | the toolchains outside the repository; every test title, one line per check |
 | `rt/win32/` | the Windows desktop layer: start-up kernel32, user32, registry (from the image's config), GDI with text (`font.c`, stb_truetype, Liberation Sans in `fonts/`), Direct3D 9 (`d3d9*.c`: the device and its state; `d3d9_ffp.c`: the fixed-function pipeline as WGSL; `d3d9_gpu.c`: clears, draws and presents as GPU ring records), DirectInput 8, the input state and session player, FMOD 3 (`fmod3.c`, `audio_decode.c` with stb_vorbis and minimp3), `com.c` for COM objects |
 | `rt/mixer.c` | the one sound output, shared by XAudio2 and FMOD |
-| `crates/sw`, `bases/`, `web/image.mjs` | title images: the `sw` tool (build, run, census, inspect), the bases recipes start from, the hosts' reader ([images.md](images.md)) |
+| `crates/pisco`, `bases/`, `web/image.mjs` | title images: the `pisco` tool (build, run, census, inspect), the bases recipes start from, the hosts' reader ([images.md](images.md)) |
 | `tools/gen-com-layout.py`, `tools/gen-d3d9-oracle.py` | generated headers: COM vtables from the mingw-w64 headers; the oracle's Direct3D 9 answers |
 | `web/session.mjs` | a session script as the text the runtime's player reads |
 | `tools/stdcall-sizes.sh`, `tools/recipe-gen.py` | 32-bit builds: what each import removes from the stack; what the recipe says, for the runtime |

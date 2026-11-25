@@ -482,7 +482,7 @@ fades it), -22.0 dB in the level.
 
 ## Its image (M6)
 
-`sw build recipes/narbacular-drop --source narbacular_drop_setup.exe` checks the installer's sha256, extracts it with
+`pisco build recipes/narbacular-drop --source narbacular_drop_setup.exe` checks the installer's sha256, extracts it with
 innoextract (Inno Setup 5.0.4 data: eight files into `{app}`, the "Read Me" twice, the later copy kept) and builds
 the image ([images.md](images.md)): the base's layer, the d3d9, dinput8 and fmod3 libraries' layers, the game's
 (40.6 MB, at `C:\Program Files\Narbacular Drop`), the module (9.8 MB) and the config. Against the Wine prefix's

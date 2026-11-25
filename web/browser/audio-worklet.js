@@ -15,4 +15,4 @@ class Ring extends AudioWorkletProcessor {
     return true;
   }
 }
-registerProcessor('series-web-ring', Ring);
+registerProcessor('pisco-ring', Ring);

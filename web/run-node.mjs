@@ -12,8 +12,8 @@ import { Worker, isMainThread, workerData } from 'node:worker_threads';
 import { sessionSteps } from './session.mjs';
 import { isImageDir, openImageDir, driveName } from './image.mjs';
 
-const EXIT = new BroadcastChannel('series-web-exit');
-const GPU_OPEN = new BroadcastChannel('series-web-gpu'); // a title thread opened the GPU ring: the supervisor runs the null back end
+const EXIT = new BroadcastChannel('pisco-exit');
+const GPU_OPEN = new BroadcastChannel('pisco-gpu'); // a title thread opened the GPU ring: the supervisor runs the null back end
 const STACK_MB = 64; // wasm frames of recursive guest code live on the worker's native stack
 
 if (isMainThread) {
@@ -38,7 +38,7 @@ if (isMainThread) {
     if (e.isDirectory() && !rel && e.name.startsWith('@')) walk(p, '', e.name.slice(1)); else if (e.isDirectory()) walk(p, r, mount); else store.push({ name: `${mount}/${r}`, data: fs.readFileSync(p) }); } };
   if (saves) walk(saves, '', 'pls');
   // the null GPU back end's account of the explicit records (Direct3D 9): a run in which any was inconsistent fails
-  let gpu = null; const say = (s) => fs.writeSync(2, `series-web: ${s}\n`);
+  let gpu = null; const say = (s) => fs.writeSync(2, `pisco: ${s}\n`);
   EXIT.onmessage = (e) => { const s = gpu?.summary(); if (s) say(s); process.exit(e.data || (gpu?.errors ? 119 : 0)); };
   // SW_SESSION=<session.json>: the runtime's session player gets its steps (rt/win32/input.c)
   const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => k.startsWith('SW_')));
@@ -124,7 +124,7 @@ if (isMainThread) {
     list: (name, nlen, buf, cap) => { const l = drive.list(driveName(text(name, nlen), folder)); if (l === null) return 0; const b = Buffer.from(l); if (buf && cap >= b.length) u8().set(b, buf); return b.length; },
   };
   const host = {
-    fault: (kind, a) => { console.error(`series-web: ${kinds[kind]}${kind === 5 ? '' : ` at 0x${BigInt.asUintN(64, a).toString(16)}`}`); exit(120); },
+    fault: (kind, a) => { console.error(`pisco: ${kinds[kind]}${kind === 5 ? '' : ` at 0x${BigInt.asUintN(64, a).toString(16)}`}`); exit(120); },
     now_us: () => clock() * 1000,
     read_file: (name, nlen, off, len, dst) => {
       const fd = open(text(name, nlen)); if (fd < 0) { if (process.env.SW_DEBUG_READ) console.error(`read_file ${text(name, nlen)}: not found`); return 0; }
@@ -138,7 +138,7 @@ if (isMainThread) {
       let out = ''; try { for (const e of fs.readdirSync(real, { withFileTypes: true })) out += e.name + (e.isDirectory() ? '/' : '') + '\n'; } catch { return 0; }
       const b = Buffer.from(out); if (buf && cap >= b.length) u8().set(b, buf); return b.length;
     },
-    log: (p, n) => { fs.writeSync(2, `series-web: ${text(p, n)}\n`); },
+    log: (p, n) => { fs.writeSync(2, `pisco: ${text(p, n)}\n`); },
     gpu_open: (ring) => { GPU_OPEN.postMessage(ring >>> 0); },
     audio_open: () => {}, // no output in Node: the mixer's ring turns on its own
     // SW_AUDIO_WAV=<file> (with a virtual clock): everything mixed, as a 48 kHz stereo 32-bit float WAV

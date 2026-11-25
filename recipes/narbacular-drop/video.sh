@@ -8,7 +8,7 @@
 # volumedetect). Needs out/nd/title.wasm (tests/run.sh nd). Environment: ND (the installed game's folder), SESSION.
 set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd); root=$(cd "$here/../.." && pwd); cd "$root"
-ND=${ND:-$HOME/.series-web/oracle/prefix-narbacular-drop/drive_c/Program Files (x86)/Narbacular Drop}
+ND=${ND:-$HOME/.pisco/oracle/prefix-narbacular-drop/drive_c/Program Files (x86)/Narbacular Drop}
 out=$(realpath -m "${1:-$root/out/nd/video.mp4}"); mkdir -p "$(dirname "$out")"
 TIMEOUT=${TIMEOUT:-3600} SW_STRICT=1 SW_CLOCK=16667 SW_SESSION=${SESSION:-$here/sessions/level1-portals.json} CAPTURE="$out" \
   node tools/run-chrome.mjs out/nd/title.wasm "$ND/Narbacular Drop.exe" > "${out%.mp4}.log" 2>&1 || { echo "the recording failed (${out%.mp4}.log)"; tail -3 "${out%.mp4}.log"; exit 1; }

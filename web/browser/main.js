@@ -18,7 +18,7 @@ import { startBackend } from '../gpu/backend.js';
 import { fetchImage } from '../image.mjs';
 const q = new URLSearchParams(location.search);
 const status = document.getElementById('status'), out = document.getElementById('out'), canvas = document.getElementById('screen');
-const bus = new BroadcastChannel('series-web');
+const bus = new BroadcastChannel('pisco');
 const workers = [];
 let line = '';
 const POOL = 32; // guest threads come from workers the page starts ahead of time (see worker.js)
@@ -60,7 +60,7 @@ async function startAudio(addr) {
   try {
     ctx = new AudioContext({ sampleRate: 48000, latencyHint: 'interactive' });
     await ctx.audioWorklet.addModule('audio-worklet.js');
-    const node = new AudioWorkletNode(ctx, 'series-web-ring', { outputChannelCount: [2] });
+    const node = new AudioWorkletNode(ctx, 'pisco-ring', { outputChannelCount: [2] });
     node.port.postMessage({ buffer: memory.buffer, addr });
     node.connect(ctx.destination);
     if (ctx.state !== 'running') { const resume = () => ctx.resume(); addEventListener('keydown', resume, { once: true }); addEventListener('pointerdown', resume, { once: true }); }
@@ -151,7 +151,7 @@ window.swKeys = (list) => { scripted = list; if (playKeys) playKeys(list); };
 let storeDir = null, storeQueue = Promise.resolve();
 async function openStore(key) {
   const root = await navigator.storage.getDirectory();
-  const top = await root.getDirectoryHandle('series-web', { create: true });
+  const top = await root.getDirectoryHandle('pisco', { create: true });
   storeDir = await top.getDirectoryHandle(encodeURIComponent(key), { create: true });
   const files = [];
   for await (const [name, h] of storeDir.entries()) if (h.kind === 'file') files.push({ name: decodeURIComponent(name), data: new Uint8Array(await (await h.getFile()).arrayBuffer()) });
@@ -190,10 +190,10 @@ bus.onmessage = (e) => {
     // a title drawn through the explicit records (Direct3D 9): what the back end made of them, in one line
     if (window.swGpu?.explicit?.draws) console.log(`gpu explicit records: ${JSON.stringify(window.swGpu.explicit)}, ${window.swGpu.presents} presents, ${window.swGpu.errors.count} WebGPU errors`);
     // what the title stored last is written to OPFS first (a title that saves as it quits: Narbacular Drop's system.opt)
-    storeQueue.then(() => { console.log(`series-web exit ${m.exit}`); bus.postMessage({ stop: true }); });
+    storeQueue.then(() => { console.log(`pisco exit ${m.exit}`); bus.postMessage({ stop: true }); });
   }
 };
-if (!crossOriginIsolated) { status.textContent = 'not cross-origin isolated: shared memory is unavailable'; console.log('series-web exit 125'); }
+if (!crossOriginIsolated) { status.textContent = 'not cross-origin isolated: shared memory is unavailable'; console.log('pisco exit 125'); }
 else {
   // the GPU first: what it can do is known before the title asks
   try {
@@ -207,7 +207,7 @@ else {
   } catch (err) { log(`gpu: ${err.message}`); }
   // a title image: its module, its drive (the file layers, served below <image>/c/) and its settings (exe, registry)
   const image = q.get('image') ? await fetchImage(new URL(q.get('image'), location.href).href).catch((e) => { log(`image: ${e.message}`); return null; }) : null;
-  if (q.get('image') && !image) { console.log('series-web exit 125'); throw new Error('no image'); }
+  if (q.get('image') && !image) { console.log('pisco exit 125'); throw new Error('no image'); }
   const module = await WebAssembly.compile(image ? image.wasm : await (await fetch(q.get('wasm'))).arrayBuffer());
   if (image) { drive = image.drive; folder = image.settings.folder; dir = drive + folder.split('/').map(encodeURIComponent).join('/') + '/'; console.log(`image: ${image.settings.title} (manifest ${image.digest})`); }
   else dir = new URL(q.get('exe'), location.href).href.replace(/[^/]*$/, ''); // the title's folder

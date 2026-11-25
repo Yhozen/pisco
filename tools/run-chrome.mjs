@@ -28,7 +28,7 @@ const server = spawn(process.execPath, [path.join(root, 'tools/serve.mjs'), port
 const settings = Object.entries(process.env).filter(([k]) => k.startsWith('SW_') && k !== 'SW_TRACE' && k !== 'SW_SESSION');
 if (process.env.SW_SESSION) settings.push(['SW_SESSION_STEPS', sessionSteps(JSON.parse(fs.readFileSync(process.env.SW_SESSION, 'utf8')))]);
 const keepProfile = !!process.env.CHROME_PROFILE;
-const profile = keepProfile ? path.resolve(process.env.CHROME_PROFILE) : fs.mkdtempSync(path.join(os.tmpdir(), 'sw-chrome-'));
+const profile = keepProfile ? path.resolve(process.env.CHROME_PROFILE) : fs.mkdtempSync(path.join(os.tmpdir(), 'pisco-chrome-'));
 fs.mkdirSync(profile, { recursive: true });
 const gpuFlags = ['--enable-unsafe-webgpu', '--enable-features=Vulkan', '--use-webgpu-adapter=swiftshader', '--enable-unsafe-swiftshader', '--use-angle=swiftshader', '--use-gl=angle', '--autoplay-policy=no-user-gesture-required'];
 const chrome = spawn('google-chrome', ['--headless=new', `--remote-debugging-port=${dbg}`, `--user-data-dir=${profile}`, '--no-first-run', '--no-sandbox', ...gpuFlags, 'about:blank'], { stdio: 'ignore' });
@@ -52,7 +52,7 @@ ws.onmessage = (e) => {
   const m = JSON.parse(e.data);
   if (m.method === 'Runtime.consoleAPICalled') {
     const s = m.params.args.map((a) => a.value ?? a.description ?? '').join(' ');
-    const x = s.match(/^series-web exit (-?\d+)$/);
+    const x = s.match(/^pisco exit (-?\d+)$/);
     if (x) done(+x[1]); else console.log(s);
   }
   if (m.method === 'Runtime.exceptionThrown') console.error('page exception:', m.params.exceptionDetails.exception?.description || m.params.exceptionDetails.text);

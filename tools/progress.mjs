@@ -187,7 +187,7 @@ function panel(y, title, groups, h, x = 10, w = W - 20) {
   return s;
 }
 let svg = '', y = 10;
-svg += label(10, y + 24, 'series-web: Xbox titles in the browser', 24, TEXT, 700);
+svg += label(10, y + 24, 'PISCO: Xbox titles in the browser', 24, TEXT, 700);
 svg += label(W - 10, y + 24, `updated ${data.updated}`, 13, DIM, 400, 'end');
 y += 40;
 // facts and the graphics ladder
@@ -244,11 +244,11 @@ badge('badge-ladder.svg', 'graphics ladder', `${steps_done}/${steps.length}`, st
 fs.writeFileSync(path.join(out, 'progress.json'), JSON.stringify({ updated: data.updated, d3d12: [dd, dt], imports: [id, it], xcl: [xd, xt], ladder: [steps_done, steps.length], titles: titleBars }, null, 1) + '\n');
 fs.writeFileSync(path.join(out, 'progress.html'), `<!doctype html>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>series-web progress</title>
+<title>PISCO progress</title>
 <style>body{font:16px/1.5 system-ui,sans-serif;background:#0d1117;color:#e6edf3;max-width:1020px;margin:2em auto;padding:0 1em}a{color:#58a6ff}img,object{max-width:100%}</style>
-<h1>series-web progress</h1>
+<h1>PISCO progress</h1>
 <p>What the runtime implements, measured against what real titles use. Hover the map for names. Updated ${data.updated}.
-<a href="https://github.com/Yhozen/series-web">Source</a> · <a href="./">Doom video</a> · <a href="progress.json">progress.json</a></p>
+<a href="https://github.com/Yhozen/pisco">Source</a> · <a href="./">Doom video</a> · <a href="progress.json">progress.json</a></p>
 <p><img src="badge-ladder.svg" alt="graphics ladder"> <img src="badge-d3d12.svg" alt="D3D12 methods"> <img src="badge-imports.svg" alt="imports"> <img src="badge-xcl.svg" alt="XCL checks"></p>
 <object data="progress.svg" type="image/svg+xml" width="1000">progress map</object>
 <ul>

@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 [workspace]
 resolver = "2"
-members = ["crates/lifter", "crates/shaders", "crates/sw"]
+members = ["crates/lifter", "crates/shaders", "crates/pisco"]
 exclude = ["fixtures"]

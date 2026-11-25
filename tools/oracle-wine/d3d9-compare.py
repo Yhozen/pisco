@@ -63,7 +63,7 @@ def ours(path):
     calls = {}; args = collections.defaultdict(dict); frames = collections.Counter(); order = []; state = None
     for line in open(path, errors='replace'):
         line = line.rstrip('\n')
-        if line.startswith('series-web: '): line = line[len('series-web: '):]
+        if line.startswith('pisco: '): line = line[len('pisco: '):]
         if line.startswith('== Direct3D 9 argument values'): state = 'args'; continue
         if line.startswith('== Direct3D 9:'): state = 'calls'; continue
         m = re.match(r'frames (\d+)-(\d+): ?(.*)', line)

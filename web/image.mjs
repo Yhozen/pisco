@@ -9,12 +9,12 @@
 // Nothing here needs Node; openImageDir (Node only) imports node:fs when it is called.
 export const MEDIA = {
   manifest: 'application/vnd.oci.image.manifest.v1+json',
-  artifact: 'application/vnd.series-web.title.v1',
-  config: 'application/vnd.series-web.title.config.v1+json',
-  layer: 'application/vnd.series-web.layer.v1.tar',
-  module: 'application/vnd.series-web.module.v1.wasm',
+  artifact: 'application/vnd.pisco.title.v1',
+  config: 'application/vnd.pisco.title.config.v1+json',
+  layer: 'application/vnd.pisco.layer.v1.tar',
+  module: 'application/vnd.pisco.module.v1.wasm',
 };
-const ROLE = 'org.series-web.layer.role';
+const ROLE = 'org.pisco.layer.role';
 const utf8 = new TextDecoder();
 
 // ---- the documents ----
@@ -25,7 +25,7 @@ export function manifestOf(index, ref) {
   return m;
 }
 export function checkManifest(manifest) {
-  if (manifest.artifactType !== MEDIA.artifact) throw new Error(`image: not a series-web title (artifactType ${manifest.artifactType})`);
+  if (manifest.artifactType !== MEDIA.artifact) throw new Error(`image: not a pisco title (artifactType ${manifest.artifactType})`);
   const layers = manifest.layers.filter((l) => l.mediaType === MEDIA.layer), module = manifest.layers.find((l) => l.mediaType === MEDIA.module);
   if (!module) throw new Error('image: no module (title.wasm) among its layers');
   return { layers, module, roles: layers.map((l) => l.annotations?.[ROLE] || 'layer') };

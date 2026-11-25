@@ -12,7 +12,7 @@
 #                                                          so the Windows build runs under Wine)
 #   upx    UPX in ~/tools/upx                              tools/oracle-wine: unpacking a packed DLL before +snoop
 #   reuse  the REUSE tool in ~/tools/reuse-venv             `reuse lint`: every file has a licence (LICENSING.md)
-#   innoextract  innoextract 1.9 in ~/tools/innoextract     `sw build`: a recipe's `extract = "innosetup"` (its
+#   innoextract  innoextract 1.9 in ~/tools/innoextract     `pisco build`: a recipe's `extract = "innosetup"` (its
 #                                                          static Linux build, checked by sha256)
 # Environment: TOOLS (default ~/tools), DEPS (default ~/scratch/deps)
 set -euo pipefail
