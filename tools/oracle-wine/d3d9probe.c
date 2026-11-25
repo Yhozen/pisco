@@ -32,8 +32,9 @@ int main(void) {
   }
   // format <format> <usage> <resource type> <HRESULT>: against an X8R8G8B8 display, on the HAL device
   static const unsigned formats[] = {20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 40, 41, 50, 51, 52, 60, 61, 62, 63, 64, 67, 70, 71, 73, 75, 77, 79, 80, 81, 82, 83,
-    111, 112, 113, 114, 115, 116, MAKEFOURCC('D', 'X', 'T', '1'), MAKEFOURCC('D', 'X', 'T', '2'), MAKEFOURCC('D', 'X', 'T', '3'), MAKEFOURCC('D', 'X', 'T', '4'), MAKEFOURCC('D', 'X', 'T', '5'),
-    MAKEFOURCC('U', 'Y', 'V', 'Y'), MAKEFOURCC('Y', 'U', 'Y', '2')};
+    110, 111, 112, 113, 114, 115, 116, 117, MAKEFOURCC('D', 'X', 'T', '1'), MAKEFOURCC('D', 'X', 'T', '2'), MAKEFOURCC('D', 'X', 'T', '3'), MAKEFOURCC('D', 'X', 'T', '4'), MAKEFOURCC('D', 'X', 'T', '5'),
+    MAKEFOURCC('U', 'Y', 'V', 'Y'), MAKEFOURCC('Y', 'U', 'Y', '2'),
+    MAKEFOURCC('R', 'G', 'B', 'G'), MAKEFOURCC('G', 'R', 'G', 'B')};   // 110, 117 and the last two: what D3DX asks for Tag
   // usages: none, render target, depth, dynamic, generated mip maps, and the queries (post-pixel-shader blending 0x80000, filtering 0x20000, sRGB read 0x10000)
   static const unsigned usages[] = {0, 1, 2, 0x200, 0x400, 0x201, 0x401, 0x80000, 0x80001, 0x20000, 0x10000}, types[] = {1, 3, 4, 5};
   for (unsigned t = 0; t < sizeof types / sizeof types[0]; t++) for (unsigned u = 0; u < sizeof usages / sizeof usages[0]; u++) for (unsigned f = 0; f < sizeof formats / sizeof formats[0]; f++)
