@@ -229,6 +229,9 @@ temporary files, `GetFullPathNameA`, `MoveFileA`, `GlobalMemoryStatus`, `Interlo
   It took two answers Tag's `fmodex.dll` gives under Wine: a channel that played to its end keeps its handle
   (`isPlaying` false, never `FMOD_ERR_INVALID_HANDLE`), and `Sound::getName` is the file's name without folders.
   Input is DirectInput's, as for Narbacular Drop: `level2-paint` in Node, strict, reaches level 2, takes the gun,
-  paints the floor and a wall and erases (`tests/run.sh tagplay`). Saves: `AutoSave.xml` turned out to be level
+  paints the floor and a wall and erases (`tests/run.sh tagplay`); in headless Chrome the same session's shots against
+  the oracle's (`paint5`): level 1 1.4, level 2 on arrival 5.5, then from the gun on 31 to 39 of 255 on average,
+  where two of Wine's own runs differ by 25 to 72 (the walk's length follows Wine's wall-clock frame rate: the player
+  stands a step elsewhere; the scene, the gun and the paint are the same). Saves: `AutoSave.xml` turned out to be level
   data the installer ships, never written (Wine's copy keeps its 2008 date after every session); what Tag writes is
   `TAG.ini`, which the saves folder keeps and a second run reads back (edited to 800x600, its targets are).
