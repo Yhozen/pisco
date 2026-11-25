@@ -222,3 +222,13 @@ temporary files, `GetFullPathNameA`, `MoveFileA`, `GlobalMemoryStatus`, `Interlo
   GPU's pixels back (1544 times in the session), bytes copied into render targets with `UpdateTexture` sent to the
   GPU (each wall's paint map), a depth buffer larger than its target. Not needed by Tag, so not done: point
   sprites with a vertex shader, a programmable stage beside a fixed-function one, BC textures, `StretchRect`.
+- **T5, sound, input, saves.** FMOD Ex is set against Wine's `+snoop` log with the same kind of trace on our side
+  (`SW_TRACE_DLL=fmodex`, `tools/oracle-wine/snoop-compare.py`): over `menu-to-level1` the first 531 loads, plays,
+  pauses and settings are Wine's, call site and result, and the calls made once (51 `getName`, 10 `createSound`,
+  2 `createStream`, 5 `setPaused`) are as many; after that Wine's phases end at other moments of its wall clock.
+  It took two answers Tag's `fmodex.dll` gives under Wine: a channel that played to its end keeps its handle
+  (`isPlaying` false, never `FMOD_ERR_INVALID_HANDLE`), and `Sound::getName` is the file's name without folders.
+  Input is DirectInput's, as for Narbacular Drop: `level2-paint` in Node, strict, reaches level 2, takes the gun,
+  paints the floor and a wall and erases (`tests/run.sh tagplay`). Saves: `AutoSave.xml` turned out to be level
+  data the installer ships, never written (Wine's copy keeps its 2008 date after every session); what Tag writes is
+  `TAG.ini`, which the saves folder keeps and a second run reads back (edited to 800x600, its targets are).
