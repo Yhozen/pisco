@@ -75,7 +75,7 @@ export function parseRootSignature(bytes) {
   return { params, samplers };
 }
 
-// the title layout of a texture in guest memory (rt/d3d12.c footprints(): subresources one after another,
+// the title layout of a texture in guest memory (rt/gdk/d3d12.c d3d12_footprints(): subresources one after another,
 // 512-byte aligned, rows 256-byte aligned): [{offset, pitch, rows, width, height, depth, mip, layer}]
 const BYTES = { 'rgba32float': 16, 'rgba32uint': 16, 'rgba32sint': 16, 'rgba16float': 8, 'rgba16unorm': 8, 'rgba16uint': 8, 'rgba16snorm': 8, 'rgba16sint': 8, 'rg32float': 8, 'rg32uint': 8, 'rg32sint': 8,
   'rg8unorm': 2, 'rg8uint': 2, 'rg8snorm': 2, 'rg8sint': 2, 'r16float': 2, 'r16unorm': 2, 'r16uint': 2, 'r16snorm': 2, 'r16sint': 2, 'depth16unorm': 2, 'r8unorm': 1, 'r8uint': 1, 'r8snorm': 1, 'r8sint': 1 };
@@ -126,9 +126,10 @@ export async function startBackend({ memory, ring: ringAddr, device, canvas, dir
     if (dim === 0) {
       r.size = r.width;
       const usage = GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST | GPUBufferUsage.VERTEX | GPUBufferUsage.INDEX | GPUBufferUsage.UNIFORM | GPUBufferUsage.STORAGE | GPUBufferUsage.INDIRECT;
-      // 64 KiB past the end: a constant buffer view near the end still has the 64 KiB its translated shader
-      // declares (D3D12's limit; WebGPU checks the bound range against it). Only the real size is ever uploaded.
-      r.gpu = device.createBuffer({ size: Math.ceil(r.size / 4) * 4 + 65536, usage });
+      // A D3D12 buffer (flag 0x80000000) gets 64 KiB past the end: a constant buffer view near the end still has
+      // the 64 KiB its translated shader declares (D3D12's limit; WebGPU checks the bound range against it).
+      // Direct3D 9's buffers are their own size. Only the real size is ever uploaded.
+      r.gpu = device.createBuffer({ size: Math.ceil(r.size / 4) * 4 + (flags & 0x80000000 ? 65536 : 0), usage });
       const at = vas.findIndex((e) => e[0] > r.va); vas.splice(at < 0 ? vas.length : at, 0, [r.va, r.va + r.size, r]);
     } else {
       let f = r.format;
@@ -171,7 +172,7 @@ export async function startBackend({ memory, ring: ringAddr, device, canvas, dir
     }
   };
 
-  const explicit = startExplicit({ device, g, res, view, writeBuf, log, stats, tables: { FORMATS, VERTEX_FORMATS, BLEND, BLEND_OP, COMPARE, TOPOLOGY, ADDRESS } });
+  const explicit = startExplicit({ device, g, res, view, writeBuf, log, stats, tables: { FORMATS, VERTEX_FORMATS, BLEND, BLEND_OP, COMPARE, TOPOLOGY, ADDRESS }, texelBytes });
 
   // ---- shaders and pipelines ----
   const shader = (digest) => {

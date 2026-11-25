@@ -4,7 +4,7 @@
 # place the two differ.
 #   WINE_LOG  a WINEDEBUG=+relay log; only calls made from the title's image count (--image, default 0x400000-0x7fffff)
 #   OUR_LOG   the output of a run with SW_TRACE=2 (lines "[thread] dll!Name")
-# Both become the sequence of function names with repeats of one name folded ("HeapAlloc x321"): how often a
+# Both become the sequence of function names with repeats of one name, or of a pair, folded ("HeapAlloc x321"): how often a
 # function is called in a row depends on the machine (environment variables, locale), which one comes next
 # should not. --until NAME stops both at the first call of NAME (e.g. Direct3DCreate9). Exit status 1 if they differ.
 # usage: trace-diff.py WINE_LOG --record FILE [--image LO-HI] [--until NAME] writes Wine's folded sequence ("Name xCount"
@@ -21,7 +21,9 @@ for i, a in enumerate(args):
 SAME = {'RtlAllocateHeap': 'HeapAlloc', 'RtlFreeHeap': 'HeapFree', 'RtlSizeHeap': 'HeapSize', 'RtlReAllocateHeap': 'HeapReAlloc',
         'NtdllDefWindowProc_A': 'DefWindowProcA', 'NtdllDefWindowProc_W': 'DefWindowProcW', 'RtlGetLastWin32Error': 'GetLastError',
         'RtlSetLastWin32Error': 'SetLastError', 'RtlEnterCriticalSection': 'EnterCriticalSection', 'RtlLeaveCriticalSection': 'LeaveCriticalSection',
-        'RtlUnwind': 'RtlUnwind', 'RtlZeroMemory': 'RtlZeroMemory'}
+        'RtlUnwind': 'RtlUnwind', 'RtlZeroMemory': 'RtlZeroMemory', 'RtlEncodePointer': 'EncodePointer', 'RtlDecodePointer': 'DecodePointer',
+        'RtlInitializeCriticalSection': 'InitializeCriticalSection', 'RtlDeleteCriticalSection': 'DeleteCriticalSection', 'RtlCaptureContext': 'RtlCaptureContext',
+        'RtlInitializeSListHead': 'InitializeSListHead', 'RtlInterlockedPushEntrySList': 'InterlockedPushEntrySList', 'RtlInterlockedPopEntrySList': 'InterlockedPopEntrySList'}
 # Calls Wine never writes to its relay trace (thread and process ids and the last error are read straight from
 # the TEB, locks and interlocked operations are excluded by default, the performance counter is a system call):
 # in a 786 MB trace of a whole session none of them appears once. They are left out of our side too.
@@ -35,6 +37,10 @@ def fold(names):
         if n in UNSEEN: continue
         if out and out[-1][0] == n: out[-1][1] += 1
         else: out.append([n, 1])
+        # a pair repeated (A B A B ...: GetLastError and FlsGetValue each time the CRT finds its thread's data) is
+        # folded as a repeat is: how many rounds depends on the machine too
+        if len(out) >= 4 and out[-4][0] == out[-2][0] and out[-3][0] == out[-1][0]:
+            out[-4][1] += out[-2][1]; out[-3][1] += out[-1][1]; del out[-2:]
         if until and n == until: break
     return out
 def wine(path):
@@ -45,11 +51,11 @@ def wine(path):
             m = call.match(line)
             if m and lo <= int(m.group(2), 16) <= hi: yield m.group(1).decode()
 def ours(path):
-    call = re.compile(r'\[\d+\] [A-Za-z0-9_.-]+!([A-Za-z0-9_@?$]+)')
+    call = re.compile(r'\[\d+\] [A-Za-z0-9_.-]+!([A-Za-z0-9_@?$]+)(?: ret=([0-9a-f]+))?')
     with open(path, errors='replace') as f:
         for line in f:
             m = call.search(line)
-            if m: yield m.group(1)
+            if m and (not m.group(2) or lo <= int(m.group(2), 16) <= hi): yield m.group(1)   # calls from the title's image, as Wine's side
 def recorded(path):  # a file --record wrote
     for line in open(path):
         if line.strip() and not line.startswith('#'):

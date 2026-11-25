@@ -11,11 +11,12 @@ SF=${SF:-$HOME/untrusted/stockfish19/stockfish/stockfish-windows-x86-64-universa
 declare -A EXE=( [hello]=fixtures/hello/target/x86_64-pc-windows-msvc/release/hello.exe [threads]=fixtures/threads/target/x86_64-pc-windows-msvc/release/threads.exe
   [cxx]=fixtures/cxx/eh.exe [dll]=fixtures/dll/game/title.exe [xcl]=out/xcltitle-game/xcl_testtitle.exe [sf]=$SF )
 declare -A ARGS=( [xcl]=--hello [sf]=bench )
+declare -A BASES=( [xcl]=xbox-series )   # the others are Windows x64 programs (the default base for 64-bit)
 names=${*:-hello threads cxx dll xcl sf}; fail=0
 for n in $names; do
   exe=${EXE[$n]}; o=out/regress-$n
   if [ ! -f "$exe" ]; then echo "$n: $exe missing, skipped"; continue; fi
-  if ! tools/build-title.sh "$exe" "$o" > "$o.build.log" 2>&1; then echo "$n: build failed (see $o.build.log)"; fail=1; continue; fi
+  if ! BASE=${BASES[$n]:-windows-x64} tools/build-title.sh "$exe" "$o" > "$o.build.log" 2>&1; then echo "$n: build failed (see $o.build.log)"; fail=1; continue; fi
   timeout 1800 node web/run-node.mjs "$o/title.wasm" "$exe" ${ARGS[$n]:-} > "$o.run.log" 2>&1; code=$?
   pass=$(grep -c '^\[PASS\]' "$o.run.log"); bad=$(grep -c '^\[FAIL\]' "$o.run.log")
   case $n in

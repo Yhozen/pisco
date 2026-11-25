@@ -1,0 +1,14 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# doomgeneric with Freedoom's IWAD, built as an Xbox Series title by tests/gfx/doom.sh (out/doom/game: doom.exe,
+# freedoom1.wad and its shaders), as an image FROM the Xbox Series base (tests/images.sh builds it twice and runs it).
+name = "doom"
+from = "base/xbox-series:1"
+
+[source]
+# the folder tests/gfx/doom.sh builds; no sha256: whatever it made
+file = "../../out/doom/game"
+extract = "folder"
+
+[run]
+exe = 'C:\Games\doom\doom.exe'
+display = "1920x1080"

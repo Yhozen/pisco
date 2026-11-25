@@ -91,7 +91,13 @@ export function startNull(memory, addr, { dir, log }) {
       const r = res.get(w[0]), mip = w[1]; count.textureWrites++; count.bytes += w[8] * w[6] * w[7]; trace(`write texture ${w[0]} level ${mip} ${w[2]},${w[3]},${w[4]} ${w[5]}x${w[6]}x${w[7]}`);
       if (!r || r.dim === 0) { wrong(`a write to texture ${w[0]}, which does not exist`); break; }
       const side = (v) => Math.max(1, v >> mip);
-      if (mip >= r.mips || w[2] + w[5] > side(r.width) || w[3] + w[6] > side(r.height) || w[4] + w[7] > (r.dim === 3 ? side(r.depth) : 1) || w[8] < 4 * w[5]) wrong(`a write to texture ${w[0]} level ${mip} outside it`);
+      if (mip >= r.mips || w[2] + w[5] > side(r.width) || w[3] + w[6] > side(r.height) || w[4] + w[7] > (r.dim === 3 ? side(r.depth) : r.depth || 1) || w[8] < 4 * w[5]) wrong(`a write to texture ${w[0]} level ${mip} outside it`);
+      break;
+    }
+    case GPU.R_READ_TEXTURE: {   // no pixels here: the guest's bytes stay as they are
+      const r = res.get(w[0]), mip = w[1], side = (v) => Math.max(1, v >> mip); count.readbacks = (count.readbacks || 0) + 1; trace(`read texture ${w[0]} level ${mip} layer ${w[2]} ${w[3]}x${w[4]}`);
+      if (!r || r.dim !== 2) { wrong(`a read of texture ${w[0]}, which is no 2D texture`); break; }
+      if (mip >= r.mips || w[2] >= (r.depth || 1) || w[3] !== side(r.width) || w[4] !== side(r.height) || w[5] < w[3]) wrong(`a read of texture ${w[0]} that is not one whole level of it`);
       break;
     }
     case GPU.R_PASS: {
@@ -113,7 +119,7 @@ export function startNull(memory, addr, { dir, log }) {
         const id = d.bindings[k], r = res.get(id);
         if (b.kind === GPU.BIND_UNIFORM) { if (d.uniformBytes < b.size) wrong(`a draw brings ${d.uniformBytes} bytes of uniforms, pipeline ${d.pipeline} needs ${b.size}`); }
         else if (b.kind === GPU.BIND_SAMPLER) { if (!samplers.has(id)) wrong(`a draw binds sampler ${id}, which does not exist`); }
-        else if (!r || r.dim !== (b.kind === GPU.BIND_TEXTURE_3D ? 3 : 2)) wrong(`a draw binds texture ${id} to a binding of kind ${b.kind}`);
+        else if (!r || r.dim !== (b.kind === GPU.BIND_TEXTURE_3D ? 3 : 2) || (b.kind === GPU.BIND_TEXTURE_CUBE && r.depth !== 6)) wrong(`a draw binds texture ${id} to a binding of kind ${b.kind}`);
         else if (id === target.colorId) wrong(`a draw samples texture ${id}, the pass's own target`);
       });
       if (d.vertexBuffers.length !== p.buffers.length || d.vertexBuffers.some(([id]) => res.get(id)?.dim !== 0)) wrong(`a draw gives ${d.vertexBuffers.length} vertex buffers, pipeline ${d.pipeline} reads ${p.buffers.length}`);

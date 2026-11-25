@@ -7,22 +7,36 @@
 Pisco is distilled from wine, and this project owes a lot to [Wine](https://www.winehq.org): Windows PC titles are
 checked against it screen by screen and call by call.
 
-PISCO runs a 64-bit Windows title's x86-64 code in WebAssembly — in a browser tab or in Node — by recompiling
-it ahead of time and supplying the operating system underneath it. The target is the Xbox Series build of
-Minecraft; until those files are here it is tested on titles we build ourselves and on a real program
-(Stockfish 19's official Windows build).
+PISCO runs x86 titles in WebAssembly — in a browser tab or in Node — by recompiling their code ahead of time and
+supplying the system they were written for. It is one recompiler (`crates/lifter`), one package format (`pisco`
+builds a recipe and your own copy of a title into a title image), and several **compatibility runtimes**, peers
+that each imitate one system; a title image names the one it is built FROM ([the plan](docs/plan.md)):
 
-A second kind of title is under way: ordinary 32-bit Windows PC games, with Narbacular Drop (2005) first.
-It is playable in a desktop browser: built from your own installer into a title image, it runs at 100 to 350
-frames a second in Chrome on an M1 MacBook Pro, with its sound, mouse-look under Pointer Lock, both portals and
-its saved options. Scripted sessions check it against Wine screen by screen and call by call, in Node and in
-headless Chrome ([status](docs/status.md), [the game's page](docs/narbacular-drop.md)).
+| Runtime (base) | Imitates | Runs today | Its goal |
+|---|---|---|---|
+| **Xbox Series** (`base/xbox-series`) | the GDK's console build: kernelx, XMem, XGameRuntime, D3D12.X, DirectStorage, XAudio2 | Doom as a console title; XCL's console test title, 50/50 | Minecraft (Bedrock), the Xbox Series build |
+| **Windows x64** (`base/windows-x64`) | 64-bit Windows desktop: DXGI, D3D12, the PC GDK, the MSVC runtimes | Stockfish 19 (official build), Microsoft's SimpleTriangleDesktop and SimplePBR | desktop D3D12 titles |
+| **Windows x86** (`base/windows-x86`) | 32-bit Windows desktop of the 2000s: Win32, GDI, Direct3D 9, DirectInput, FMOD | Narbacular Drop (2005), playable in a desktop browser; Tag: The Power of Paint (2008, shader model 2) to its second level, checked in headless Chrome | 32-bit Direct3D 9 games of the 2000s |
+
+Running Minecraft through the Xbox Series runtime is where the project started; it is now that runtime's goal, one
+among several. Nothing of a title is in this repository: you bring your own copy.
+
+Narbacular Drop, built from your own installer into a title image, runs at 100 to 350 frames a second in Chrome on
+an M1 MacBook Pro, with its sound, mouse-look under Pointer Lock, both portals and its saved options. Scripted
+sessions check it against Wine screen by screen and call by call, in Node and in headless Chrome
+([status](docs/status.md), [the game's page](docs/narbacular-drop.md)).
+
+Tag: The Power of Paint, DigiPen's paint-gun game, is built the same way, with Microsoft's own D3DX from its
+installer lifted beside it: its 16 effects compile at run time to the same 46 shaders as under Wine, translated to
+WGSL, and in headless Chrome its first level is within 1.4 of 255 of Wine's screenshots on average; it plays into
+its second level, paints and erases, with FMOD Ex's calls as Wine's ([the game's page](docs/tag.md)).
 
 Licence: GPL-2.0-or-later for our own code; code from other projects keeps its own licence (the shader tools
 from [XCL](https://github.com/ivall/xcl) are GPL-2.0-only). See [LICENSING.md](LICENSING.md).
 
-Docs: [the journey so far](docs/journey.md) (what was built, measured and learned, roadblocks) ·
-[status and next steps](docs/status.md) · [first run of a real title](docs/first-run.md) · [wasm32 or wasm64](docs/memory.md) ·
+Docs: [the plan](docs/plan.md) (the structure, the runtimes, the rules a change follows) ·
+[the journey so far](docs/journey.md) (what was built, measured and learned, roadblocks) ·
+[status and next steps, by runtime](docs/status.md) · [first run of a console title](docs/first-run.md) · [wasm32 or wasm64](docs/memory.md) ·
 [Narbacular Drop, the first Windows PC title](docs/narbacular-drop.md) · [title images and `pisco`](docs/images.md)
 
 ## How it works
@@ -31,24 +45,28 @@ Docs: [the journey so far](docs/journey.md) (what was built, measured and learne
 title.exe ── lifter (native, once per build) ──► C, one function per guest function ──► clang ──► title.wasm
                                                                                                    │ imports
 runtime (rt/, C on wasi-libc, linked into the same module) ◄───────────────────────────────────────┘
+ the core, every title (rt/*.c):
   process.c   image loading, import binding, guest calls, handles and waits, threads, TEB / TLS
   kernel32.c  threads, sync objects (events, semaphores, mutexes, critical sections, SRW, condition variables),
               memory, time, modules, code pages, standard handles
-  msvcrt.c    C runtime: startup / exit, stdio, printf with Win64 varargs, strings, locale "C"
+  msvcrt.c    C runtime: startup / exit, stdio, printf (each guest width's arguments), strings, maths, locale "C"
   ucrt.c      the UCRT (api-ms-win-crt-*), falling back to msvcrt.c where the semantics match
   seh.c       x64 exception handling over the images' .pdata / .xdata: RaiseException, RtlUnwindEx, vectored handlers
   vfs.c       the title's file system: console drives, the title's folder read-only, an in-memory overlay;
               an image's file layers make C:, and what a desktop title writes in its folder is kept by the host
   files.c     kernel32 / ntdll file functions over vfs.c
-  gdk.c       the console's libraries, offline: kernelx, XMem (with the GPU-visible region), XGameRuntime (task
-              queues, XAsync, XUser, saves, PLS, package), the console screen (user32 / DWM), GameInput
-  d3d12.c     D3D12 / D3D12.X front end (+ XG, D3DCompile from precompiled shaders); dxgi.c (DXGI, MFPlat);
-              dstorage.c (DirectStorage); xaudio2.c + audio_codec.c (XAudio2, XMA2 / Opus via FFmpeg)
   mixer.c     the one sound output, shared by XAudio2 and FMOD (mixed to the virtual clock when there is one)
   gpu_ring.c  the ring of records a GPU back end reads (web/gpu/): what D3D12 and Direct3D 9 both write to
-  win32/      Windows desktop titles: user32, gdi32 (text drawn: font.c, stb_truetype, Liberation Sans), the
-              registry, DirectInput 8, FMOD 3 (fmod3.c, audio_decode.c), and Direct3D 9 (d3d9*.c: the
-              device; d3d9_ffp.c: its fixed-function pipeline as WGSL; d3d9_gpu.c: its draws)
+ one folder per runtime (each base lists its own; `pisco sources <base>` prints them):
+  gdk/        what the Xbox Series and Windows x64 runtimes share: D3D12 (d3d12.c), DXGI and MFPlat, D3DCompile
+              from precompiled shaders, XAudio2 + audio_codec.c (XMA2 / Opus via FFmpeg), XGameRuntime (task
+              queues, XAsync, XUser, saves, PLS, package), GameInput
+  xbox-series/ the console's own: kernelx, XMem (with the GPU-visible region), its screen (user32 / DWM),
+              D3D12.X's frame clock and list methods, XG, DirectStorage
+  windows-x64/ DXGI's factory and swap chains, the PC GDK's QueryApiImpl objects
+  windows-x86/ user32, gdi32 (text drawn: font.c, stb_truetype, Liberation Sans), the registry, DirectInput 8,
+              FMOD 3 (fmod3.c, audio_decode.c), and Direct3D 9 (d3d9*.c: the device; d3d9_ffp.c: its
+              fixed-function pipeline as WGSL; d3d9_gpu.c: its draws)
 Imports nothing implements become stubs that log their first call and return 0 (E_NOTIMPL for the console's
 HRESULT APIs), as in XCL; SW_STRICT=1 stops at them instead.
 host (web/)   WASI calls, one worker per guest thread over one shared memory; image.mjs reads a title image
@@ -83,7 +101,8 @@ shader tools the Doom test needs); `tests/run.sh` builds and runs every test tit
 ```sh
 cargo build --release -p pisco-lifter
 (cd fixtures/hello && cargo build --release)                       # our own Windows-format test titles
-tools/build-title.sh fixtures/hello/target/x86_64-pc-windows-msvc/release/hello.exe out/hello
+cargo build --release -p pisco                                      # build-title.sh asks it for the base's files
+tools/build-title.sh fixtures/hello/target/x86_64-pc-windows-msvc/release/hello.exe out/hello   # BASE=windows-x64 (64-bit default)
 node web/run-node.mjs out/hello/title.wasm fixtures/hello/target/x86_64-pc-windows-msvc/release/hello.exe
 node tools/run-chrome.mjs out/hello/title.wasm <the .exe>          # the same in headless Chrome
 ```
@@ -98,6 +117,7 @@ target/release/pisco build recipes/narbacular-drop --source ~/Downloads/narbacul
 target/release/pisco run out/images/narbacular-drop --session recipes/narbacular-drop/sessions/menu-to-level.json
 target/release/pisco run out/images/narbacular-drop --chrome          # headless Chrome; in a browser of your own:
 node tools/serve.mjs 8000 web out/images/narbacular-drop           # then http://127.0.0.1:8000/browser/index.html?image=/files/0/
+target/release/pisco build recipes/tag --source ~/Downloads/Tag_setup.exe                          # -> out/images/tag, the same way
 target/release/pisco inspect out/images/narbacular-drop               # its layers, config and registry
 target/release/pisco census <a title's .exe>                          # what the base and its libraries answer for
 ```

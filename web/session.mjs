@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // A session script (tools/oracle-wine/README.md: the JSON a person writes) as the text the runtime's session
-// player reads from SW_SESSION_STEPS (rt/win32/input.c): steps separated by ';'.
+// player reads from SW_SESSION_STEPS (rt/windows-x86/input.c): steps separated by ';'.
 export function sessionSteps(session) {
   const one = (s) => {
     if ('wait' in s) return `wait ${s.wait | 0}`;

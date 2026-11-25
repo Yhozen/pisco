@@ -4,6 +4,7 @@
 #include <time.h>
 #include <unistd.h>
 #include "rt.h"
+#include "vfs.h"
 
 u64 rt_create_thread(Cpu *c, u64 stack, u64 start, u64 param, int suspended, u32 *tid);
 int rt_resume_thread(u64 h);
@@ -40,7 +41,7 @@ IMP(kernel32, GetExitCodeThread) {
 IMP(kernel32, GetThreadPriority) { RET(0); }
 IMP(kernel32, SetThreadPriority) { RET(1); }
 IMP(kernel32, SetThreadGroupAffinity) { if (ARG(2)) memset((void *)GP(ARG(2)), 0, 16); RET(1); }
-IMP(kernel32, GetProcessAffinityMask) { u64 m = (1ull << sysconf(_SC_NPROCESSORS_ONLN)) - 1; if (ARG(1)) M64(ARG(1)) = m; if (ARG(2)) M64(ARG(2)) = m; RET(1); }
+IMP(kernel32, GetProcessAffinityMask) { u64 m = (1ull << sysconf(_SC_NPROCESSORS_ONLN)) - 1; if (ARG(1)) MP(ARG(1)) = m; if (ARG(2)) MP(ARG(2)) = m; RET(1); }
 IMP(kernel32, SetProcessAffinityMask) { RET(1); }
 IMP(kernel32, GetProcessGroupAffinity) { u64 n = ARG(1); if (n && M16(n) >= 1) { M16(n) = 1; if (ARG(2)) M16(ARG(2)) = 0; RET(1); } else { if (n) M16(n) = 1; SET_LAST_ERROR(122); RET(0); } }
 IMP(kernel32, GetActiveProcessorCount) { RET(sysconf(_SC_NPROCESSORS_ONLN)); }
@@ -59,11 +60,21 @@ IMP(kernel32, Sleep) {
   nanosleep(&ts, 0);
 }
 IMP(kernel32, SleepEx) { imp_kernel32_Sleep(c); RET(0); }
+// SYSTEM_INFO: 48 bytes for a 64-bit guest, 36 for a 32-bit one (whose pointers and mask are 4 bytes: writing the
+// 64-bit layout into a 32-bit caller's frame overwrote its saved EBP)
 IMP(kernel32, GetSystemInfo) {
-  u64 p = ARG(0); memset((void *)GP(p), 0, 48);
+  u64 p = ARG(0); u32 cpus = (u32)sysconf(_SC_NPROCESSORS_ONLN);
+#if GUEST_BITS == 32
+  memset((void *)GP(p), 0, 36);
+  M16(p) = 0; M32(p + 4) = 4096; M32(p + 8) = 0x10000; M32(p + 12) = 0x7FFEFFFF;   // PROCESSOR_ARCHITECTURE_INTEL
+  M32(p + 16) = cpus >= 32 ? 0xFFFFFFFFu : (1u << cpus) - 1; M32(p + 20) = cpus;
+  M32(p + 24) = 586; M32(p + 28) = 65536; M16(p + 32) = 6;                         // PROCESSOR_INTEL_PENTIUM, level 6
+#else
+  memset((void *)GP(p), 0, 48);
   M16(p) = 9; M32(p + 4) = 4096; M64(p + 8) = 0x10000; M64(p + 16) = 0x7FFFFFFEFFFF;
-  M64(p + 24) = (1ull << sysconf(_SC_NPROCESSORS_ONLN)) - 1; M32(p + 32) = (u32)sysconf(_SC_NPROCESSORS_ONLN);
+  M64(p + 24) = (1ull << cpus) - 1; M32(p + 32) = cpus;
   M32(p + 36) = 8664; M32(p + 40) = 65536; M16(p + 44) = 6;
+#endif
 }
 // PF_* numbers: 3 MMX, 6 XMMI, 10 XMMI64, 13 SSE3, 36 SSSE3, 37 SSE4_1, 38 SSE4_2, 39 AVX
 IMP(kernel32, IsProcessorFeaturePresent) { // PF_*: 2 CMPXCHG8B, 3 MMX, 6 SSE, 8 RDTSC, 10 SSE2, 12 NX, 13 SSE3, 14 CMPXCHG16B, 36 SSSE3, 37 SSE4.1, 38 SSE4.2
@@ -98,7 +109,7 @@ IMP(kernel32, DuplicateHandle) {
   u64 h = ARG(1);
   Object *o = h == PSEUDO_THREAD ? THREAD(c)->handle : rt_handle_get(h);
   if (!o) { SET_LAST_ERROR(6); RET(0); return; }
-  if (ARG(3)) M64(ARG(3)) = rt_handle_new(o);
+  if (ARG(3)) MP(ARG(3)) = rt_handle_new(o);
   if (ARG(6) & 1) rt_handle_close(h); // DUPLICATE_CLOSE_SOURCE
   RET(1);
 }
@@ -177,32 +188,40 @@ IMP(kernel32, WaitForSingleObject) { u64 h = ARG(0); RET(rt_wait(c, 1, &h, 0, (u
 IMP(kernel32, WaitForSingleObjectEx) { u64 h = ARG(0); RET(rt_wait(c, 1, &h, 0, (u32)ARG(1))); }
 IMP(kernel32, WaitForMultipleObjects) {
   u32 n = (u32)ARG(0); u64 hs[64];
-  for (u32 i = 0; i < n && i < 64; i++) hs[i] = M64(ARG(1) + 8 * i);
+  for (u32 i = 0; i < n && i < 64; i++) hs[i] = MP(ARG(1) + PTR_SIZE * i);
   RET(rt_wait(c, n, hs, ARG(2) != 0, (u32)ARG(3)));
 }
 
-// ---- critical sections: a recursive pthread mutex behind the guest's 40-byte structure ----
+// ---- critical sections: a recursive pthread mutex behind the guest's structure (40 bytes in 64-bit code, 24 in
+// 32-bit), kept in its first pointer-sized field (DebugInfo), which needs no more than the pointer's alignment ----
+#if GUEST_BITS == 32
+typedef u32 CsCell;
+#define CS_BYTES 24
+#else
+typedef u64 CsCell;
+#define CS_BYTES 40
+#endif
 static pthread_mutex_t cs_init_lock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_mutex_t *cs_mutex(u64 cs) {
-  pthread_mutex_t *m = (pthread_mutex_t *)GP(__atomic_load_n((u64 *)GP(cs), __ATOMIC_ACQUIRE));
+  pthread_mutex_t *m = (pthread_mutex_t *)GP(__atomic_load_n((CsCell *)GP(cs), __ATOMIC_ACQUIRE));
   if (m) return m;
   pthread_mutex_lock(&cs_init_lock);
-  m = (pthread_mutex_t *)GP(M64(cs));
+  m = (pthread_mutex_t *)GP(MP(cs));
   if (!m) {
     m = malloc(sizeof *m);
     pthread_mutexattr_t a; pthread_mutexattr_init(&a); pthread_mutexattr_settype(&a, PTHREAD_MUTEX_RECURSIVE);
     pthread_mutex_init(m, &a);
-    __atomic_store_n((u64 *)GP(cs), (u64)(uptr)m, __ATOMIC_RELEASE);
+    __atomic_store_n((CsCell *)GP(cs), (CsCell)(uptr)m, __ATOMIC_RELEASE);
   }
   pthread_mutex_unlock(&cs_init_lock);
   return m;
 }
-IMP(kernel32, InitializeCriticalSection) { memset((void *)GP(ARG(0)), 0, 40); cs_mutex(ARG(0)); }
-IMP(kernel32, InitializeCriticalSectionAndSpinCount) { memset((void *)GP(ARG(0)), 0, 40); cs_mutex(ARG(0)); RET(1); }
-IMP(kernel32, InitializeCriticalSectionEx) { memset((void *)GP(ARG(0)), 0, 40); cs_mutex(ARG(0)); RET(1); }
+IMP(kernel32, InitializeCriticalSection) { memset((void *)GP(ARG(0)), 0, CS_BYTES); cs_mutex(ARG(0)); }
+IMP(kernel32, InitializeCriticalSectionAndSpinCount) { memset((void *)GP(ARG(0)), 0, CS_BYTES); cs_mutex(ARG(0)); RET(1); }
+IMP(kernel32, InitializeCriticalSectionEx) { memset((void *)GP(ARG(0)), 0, CS_BYTES); cs_mutex(ARG(0)); RET(1); }
 IMP(kernel32, DeleteCriticalSection) {
-  pthread_mutex_t *m = (pthread_mutex_t *)GP(M64(ARG(0)));
-  if (m) { pthread_mutex_destroy(m); free(m); M64(ARG(0)) = 0; }
+  pthread_mutex_t *m = (pthread_mutex_t *)GP(MP(ARG(0)));
+  if (m) { pthread_mutex_destroy(m); free(m); MP(ARG(0)) = 0; }
 }
 IMP(kernel32, EnterCriticalSection) { pthread_mutex_lock(cs_mutex(ARG(0))); }
 IMP(kernel32, LeaveCriticalSection) { pthread_mutex_unlock(cs_mutex(ARG(0))); }
@@ -258,31 +277,78 @@ IMP(kernel32, GetProcessHeap) { RET(0x7000); }
 // Drop's player, as it starts a level, attaches the camera to itself only if a pointer it sets a few lines later
 // is already non-zero (0x41d9cb tests [this+0x1e4], 0x41da5e sets it), and without the camera the level's first
 // frame reads through a stale index. Here the heap is the runtime's malloc, whose leftovers depend on the runtime
-// and the host as much as on the title, so a 32-bit title's small blocks are filled with one non-zero byte instead:
-// the same on every host, and non-zero as the game's runs under Wine show it found there.
+// and the host as much as on the title, so a recipe can ask for small blocks filled with one byte instead
+// ([quirks] heap_fill = 0xCD: the same on every host, and non-zero as the game's runs under Wine show it found there).
 static void heap_fresh(void *p, u64 from, u64 to) {
-#if GUEST_BITS == 32
-  if (p && to > from) memset((u8 *)p + from, to >= 0x7F000 ? 0 : 0xCD, to - from);   // 0x7F000: above it Windows' heap allocates fresh pages
-#else
-  (void)p; (void)from; (void)to;
-#endif
+  if (p && to > from && rt_heap_fill >= 0) memset((u8 *)p + from, to >= 0x7F000 ? 0 : rt_heap_fill, to - from);   // 0x7F000: above it Windows' heap allocates fresh pages
 }
-IMP(kernel32, HeapAlloc) { u64 n = ARG(2); void *p = (ARG(1) & 8) ? calloc(1, n ? n : 1) : malloc(n ? n : 1); if (!(ARG(1) & 8)) heap_fresh(p, 0, n); RET((uptr)p); }
-IMP(kernel32, HeapFree) { free((void *)GP(ARG(2))); RET(1); }
+// The size a block was asked for: what Windows' HeapSize answers (malloc_usable_size is rounded up). A title's
+// CRT grows its atexit table when HeapSize says the table is full, so a larger answer changes its calls. Kept
+// beside the heap, by address (open addressing; a freed entry becomes a tombstone), so blocks stay as malloc
+// lays them out.
+static struct { uptr *key; u64 *size; u32 cap, used; } asked;
+static pthread_mutex_t asked_lock = PTHREAD_MUTEX_INITIALIZER;
+#define ASKED_GONE ((uptr)1)
+static u32 asked_slot(uptr p) { u64 h = (u64)p * 0x9E3779B97F4A7C15ull; return (u32)(h >> 32) & (asked.cap - 1); }
+static void asked_put_locked(uptr p, u64 n) {
+  if ((asked.used + 1) * 2 > asked.cap) {   // grow (tombstones dropped)
+    uptr *ok = asked.key; u64 *os = asked.size; u32 oc = asked.cap;
+    asked.cap = oc ? oc * 2 : 4096; asked.key = calloc(asked.cap, sizeof *asked.key); asked.size = malloc(asked.cap * sizeof *asked.size); asked.used = 0;
+    for (u32 i = 0; i < oc; i++) if (ok[i] > ASKED_GONE) { u32 j = asked_slot(ok[i]); while (asked.key[j]) j = (j + 1) & (asked.cap - 1); asked.key[j] = ok[i]; asked.size[j] = os[i]; asked.used++; }
+    free(ok); free(os);
+  }
+  u32 j = asked_slot(p), tomb = ~0u;
+  for (; asked.key[j]; j = (j + 1) & (asked.cap - 1)) {
+    if (asked.key[j] == p) { asked.size[j] = n; return; }
+    if (asked.key[j] == ASKED_GONE && tomb == ~0u) tomb = j;
+  }
+  if (tomb != ~0u) j = tomb; else asked.used++;
+  asked.key[j] = p; asked.size[j] = n;
+}
+static void asked_drop_locked(uptr p) {
+  if (!asked.cap || !p) return;
+  for (u32 j = asked_slot(p); asked.key[j]; j = (j + 1) & (asked.cap - 1)) if (asked.key[j] == p) { asked.key[j] = ASKED_GONE; return; }
+}
+static void asked_put(void *p, u64 n) { if (!p) return; pthread_mutex_lock(&asked_lock); asked_put_locked((uptr)p, n); pthread_mutex_unlock(&asked_lock); }
+static void asked_drop(void *p) { pthread_mutex_lock(&asked_lock); asked_drop_locked((uptr)p); pthread_mutex_unlock(&asked_lock); }
+static u64 asked_size(void *p) {   // a block the heap functions did not hand out: its usable size
+  u64 n = p ? malloc_usable_size(p) : 0;
+  pthread_mutex_lock(&asked_lock);
+  if (asked.cap && p) for (u32 j = asked_slot((uptr)p); asked.key[j]; j = (j + 1) & (asked.cap - 1)) if (asked.key[j] == (uptr)p) { n = asked.size[j]; break; }
+  pthread_mutex_unlock(&asked_lock);
+  return n;
+}
+IMP(kernel32, HeapAlloc) { u64 n = ARG(2); void *p = (ARG(1) & 8) ? calloc(1, n ? n : 1) : malloc(n ? n : 1); if (!(ARG(1) & 8)) heap_fresh(p, 0, n); asked_put(p, n); RET((uptr)p); }
+IMP(kernel32, HeapFree) { void *p = (void *)GP(ARG(2)); asked_drop(p); free(p); RET(1); }
 IMP(kernel32, HeapReAlloc) { // (heap, flags, block, size): a grown block's new bytes are zero with HEAP_ZERO_MEMORY (8)
-  void *old = (void *)GP(ARG(2)); u64 n = ARG(3), had = old ? malloc_usable_size(old) : 0; u8 *p = realloc(old, n ? n : 1);
+  void *old = (void *)GP(ARG(2)); u64 n = ARG(3), had = asked_size(old), room = old ? malloc_usable_size(old) : 0;
+  if (ARG(1) & 0x10) { if (n > room) { RET(0); return; } }   // HEAP_REALLOC_IN_PLACE_ONLY: it fits in the block or fails
+  u8 *p = (ARG(1) & 0x10) ? old : realloc(old, n ? n : 1);
   if (p && n > had) { if (ARG(1) & 8) memset(p + had, 0, n - had); else heap_fresh(p, had, n); }
+  if (p) { pthread_mutex_lock(&asked_lock); if (p != (u8 *)old) asked_drop_locked((uptr)old); asked_put_locked((uptr)p, n); pthread_mutex_unlock(&asked_lock); }
   RET((uptr)p);
 }
-IMP(kernel32, HeapSize) { RET(malloc_usable_size((void *)GP(ARG(2)))); }
+IMP(kernel32, HeapSize) { RET(asked_size((void *)GP(ARG(2)))); }
 IMP(kernel32, LocalAlloc) { RET((uptr)((ARG(0) & 0x40) ? calloc(1, ARG(1) ? ARG(1) : 1) : malloc(ARG(1) ? ARG(1) : 1))); }
 IMP(kernel32, LocalFree) { free((void *)GP(ARG(0))); RET(0); }
 
 // file mappings without files: shared memory inside the process
+// (file or INVALID_HANDLE_VALUE, security, protection, size high, size low, name). A file's mapping is a copy of its
+// bytes, made now: what readers of a mapped file see (writes through the view do not reach the file).
 IMP(kernel32, CreateFileMappingA) {
-  if (ARG(0) != 0xFFFFFFFFFFFFFFFFull) { SET_LAST_ERROR(50); RET(0); return; }
+  u64 fh = ARG(0), size = (ARG(3) << 32) | (u32)ARG(4);
+  VFile *vf = 0;
+  if (fh != PSEUDO_PROCESS) {   // INVALID_HANDLE_VALUE: the pagefile, at the guest's width
+    Object *f = rt_handle_get(fh);
+    if (!f || f->type != OBJ_FILE || !f->vf) { SET_LAST_ERROR(6); RET(0); return; }
+    vf = f->vf; if (!size) size = vfs_size(vf);
+    if (!size) { SET_LAST_ERROR(1006); RET(0); return; }   // ERROR_FILE_INVALID: an empty file cannot be mapped
+  }
   int ex; Object *o = named(OBJ_MAPPING, ARG(5) ? GSTR(ARG(5)) : 0, &ex);
-  if (!ex) { o->size = (ARG(3) << 32) | (u32)ARG(4); o->view = rt_valloc(o->size, 65536); }
+  if (!ex) {
+    o->size = size; o->view = rt_valloc(o->size, 65536);
+    if (vf && o->view) { u64 *pos = vfs_pos(vf), keep = *pos; *pos = 0; u64 n = vfs_size(vf); vfs_read(vf, (void *)GP(o->view), n < size ? n : size); *pos = keep; }
+  }
   SET_LAST_ERROR(ex ? 183 : 0);
   RET(o->view ? rt_handle_new(o) : 0);
 }
@@ -305,16 +371,21 @@ u64 rt_now_us(void) {
   struct timespec t; clock_gettime(CLOCK_REALTIME, &t); return (u64)t.tv_sec * 1000000 + (u64)t.tv_nsec / 1000;
 }
 void mixer_clock_moved(void);   // mixer.c: under a virtual clock the sound is mixed up to the clock as it moves
-void rt_clock_advance(u64 us) { if (rt_clock_virtual()) { __atomic_add_fetch(&clock_virtual, us, __ATOMIC_SEQ_CST); mixer_clock_moved(); } }
+static u32 clock_polls;   // reads of the clock since it last moved
+void rt_clock_advance(u64 us) { if (rt_clock_virtual()) { clock_polls = 0; __atomic_add_fetch(&clock_virtual, us, __ATOMIC_SEQ_CST); mixer_clock_moved(); } }
+// A title that waits for time by reading the clock in a loop (Tag's frame limiter: PeekMessage, QueryPerformanceCounter)
+// would wait for ever on a virtual clock, which moves only when a frame is presented or the title sleeps: after 64
+// reads in a row each read moves it on by a millisecond. A title that reads it a few times a frame is not affected.
+static void clock_polled(void) { if (rt_clock_virtual() && ++clock_polls > 64) rt_clock_advance(1000); }
 u64 rt_clock_virtual_us(void) { return __atomic_load_n(&clock_virtual, __ATOMIC_SEQ_CST); }   // the virtual clock since it started
 void rt_clock_advance_frame(void) { rt_clock_advance(clock_step); }
 // What the system has been up for: it started a minute before the first time anyone asked
 u64 rt_uptime_us(void) { static u64 boot; u64 now = rt_now_us(); if (!boot) boot = now - 60000000; return now - boot; }
 #if GUEST_BITS == 32
 // 32-bit titles: every clock is the title's clock
-IMP(kernel32, QueryPerformanceCounter) { M64(ARG(0)) = rt_uptime_us(); RET(1); }
+IMP(kernel32, QueryPerformanceCounter) { clock_polled(); M64(ARG(0)) = rt_uptime_us(); RET(1); }
 IMP(kernel32, QueryPerformanceFrequency) { M64(ARG(0)) = 1000000; RET(1); }
-IMP(kernel32, GetTickCount) { RET((u32)(rt_uptime_us() / 1000)); }
+IMP(kernel32, GetTickCount) { clock_polled(); RET((u32)(rt_uptime_us() / 1000)); }
 IMP(kernel32, GetTickCount64) { RET64(rt_uptime_us() / 1000); }
 static u64 filetime_now(void) { return rt_now_us() * 10 + 116444736000000000ull; }
 #else
@@ -352,8 +423,8 @@ static const struct { const char *name; u64 h; } system_modules[] = {
   {"d3d12_xs", 0x7FFB0000ull}, {"d3d12", 0x7FFC0000ull}, {"dxgi", 0x7FFD0000ull}, {"xg_xs", 0x7FFE0000ull}, {"xcrdapi", 0x7FFF0000ull},
   {"mfplat", 0x7FE00000ull}, {"d3dcompiler_47", 0x7FE10000ull}, {"xaudio2_9", 0x7FE20000ull},
 #if GUEST_BITS == 32
-  // the desktop's DLLs a title looks functions up in (rt/win32/)
-  {"gdi32", 0x7FD00000ull}, {"d3d9", 0x7FD10000ull}, {"dinput8", 0x7FD20000ull}, {"winmm", 0x7FD30000ull},
+  // the desktop's DLLs a title looks functions up in (rt/windows-x86/)
+  {"gdi32", 0x7FD00000ull}, {"d3d9", 0x7FD10000ull}, {"dinput8", 0x7FD20000ull}, {"winmm", 0x7FD30000ull}, {"ddraw", 0x7FD40000ull},
 #endif
   // API sets and console variants: the DLL behind them
   {"ntuser", 0x7FF70000ull}, {"minuser", 0x7FF70000ull}, {"advapi32legacy", 0x7FF80000ull}, {"api-ms-win-core", 0x7FF00000ull},
@@ -386,13 +457,15 @@ IMP(kernel32, GetModuleHandleExW) {
   if (flags & 4) { const ModuleDef *m = rt_module_of(ARG(1)); h = m ? m->base : 0; } // GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS
   else if (!ARG(1)) h = image_base;
   else { char *n = rt_narrow(GWSTR(ARG(1))); h = module_handle(n); free(n); }
-  M64(ARG(2)) = h; if (!h) SET_LAST_ERROR(126); RET(h != 0);
+  MP(ARG(2)) = h; if (!h) SET_LAST_ERROR(126); RET(h != 0);
 }
 static const char *module_path_of(u64 h) {
   static char buf[16][300]; static int k;
   const ModuleDef *m = h ? rt_module_of(h) : &rt_modules[0];
   if (!m) return 0;
-  char *b = buf[k++ & 15]; snprintf(b, 300, "C:\\title\\%s", m->name);
+  char *b = buf[k++ & 15];
+  if (!strncasecmp(m->name, "c:/", 3)) snprintf(b, 300, "C:\\%s", m->name + 3);   // a DLL lifted from the image's drive
+  else snprintf(b, 300, "C:\\title\\%s", m->name);
   for (char *p = b; *p; p++) if (*p == '/') *p = '\\';
   return b;
 }
@@ -485,16 +558,21 @@ IMP(kernel32, WideCharToMultiByte) {
 
 // ---- ntdll functions kernel32 forwards: exception handling is not implemented yet ----
 
-// ---- slim reader/writer locks and condition variables: runtime objects behind the guest's 8 bytes ----
+// ---- slim reader/writer locks and condition variables: runtime objects behind the guest's pointer-sized cell ----
 typedef struct { pthread_mutex_t m; pthread_cond_t cv; int readers, writer; } Srw;
 typedef struct { pthread_mutex_t m; pthread_cond_t cv; u64 seq; } Cond;
 static pthread_mutex_t lazy_lock = PTHREAD_MUTEX_INITIALIZER;
+#if GUEST_BITS == 32
+typedef u32 LazyCell;
+#else
+typedef u64 LazyCell;
+#endif
 static void *lazy(u64 at, size_t size) {
-  void *p = (void *)GP(__atomic_load_n((u64 *)GP(at), __ATOMIC_ACQUIRE));
+  void *p = (void *)GP(__atomic_load_n((LazyCell *)GP(at), __ATOMIC_ACQUIRE));
   if (p) return p;
   pthread_mutex_lock(&lazy_lock);
-  p = (void *)GP(M64(at));
-  if (!p) { p = calloc(1, size); pthread_mutex_init((pthread_mutex_t *)p, 0); pthread_cond_init((pthread_cond_t *)((char *)p + sizeof(pthread_mutex_t)), 0); __atomic_store_n((u64 *)GP(at), (u64)(uptr)p, __ATOMIC_RELEASE); }
+  p = (void *)GP(MP(at));
+  if (!p) { p = calloc(1, size); pthread_mutex_init((pthread_mutex_t *)p, 0); pthread_cond_init((pthread_cond_t *)((char *)p + sizeof(pthread_mutex_t)), 0); __atomic_store_n((LazyCell *)GP(at), (LazyCell)(uptr)p, __ATOMIC_RELEASE); }
   pthread_mutex_unlock(&lazy_lock);
   return p;
 }
@@ -514,14 +592,14 @@ static void srw_unlock(u64 at, int excl) {
   if (excl) l->writer = 0; else l->readers--;
   pthread_cond_broadcast(&l->cv); pthread_mutex_unlock(&l->m);
 }
-IMP(kernel32, InitializeSRWLock) { M64(ARG(0)) = 0; }
+IMP(kernel32, InitializeSRWLock) { MP(ARG(0)) = 0; }
 IMP(kernel32, AcquireSRWLockExclusive) { srw_lock(ARG(0), 1); }
 IMP(kernel32, AcquireSRWLockShared) { srw_lock(ARG(0), 0); }
 IMP(kernel32, TryAcquireSRWLockExclusive) { RET(srw_try(ARG(0), 1)); }
 IMP(kernel32, TryAcquireSRWLockShared) { RET(srw_try(ARG(0), 0)); }
 IMP(kernel32, ReleaseSRWLockExclusive) { srw_unlock(ARG(0), 1); }
 IMP(kernel32, ReleaseSRWLockShared) { srw_unlock(ARG(0), 0); }
-IMP(kernel32, InitializeConditionVariable) { M64(ARG(0)) = 0; }
+IMP(kernel32, InitializeConditionVariable) { MP(ARG(0)) = 0; }
 static void cond_wake(u64 at) { Cond *v = lazy(at, sizeof(Cond)); pthread_mutex_lock(&v->m); v->seq++; pthread_cond_broadcast(&v->cv); pthread_mutex_unlock(&v->m); }
 IMP(kernel32, WakeConditionVariable) { cond_wake(ARG(0)); }
 IMP(kernel32, WakeAllConditionVariable) { cond_wake(ARG(0)); }
@@ -611,19 +689,22 @@ static void addr_wake(void) { pthread_mutex_lock(&addr_lock); addr_seq++; pthrea
 IMP(kernel32, WakeByAddressSingle) { addr_wake(); }
 IMP(kernel32, WakeByAddressAll) { addr_wake(); }
 
-// ---- interlocked singly linked lists (SLIST_HEADER: the first entry, then a depth); one lock for all ----
+// ---- interlocked singly linked lists; one lock for all ----
+// SLIST_HEADER: the first entry, then the depth. 32-bit: Next (4 bytes), Depth (2), Sequence (2); 64-bit (the header
+// we write): Next (8), Depth (2 at +8). An entry starts with its Next pointer (pointer-sized).
 static pthread_mutex_t slist_lock = PTHREAD_MUTEX_INITIALIZER;
-IMP(kernel32, InitializeSListHead) { M64(ARG(0)) = 0; M64(ARG(0) + 8) = 0; }
-IMP(kernel32, InterlockedPushEntrySList) { pthread_mutex_lock(&slist_lock); u64 h = ARG(0), e = ARG(1), old = M64(h); M64(e) = old; M64(h) = e; M64(h + 8) += 1; pthread_mutex_unlock(&slist_lock); RET(old); }
-IMP(kernel32, InterlockedPopEntrySList) { pthread_mutex_lock(&slist_lock); u64 h = ARG(0), e = M64(h); if (e) { M64(h) = M64(e); M64(h + 8) -= 1; } pthread_mutex_unlock(&slist_lock); RET(e); }
-IMP(kernel32, InterlockedFlushSList) { pthread_mutex_lock(&slist_lock); u64 h = ARG(0), e = M64(h); M64(h) = 0; M64(h + 8) = 0; pthread_mutex_unlock(&slist_lock); RET(e); }
-IMP(kernel32, QueryDepthSList) { RET((u16)M64(ARG(0) + 8)); }
+#define SL_DEPTH(h) M16((h) + PTR_SIZE)
+IMP(kernel32, InitializeSListHead) { u64 h = ARG(0); M64(h) = 0; if (PTR_SIZE == 8) M64(h + 8) = 0; } // 8 bytes (32-bit) or 16
+IMP(kernel32, InterlockedPushEntrySList) { pthread_mutex_lock(&slist_lock); u64 h = ARG(0), e = ARG(1), old = MP(h); MP(e) = old; MP(h) = e; SL_DEPTH(h) += 1; if (PTR_SIZE == 4) M16(h + 6) += 1; pthread_mutex_unlock(&slist_lock); RET(old); }
+IMP(kernel32, InterlockedPopEntrySList) { pthread_mutex_lock(&slist_lock); u64 h = ARG(0), e = MP(h); if (e) { MP(h) = MP(e); SL_DEPTH(h) -= 1; if (PTR_SIZE == 4) M16(h + 6) += 1; } pthread_mutex_unlock(&slist_lock); RET(e); }
+IMP(kernel32, InterlockedFlushSList) { pthread_mutex_lock(&slist_lock); u64 h = ARG(0), e = MP(h); MP(h) = 0; SL_DEPTH(h) = 0; pthread_mutex_unlock(&slist_lock); RET(e); }
+IMP(kernel32, QueryDepthSList) { RET(SL_DEPTH(ARG(0))); }
 IMP(kernel32, EncodePointer) { RET(ARG(0)); } // no secret to mix in: the identity, which DecodePointer undoes
 IMP(kernel32, DecodePointer) { RET(ARG(0)); }
 IMP(kernel32, DisableThreadLibraryCalls) { RET(1); }
 IMP(kernel32, RtlPcToFileHeader) { // (pc, &base): the image holding pc
   const ModuleDef *m = rt_module_of(ARG(0)); u64 b = m ? m->base : 0;
-  if (ARG(1)) M64(ARG(1)) = b; RET(b);
+  if (ARG(1)) MP(ARG(1)) = b; RET(b);
 }
 // STARTUPINFO: 68 bytes for a 32-bit guest, 104 for a 64-bit one; all zero but its size
 #define STARTUPINFO_SIZE (GUEST_BITS == 32 ? 68 : 104)
@@ -663,3 +744,17 @@ IMP(kernel32, CloseThreadpoolWork) {} // kept: a callback still running may name
 IMP(kernel32, TrySubmitThreadpoolCallback) { TpRun *r = calloc(1, sizeof *r); r->cb = ARG(0); r->ctx = ARG(1); r->simple = 1; rt_spawn_native(tp_main, r); RET(1); }
 IMP(kernel32, CallbackMayRunLong) { RET(1); }
 IMP(kernel32, FreeLibraryWhenCallbackReturns) {} // modules are never unloaded here
+
+// ---- psapi (kernel32's K32 names): the lifted images, for code that looks for its modules' unwind tables ----
+IMP(kernel32, K32EnumProcessModules) { // (process, modules[], bytes, &needed)
+  u64 out = ARG(1); u32 cap = (u32)ARG(2) / PTR_SIZE;
+  for (unsigned i = 0; i < rt_module_count && i < cap; i++) MP(out + PTR_SIZE * i) = rt_modules[i].base;
+  if (ARG(3)) M32(ARG(3)) = rt_module_count * PTR_SIZE;
+  RET(1);
+}
+IMP(kernel32, K32GetModuleInformation) { // (process, module, MODULEINFO* {base, size, entry}, bytes)
+  const ModuleDef *m = rt_module_of(ARG(1));
+  if (!m || ARG(3) < 3u * PTR_SIZE) { SET_LAST_ERROR(87); RET(0); return; }
+  u64 mi = ARG(2); MP(mi) = m->base; M32(mi + PTR_SIZE) = (u32)m->size; MP(mi + 2 * PTR_SIZE) = m->entry;
+  RET(1);
+}

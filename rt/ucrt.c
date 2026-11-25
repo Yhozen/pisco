@@ -66,24 +66,33 @@ IMP(ucrtbase, wcrtomb) { if (!ARG(0)) { RET(1); return; } u16 w = (u16)ARG(1); M
 IMP(ucrtbase, _errno) { RET(THREAD(c)->teb + TEB_ERRNO); }
 
 // printf family: __stdio_common_v*printf(options, ..., format, locale, va_list)
+// The options word is 64 bits wide: in a 32-bit call it takes two stack slots, so the arguments after it are one
+// slot further than ARG counts.
+#if GUEST_BITS == 32
+#define OPT M64(R[RSP] + 4)
+#define OA(n) ARG((n) + 1)
+#else
+#define OPT ARG(0)
+#define OA(n) ARG(n)
+#endif
 // option bit 1 (_CRT_INTERNAL_PRINTF_STANDARD_SNPRINTF_BEHAVIOR): C99 snprintf results
-IMP(ucrtbase, __stdio_common_vfprintf) { int n; rt_msvcrt_format(c, ARG(1), 0, 0, ARG(2), ARG(4), &n); RET(n); }
+IMP(ucrtbase, __stdio_common_vfprintf) { int n; rt_msvcrt_format(c, OA(1), 0, 0, OA(2), OA(4), &n); RET(n); }
 IMP(ucrtbase, __stdio_common_vsprintf) {
-  u64 opt = ARG(0), buf = ARG(1), cap = ARG(2); int n;
-  rt_msvcrt_format(c, 0, buf, cap, ARG(3), M64(R[RSP] + 0x30), &n);
+  u64 opt = OPT, buf = OA(1), cap = OA(2); int n;
+  rt_msvcrt_format(c, 0, buf, cap, OA(3), OA(5), &n);
   if (!buf || !cap) { RET(n); return; }
   if ((u64)n < cap) { M8(buf + n) = 0; RET(n); return; }
   M8(buf + cap - 1) = 0;
   RET((opt & 2) ? (u64)n : (u64)-1);
 }
 IMP(ucrtbase, __stdio_common_vsnprintf_s) {
-  u64 buf = ARG(1), cap = ARG(2), max = ARG(3); int n;
-  rt_msvcrt_format(c, 0, buf, cap < max ? cap : max + 1, M64(R[RSP] + 0x28), M64(R[RSP] + 0x38), &n);
+  u64 buf = OA(1), cap = OA(2), max = OA(3); int n;
+  rt_msvcrt_format(c, 0, buf, cap < max ? cap : max + 1, OA(4), OA(6), &n);
   if ((u64)n < cap && (u64)n <= max) { M8(buf + n) = 0; RET(n); } else { if (cap) M8(buf + (max < cap ? max : cap - 1)) = 0; RET(-1); }
 }
 IMP(ucrtbase, __stdio_common_vsprintf_s) {
-  u64 buf = ARG(1), cap = ARG(2); int n;
-  rt_msvcrt_format(c, 0, buf, cap, ARG(3), M64(R[RSP] + 0x30), &n);
+  u64 buf = OA(1), cap = OA(2); int n;
+  rt_msvcrt_format(c, 0, buf, cap, OA(3), OA(5), &n);
   if ((u64)n < cap) { M8(buf + n) = 0; RET(n); } else { if (cap) M8(buf) = 0; RET(-1); }
 }
 IMP(ucrtbase, __stdio_common_vfwprintf) { RET(0); }
@@ -113,17 +122,17 @@ static int wide_format(Cpu *c, u64 buf, u64 cap, u64 wfmt, u64 va) {
   free(f); free((void *)GP(tmp));
   return ok || !buf ? len : -1;
 }
-IMP(ucrtbase, __stdio_common_vswprintf) { int n = wide_format(c, ARG(1), ARG(2), ARG(3), M64(R[RSP] + 0x30)); RET((s64)n); } // (options, buffer, count, format, locale, va_list)
-IMP(ucrtbase, __stdio_common_vswprintf_s) { int n = wide_format(c, ARG(1), ARG(2), ARG(3), M64(R[RSP] + 0x30)); RET((s64)n); }
+IMP(ucrtbase, __stdio_common_vswprintf) { int n = wide_format(c, OA(1), OA(2), OA(3), OA(5)); RET((s64)n); } // (options, buffer, count, format, locale, va_list)
+IMP(ucrtbase, __stdio_common_vswprintf_s) { int n = wide_format(c, OA(1), OA(2), OA(3), OA(5)); RET((s64)n); }
 IMP(ucrtbase, __stdio_common_vsnwprintf_s) { // (options, buffer, count, max, format, locale, va_list)
-  u64 cap = ARG(2), max = ARG(3); int n = wide_format(c, ARG(1), max + 1 < cap ? max + 1 : cap, M64(R[RSP] + 0x28), M64(R[RSP] + 0x38)); RET((s64)n);
+  u64 cap = OA(2), max = OA(3); int n = wide_format(c, OA(1), max + 1 < cap ? max + 1 : cap, OA(4), OA(6)); RET((s64)n);
 }
 IMP(ucrtbase, _set_fmode) { init_globals(); M32(fmode) = (u32)ARG(0); RET(0); }
 IMP(ucrtbase, __setusermatherr) {}
 IMP(ucrtbase, _query_app_type) { RET(1); }
-IMP(ucrtbase, terminate) { rt_fatal("terminate() called from 0x%llx", M64(R[RSP])); }
-IMP(ucrtbase, _invalid_parameter_noinfo) { rt_fatal("CRT invalid parameter (from 0x%llx)", M64(R[RSP])); }
-IMP(ucrtbase, _invalid_parameter_noinfo_noreturn) { rt_fatal("CRT invalid parameter (from 0x%llx)", M64(R[RSP])); }
+IMP(ucrtbase, terminate) { rt_fatal("terminate() called from 0x%llx", (u64)MP(R[RSP])); }
+IMP(ucrtbase, _invalid_parameter_noinfo) { rt_fatal("CRT invalid parameter (from 0x%llx)", (u64)MP(R[RSP])); }
+IMP(ucrtbase, _invalid_parameter_noinfo_noreturn) { rt_fatal("CRT invalid parameter (from 0x%llx)", (u64)MP(R[RSP])); }
 
 // ---- strings, numbers, files Doom-era C code asks for ----
 #include <ctype.h>
@@ -133,14 +142,16 @@ int rt_file_write(int fd, const void *p, u32 n);
 IMP(ucrtbase, _stricmp) { RET((s64)strcasecmp(GSTR(ARG(0)), GSTR(ARG(1)))); }
 IMP(ucrtbase, _strnicmp) { RET((s64)strncasecmp(GSTR(ARG(0)), GSTR(ARG(1)), (size_t)ARG(2))); }
 IMP(ucrtbase, putchar) { char ch = (char)ARG(0); rt_file_write(1, &ch, 1); RET((u8)ch); }
-IMP(ucrtbase, atof) { double v = atof(GSTR(ARG(0))); memset(&X[0], 0, 16); X[0].pd[0] = v; }
+IMP(ucrtbase, atof) { double v = atof(GSTR(ARG(0))); DRET(v); }
 IMP(ucrtbase, _mkdir) { u32 e = vfs_mkdir(GSTR(ARG(0))); RET(e && e != 183 ? -1 : 0); }
 IMP(ucrtbase, remove) { RET(vfs_remove(GSTR(ARG(0)), 0) ? -1 : 0); }
 IMP(ucrtbase, rename) { RET(vfs_rename(GSTR(ARG(0)), GSTR(ARG(1)), 0) ? -1 : 0); }
 // sscanf: each conversion of the format is done by the host's sscanf on the rest of the input, then stored
-// through the guest pointer from the argument list (a Win64 va_list: 8-byte slots)
-IMP(ucrtbase, __stdio_common_vsscanf) { // (options, buffer, count, format, locale, va_list)
-  const char *in = GSTR(ARG(1)), *f = GSTR(ARG(3)); u64 va = ARG(5); int assigned = 0;
+// through the guest pointer from the argument list (pointer-sized slots)
+int rt_vsscanf(Cpu *c, const char *in, const char *f, u64 va); // msvcrt's sscanf too (rt/windows-x86/msvcrt32.c)
+IMP(ucrtbase, __stdio_common_vsscanf) { RET((s64)rt_vsscanf(c, GSTR(OA(1)), GSTR(OA(3)), OA(5))); } // (options, buffer, count, format, locale, va_list)
+int rt_vsscanf(Cpu *c, const char *in, const char *f, u64 va) {
+  const char *start = in; int assigned = 0;
   while (*f) {
     if (isspace((u8)*f)) { while (isspace((u8)*in)) in++; f++; continue; }
     if (*f != '%' || f[1] == '%') { if (*f == '%') f++; if (*in != *f) break; in++; f++; continue; }
@@ -158,16 +169,16 @@ IMP(ucrtbase, __stdio_common_vsscanf) { // (options, buffer, count, format, loca
     host[k] = 0;
     char fmt2[96]; snprintf(fmt2, sizeof fmt2, "%s%%n", host);
     int used = -1;
-    if (conv == 'n') { if (!suppress) { u64 p = M64(va); va += 8; M32(p) = (u32)(in - GSTR(ARG(1))); } f = end; continue; }
+    if (conv == 'n') { if (!suppress) { u64 p = MP(va); va += PTR_SIZE; M32(p) = (u32)(in - start); } f = end; continue; }
     if (suppress) { if (strchr("diouxX", conv)) { long long v; snprintf(fmt2, sizeof fmt2, "%%lld%%n"); sscanf(in, fmt2, &v, &used); } else if (strchr("feEgGaA", conv)) { double v; sscanf(in, "%lf%n", &v, &used); } else { char tmp[1024]; snprintf(fmt2, sizeof fmt2, "%s%%n", host); sscanf(in, fmt2, tmp, &used); } if (used < 0) break; in += used; f = end; continue; }
-    u64 p = M64(va); va += 8;
+    u64 p = MP(va); va += PTR_SIZE;
     if (strchr("di", conv)) { long long v; char h2[96]; snprintf(h2, sizeof h2, "%.*sll%c%%n", (int)(strlen(host) - 1), host, conv); if (sscanf(in, h2, &v, &used) < 1 || used < 0) break; if (size == 3) M64(p) = (u64)v; else if (size == 1) M16(p) = (u16)v; else if (size == 2) M8(p) = (u8)v; else M32(p) = (u32)v; }
     else if (strchr("ouxX", conv)) { unsigned long long v; char h2[96]; snprintf(h2, sizeof h2, "%.*sll%c%%n", (int)(strlen(host) - 1), host, conv); if (sscanf(in, h2, &v, &used) < 1 || used < 0) break; if (size == 3) M64(p) = v; else if (size == 1) M16(p) = (u16)v; else if (size == 2) M8(p) = (u8)v; else M32(p) = (u32)v; }
     else if (strchr("feEgGaA", conv)) { double v; if (sscanf(in, "%lf%n", &v, &used) < 1 || used < 0) break; if (size == 4) MF64(p) = v; else MF32(p) = (float)v; }
     else { if (sscanf(in, fmt2, GSTR(p), &used) < 1 || used < 0) break; }
     in += used; assigned++; f = end;
   }
-  RET(assigned);
+  (void)c; return assigned;
 }
 IMP(user32, MessageBoxW) { char *t = rt_narrow(GWSTR(ARG(1))), *cap = ARG(2) ? rt_narrow(GWSTR(ARG(2))) : 0; rt_log("message box: %s%s%s", cap ? cap : "", cap ? ": " : "", t); free(t); free(cap); RET(1); }
 IMP(user32, MessageBoxA) { rt_log("message box: %s", GSTR(ARG(1))); RET(1); }
@@ -198,7 +209,7 @@ IMP(ucrtbase, _unlock_locales) {}
 // title can see: an empty one, so basic_filebuf goes through fgetc / fputc / fread / fwrite.
 IMP(ucrtbase, _get_stream_buffer_pointers) {
   static u64 cells; if (!cells) cells = (uptr)calloc(4, 8); // a null pointer and a zero count to point at
-  if (ARG(1)) M64(ARG(1)) = cells; if (ARG(2)) M64(ARG(2)) = cells + 8; if (ARG(3)) M64(ARG(3)) = cells + 16;
+  if (ARG(1)) MP(ARG(1)) = cells; if (ARG(2)) MP(ARG(2)) = cells + 8; if (ARG(3)) MP(ARG(3)) = cells + 16;
   RET(0);
 }
 extern const char *rt_command_line;

@@ -762,12 +762,22 @@ fn decode_func(img: &Image, entry: u64, entries: &BTreeSet<u64>) -> (Func, BTree
                             calls.insert(ins.near_branch_target());
                         } else if is_near(&ins) && ins.near_branch_target() != next {
                             calls.insert(ins.near_branch_target()); // (`call $+5` only pushes its return address)
+                            if is_setjmp_thunk(img, ins.near_branch_target()) { f.pads.insert(next); work.push(next); }   // (a longjmp resumes there)
                         }
                         f.leaders.insert(next);
                         if !m32 && is_import_thunk(img, ins.near_branch_target(), "_CxxThrowException") { calls.extend(throw_info_functions(img, &f.insns, &ins)); }
                     }
                     FlowControl::IndirectCall => {
                         f.leaders.insert(next);
+                        // 32-bit `call [__imp__setjmp3]`: a longjmp resumes after the call, in this frame (rt/msvcrt.c);
+                        // its return address is a landing pad
+                        if m32 && ins.op0_kind() == OpKind::Memory && ins.memory_base() == Register::None && ins.memory_index() == Register::None {
+                            let slot = ins.memory_displacement64();
+                            if is_setjmp_slot(img, slot) {
+                                f.pads.insert(next);
+                                work.push(next);
+                            }
+                        }
                         if !m32 && ins.is_ip_rel_memory_operand() && img.imports.iter().any(|(slot, n)| *slot == ins.ip_rel_memory_address() && n.ends_with("!_CxxThrowException")) {
                             calls.extend(throw_info_functions(img, &f.insns, &ins));
                         }
@@ -852,6 +862,7 @@ fn decode_func(img: &Image, entry: u64, entries: &BTreeSet<u64>) -> (Func, BTree
 }
 
 struct Emit<'a> {
+    trace_pc: bool,                    // --trace-pc: each block stores its address in rt_last_pc (the place a trap was)
     img: &'a Image,
     unimpl: BTreeMap<String, u32>,
     /// AVX-and-later instructions: lifted as traps (the virtual CPU does not report AVX, so code that checks
@@ -927,7 +938,7 @@ fn ea32(i: &Instruction) -> String {
         s = format!("(u16)({s})");
     }
     if !seg.is_empty() {
-        write!(s, "+{seg}").unwrap();
+        write!(s, " + {seg}").unwrap();   // (spaced: `0x4e+c->fs_base` would be one number token to C, an exponent)
     }
     format!("((u32)({s}))")
 }
@@ -1504,6 +1515,7 @@ impl Emit<'_> {
             }
             if f.leaders.contains(&ip) {
                 writeln!(s, "L_{ip:x}:;").unwrap();
+                if self.trace_pc { writeln!(s, "rt_pc(c,0x{ip:x}u);").unwrap(); }
             }
             let body = self.insn(i, f, entries, entry);
             if !body.is_empty() {
@@ -1621,6 +1633,20 @@ fn discover32(img: &Image, roots: &BTreeSet<u64>, forced: &BTreeSet<u64>) -> Fou
         for (k, w) in d.chunks_exact(4).enumerate() {
             let t = u64::from(u32::from_le_bytes(w.try_into().unwrap()));
             if img.is_code(t) && !slots.contains(&(va + 4 * k as u64)) {
+                cand.insert(t);
+            }
+        }
+    }
+    // An image that merges its read-only data into its code section (D3DX's .text holds its import table and the C
+    // runtime's tables of initializers): a relocated pointer there is a candidate as well. Pointers that are part of
+    // an instruction (`push offset f`) are found by decoding too; a candidate inside known code is rejected below.
+    // (every relocation that is not an import slot: the stretch of the code section that holds data is not "code")
+    for &r in &img.relocs {
+        if slots.contains(&r) {
+            continue;
+        }
+        if let Some(t) = img.u32(r).map(u64::from) {
+            if img.is_code(t) {
                 cand.insert(t);
             }
         }
@@ -1845,7 +1871,7 @@ fn main() {
 fn lift() {
     let args: Vec<String> = std::env::args().collect();
     if args.len() < 3 {
-        eprintln!("usage: lifter <image.exe> <out.c> [--split N] [--base hex] [--entry hex]... [--builtin name.dll]...");
+        eprintln!("usage: lifter <image.exe> <out.c> [--split N] [--base hex] [--entry hex]... [--builtin name.dll]... [--dll-dir <folder>=<guest folder>]... [--trace-pc]");
         std::process::exit(2);
     }
     let exe = std::path::Path::new(&args[1]);
@@ -1853,11 +1879,18 @@ fn lift() {
     let listing: Vec<String> = std::fs::read_dir(dir).map(|d| d.filter_map(|e| e.ok()).map(|e| e.file_name().to_string_lossy().into_owned()).collect()).unwrap_or_default();
     // --builtin name.dll: a DLL the title ships that is not lifted (the runtime answers for it: a recipe's choice)
     let builtin: Vec<&String> = args.iter().enumerate().filter(|(_, a)| *a == "--builtin").filter_map(|(i, _)| args.get(i + 1)).collect();
+    // --dll-dir <folder>=<guest folder>: where else an imported DLL is looked for after the exe's folder (an image's
+    // C:\WINDOWS\system32, given as c:/WINDOWS/system32): one found there is lifted with the title under its guest path
+    let dll_dirs: Vec<(std::path::PathBuf, String, Vec<String>)> = args.iter().enumerate().filter(|(_, a)| *a == "--dll-dir").filter_map(|(i, _)| args.get(i + 1)).map(|a| {
+        let (host, guest) = a.split_once('=').expect("--dll-dir <folder>=<guest folder>");
+        let list = std::fs::read_dir(host).map(|d| d.filter_map(|e| e.ok()).map(|e| e.file_name().to_string_lossy().into_owned()).collect()).unwrap_or_default();
+        (std::path::PathBuf::from(host), guest.trim_end_matches('/').to_string(), list)
+    }).collect();
     let mut mods: Vec<(String, Image)> = Vec::new();
-    let mut queue = vec![exe.file_name().unwrap().to_string_lossy().into_owned()];
-    while let Some(name) = queue.pop() {
+    let mut queue = vec![(exe.file_name().unwrap().to_string_lossy().into_owned(), exe.to_path_buf())];
+    while let Some((name, path)) = queue.pop() {
         if mods.iter().any(|(n, _)| n.eq_ignore_ascii_case(&name)) { continue; }
-        let data = std::fs::read(dir.join(&name)).expect("read image");
+        let data = std::fs::read(&path).expect("read image");
         let img = Image::load(&data).unwrap_or_else(|e| panic!("{name}: {e}"));
         for (_, imp) in &img.imports {
             let dll = imp.split('!').next().unwrap();
@@ -1867,7 +1900,9 @@ fn lift() {
             const RUNTIME: [&str; 3] = ["libhttpclient.dll", "xcurl.dll", "winpixeventruntime.dll"];
             if RUNTIME.contains(&dll.to_ascii_lowercase().as_str()) { continue; }
             if let Some(file) = listing.iter().find(|f| f.eq_ignore_ascii_case(dll)) {
-                queue.push(file.clone()); // a DLL the title ships: lifted with it
+                queue.push((file.clone(), dir.join(file))); // a DLL the title ships: lifted with it
+            } else if let Some((host, guest, file)) = dll_dirs.iter().find_map(|(h, g, l)| l.iter().find(|f| f.eq_ignore_ascii_case(dll)).map(|f| (h, g, f))) {
+                queue.push((format!("{guest}/{file}"), host.join(file))); // a DLL of the image's system folder
             }
         }
         mods.push((name, img));
@@ -1898,7 +1933,9 @@ fn lift() {
             next = after(img);
         }
     } else {
-        let mut next = first.unwrap_or(if mods[0].1.base >= 0x1_0000_0000 || mods.len() > 1 { 0x1000_0000 } else { mods[0].1.base });
+        // 64-bit: several images start at 0x10000000, above the runtime's data; a 32-bit exe keeps its own base (its
+        // layout leaves the runtime room below and above the images: tools/build-title.sh)
+        let mut next = first.unwrap_or(if mods[0].1.base >= 0x1_0000_0000 || (mods.len() > 1 && bits == 64) { 0x1000_0000 } else { mods[0].1.base });
         for (name, img) in mods.iter_mut() {
             let from = img.base;
             img.rebase(next).unwrap_or_else(|e| panic!("{name}: {e}"));
@@ -1914,7 +1951,8 @@ fn lift() {
         panic!("no room below 4 GiB for the import addresses");
     }
     // imports from a DLL we lift resolve to its exports here; the rest go to the runtime
-    let lower: Vec<String> = mods.iter().map(|(n, _)| n.to_ascii_lowercase()).collect();
+    // (by file name: a DLL from the system folder is named by its guest path, "c:/WINDOWS/system32/x.dll")
+    let lower: Vec<String> = mods.iter().map(|(n, _)| n.rsplit('/').next().unwrap_or(n).to_ascii_lowercase()).collect();
     let mut resolved: BTreeMap<u64, u64> = BTreeMap::new(); // IAT slot -> function
     for (_, img) in &mods {
         for (slot, imp) in &img.imports {
@@ -1939,6 +1977,7 @@ fn lift() {
         img.imports.extend(m.imports.iter().cloned());
         img.exports.extend(m.exports.iter().cloned());
         img.ranges.extend(m.ranges.iter().cloned());
+        img.relocs.extend(m.relocs.iter().copied());   // (discover32 takes relocated pointers as candidates)
     }
     // function entries: the entry point, the exception table, then every call target, to a fixpoint
     let mut entries: BTreeSet<u64> = img.pdata.keys().copied().collect();
@@ -1988,7 +2027,7 @@ fn lift() {
     }
     // a fallthrough into another function's entry is emitted as a call to it: make sure it exists
     let cut = found32.as_ref().map(|f| &f.hard).unwrap_or(&entries);
-    let mut em = Emit { img: &img, unimpl: BTreeMap::new(), avx: 0, unresolved: 0, cut, counted: BTreeSet::new(), unresolved_at: BTreeSet::new(), pointer_jumps: BTreeSet::new() };
+    let mut em = Emit { trace_pc: args.iter().any(|a| a == "--trace-pc"), img: &img, unimpl: BTreeMap::new(), avx: 0, unresolved: 0, cut, counted: BTreeSet::new(), unresolved_at: BTreeSet::new(), pointer_jumps: BTreeSet::new() };
     let _ = em.img;
     let parts: usize = args.iter().position(|a| a == "--split").map(|i| args[i + 1].parse().expect("--split N")).unwrap_or(1).max(1);
     // (a 64-bit title's files stay as they were: cpu.h takes GUEST_BITS as 64 when it is not defined)
@@ -2598,6 +2637,16 @@ fn is_import_thunk(img: &Image, at: u64, name: &str) -> bool {
     let mut d = Decoder::with_ip(64, &b[..b.len().min(16)], at, DecoderOptions::NONE);
     let i = d.decode();
     i.mnemonic() == Mnemonic::Jmp && i.is_ip_rel_memory_operand() && img.imports.iter().any(|(slot, n)| *slot == i.ip_rel_memory_address() && n.ends_with(&format!("!{name}")))
+}
+/// 32-bit: is `at` an import slot of a setjmp, or a thunk (`jmp [slot]`) to one? A call to it returns twice.
+fn is_setjmp_slot(img: &Image, slot: u64) -> bool {
+    img.imports.iter().any(|(s, n)| *s == slot && ["!_setjmp3", "!_setjmp", "!setjmp"].iter().any(|x| n.ends_with(x)))
+}
+fn is_setjmp_thunk(img: &Image, at: u64) -> bool {
+    let Some(b) = img.bytes(at) else { return false };
+    let mut d = Decoder::with_ip(32, &b[..b.len().min(16)], at, DecoderOptions::NONE);
+    let i = d.decode();
+    i.mnemonic() == Mnemonic::Jmp && i.op0_kind() == OpKind::Memory && i.memory_base() == Register::None && i.memory_index() == Register::None && is_setjmp_slot(img, i.memory_displacement64())
 }
 /// GCC / LLVM (`.gcc_except_table`, here inline after the personality's RVA): the call-site table's landing pads.
 fn gcc_lsda(img: &Image, at: u64, start: u64, end: u64) -> Option<Vec<u64>> {

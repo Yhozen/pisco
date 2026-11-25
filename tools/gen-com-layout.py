@@ -5,7 +5,7 @@
 # mingw-w64 / Wine headers: d3d9.h, dinput.h): the methods in vtable order and, for a 32-bit stdcall caller, the
 # bytes of arguments each removes from the stack (`this` included), plus the interface's IID where the header
 # gives one. A parameter that is not 4 bytes wide (a double, a 64-bit integer or a structure by value) is an error.
-#   python3 tools/gen-com-layout.py $MINGW/i686-w64-mingw32/include/d3d9.h IDirect3D9 IDirect3DDevice9 ... > rt/win32/d3d9_layout.gen.h
+#   python3 tools/gen-com-layout.py $MINGW/i686-w64-mingw32/include/d3d9.h IDirect3D9 IDirect3DDevice9 ... > rt/windows-x86/d3d9_layout.gen.h
 import re, sys, os
 
 src = open(sys.argv[1], encoding='utf-8', errors='replace').read()

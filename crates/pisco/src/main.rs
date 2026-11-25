@@ -2,8 +2,9 @@
 // pisco: builds, runs and inspects title images (docs/images.md).
 //   pisco build <recipe dir> [--source <installer>] [--out <image dir>] [--cache <dir>] [--compare <installed folder>]
 //   pisco run <image> [--session <session.json>] [--saves <dir>] [--chrome] [-- title arguments]
-//   pisco census <image | title.exe> [--recipe <recipe dir> | --from base/win32-x86:1 --libraries a,b] [--all]
+//   pisco census <image | title.exe> [--recipe <recipe dir> | --from base/windows-x86:1 --libraries a,b] [--dll-dir <system32>] [--all]
 //   pisco inspect <image> [--files]
+//   pisco sources <base | recipe dir> [--libraries a,b | --all-libraries]: the runtime files a title of that base links
 // The repository is found from this program's own place (target/release/pisco), or SW_ROOT.
 mod build;
 mod census;
@@ -22,7 +23,7 @@ fn root() -> PathBuf {
     PathBuf::from(".")
 }
 fn usage() -> ! {
-    eprintln!("usage:\n  pisco build <recipe dir> [--source <installer>] [--out <image dir>] [--cache <dir>] [--compare <installed folder>]\n  pisco run <image> [--session <session.json>] [--saves <dir>] [--chrome] [-- title arguments]\n  pisco census <image | title.exe> [--recipe <recipe dir> | --from <base> --libraries a,b] [--all]\n  pisco inspect <image> [--files]");
+    eprintln!("usage:\n  pisco build <recipe dir> [--source <installer>] [--out <image dir>] [--cache <dir>] [--compare <installed folder>]\n  pisco run <image> [--session <session.json>] [--saves <dir>] [--chrome] [-- title arguments]\n  pisco census <image | title.exe> [--recipe <recipe dir> | --from <base> --libraries a,b] [--all]\n  pisco inspect <image> [--files]\n  pisco sources <base | recipe dir> [--libraries a,b | --all-libraries]");
     std::process::exit(2);
 }
 struct Args { pos: Vec<String>, opts: Vec<(String, Option<String>)>, rest: Vec<String> }
@@ -52,8 +53,9 @@ fn main() {
         "build" => { let a = parse(&args[1..], &["source", "out", "cache", "compare"]); let Some(p) = a.pos.first() else { usage() };
             build::build(&root, &build::Opts { recipe: p.into(), source: a.get("source"), out: a.get("out"), cache: a.get("cache"), compare: a.get("compare") }) }
         "run" => run(&root, &parse(&args[1..], &["session", "saves"])),
-        "census" => census(&root, &parse(&args[1..], &["from", "libraries", "recipe"])),
+        "census" => census(&root, &parse(&args[1..], &["from", "libraries", "recipe", "dll-dir"])),
         "inspect" => inspect(&parse(&args[1..], &[])),
+        "sources" => sources(&root, &parse(&args[1..], &["libraries"])),
         "-h" | "--help" | "help" => usage(),
         _ => { eprintln!("pisco: unknown command {cmd}"); usage() }
     };
@@ -88,13 +90,16 @@ fn census(root: &Path, a: &Args) -> R<()> {
         let builtin: Vec<String> = rec.as_ref().map(|r| r.dll.keys().cloned().collect()).unwrap_or_default();
         let tmp = root.join("out/pisco-census"); let _ = std::fs::remove_dir_all(&tmp); std::fs::create_dir_all(&tmp).map_err(|e| e.to_string())?;
         let t = build::tools(root)?;
-        let o = Command::new(&t.lifter).arg(target.canonicalize().map_err(|e| format!("{}: {e}", target.display()))?).arg("title.c").args(builtin.iter().flat_map(|d| ["--builtin", d.as_str()])).current_dir(&tmp).output().map_err(|e| e.to_string())?;
+        // --dll-dir <folder>: DLLs it imports from the system's folder (an image's C:\WINDOWS\system32) are lifted with it
+        let dll_dir = a.get("dll-dir").map(|d| format!("{}=c:/WINDOWS/system32", d.canonicalize().unwrap_or(d.clone()).display()));
+        let o = Command::new(&t.lifter).arg(target.canonicalize().map_err(|e| format!("{}: {e}", target.display()))?).arg("title.c").args(builtin.iter().flat_map(|d| ["--builtin", d.as_str()]))
+            .args(dll_dir.iter().flat_map(|d| ["--dll-dir", d.as_str()])).current_dir(&tmp).output().map_err(|e| e.to_string())?;
         std::fs::write(tmp.join("lifter.log"), [&o.stdout[..], &o.stderr[..]].concat()).map_err(|e| e.to_string())?;
         if !o.status.success() { return Err(format!("the lifter failed: {}", tmp.join("lifter.log").display())); }
         let dir = target.parent().unwrap_or(Path::new("."));
         let shipped = std::fs::read_dir(dir).map(|d| d.filter_map(|e| e.ok()).map(|e| e.file_name().to_string_lossy().to_ascii_lowercase()).filter(|n| n.ends_with(".dll") && !builtin.contains(n)).collect()).unwrap_or_default();
         let libs = if let Some(r) = &rec { r.libraries.clone() } else { a.get("libraries").map(|l| l.to_string_lossy().split(',').filter(|s| !s.is_empty()).map(String::from).collect()).unwrap_or_default() };
-        let from = rec.as_ref().map(|r| r.from.clone()).or(a.get("from").map(|p| p.to_string_lossy().into_owned())).unwrap_or("base/win32-x86:1".into());
+        let from = rec.as_ref().map(|r| r.from.clone()).or(a.get("from").map(|p| p.to_string_lossy().into_owned())).unwrap_or("base/windows-x86:1".into());
         (build::lifted_imports(&tmp.join("title.c"))?, from, libs, shipped)
     };
     let base = recipe::load_base(root, &base)?;
@@ -108,6 +113,27 @@ fn census(root: &Path, a: &Args) -> R<()> {
     for (d, (ok, n)) in &by { println!("  {ok:4} / {n:<4} {d}"); }
     for l in rep.lines.iter().filter(|l| a.flag("all") || l.starts_with("missing") || l.starts_with("needs")) { println!("  {l}"); }
     println!("{}", rep.summary);
+    Ok(())
+}
+
+/// The runtime's source files for a base (and libraries), one per line, from the repository's root: the only list
+/// of them is the bases' (tools/build-title.sh asks here)
+fn sources(root: &Path, a: &Args) -> R<()> {
+    let Some(what) = a.pos.first() else { usage() };
+    let (base, libs) = if what.starts_with("base/") {
+        let base = recipe::load_base(root, what)?;
+        let libs: Vec<String> = if a.flag("all-libraries") { base.libraries.keys().cloned().collect() }
+            else { a.get("libraries").map(|l| l.to_string_lossy().split(',').filter(|s| !s.is_empty()).map(String::from).collect()).unwrap_or_default() };
+        (base, libs)
+    } else {
+        let r = recipe::load_recipe(Path::new(what))?;
+        let base = recipe::load_base(root, &r.from)?;
+        (base, r.libraries)
+    };
+    let mut files = base.sources.clone();
+    for l in &libs { files.extend(base.libraries.get(l).ok_or(format!("{}: no library {l} (it has {})", base.reference(), base.libraries.keys().cloned().collect::<Vec<_>>().join(", ")))?.sources.iter().cloned()); }
+    files.sort(); files.dedup();
+    for f in files { println!("{f}"); }
     Ok(())
 }
 

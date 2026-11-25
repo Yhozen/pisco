@@ -1,0 +1,4 @@
+LIBRARY d3dx9_35.dll
+EXPORTS
+D3DXPreprocessShader@24
+D3DXCompileShader@40

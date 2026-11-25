@@ -3,7 +3,7 @@ name: progress
 on:
   push:
     branches: [main]
-    paths: ['rt/**', 'docs/progress-data.json', 'tools/progress.mjs', '.github/workflows/progress.yml']
+    paths: ['rt/**', 'bases/**', 'docs/progress-data.json', 'tools/progress.mjs', '.github/workflows/progress.yml']
   workflow_dispatch:
 permissions:
   contents: write

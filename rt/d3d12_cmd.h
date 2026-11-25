@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-// The stream between the graphics front ends (on the title's threads: rt/d3d12.c for Direct3D 12 and the
-// console's D3D12.X; rt/win32/d3d9_gpu.c for Direct3D 9, with the explicit records further down) and the GPU back
+// The stream between the graphics front ends (on the title's threads: rt/gdk/d3d12.c for Direct3D 12 and the
+// console's D3D12.X; rt/windows-x86/d3d9_gpu.c for Direct3D 9, with the explicit records further down) and the GPU back
 // end (web/gpu/backend.js on the page, web/gpu/null.js in Node). tools/gen-cmd-js.mjs turns every
 // `#define GPU_<NAME> <value>` line of this file into web/gpu/cmd.gen.js: keep one define per line.
 //
@@ -30,6 +30,9 @@
 // read back after work writes it). A texture with backing: its texels sit in guest memory in the title
 // layout (subresources one after another, as GetCopyableFootprints places them) and the GPU follows them.
 #define GPU_R_RESOURCE 1
+// in its flags, beside D3D12's: a D3D12 buffer, which gets 64 KiB past its end on the GPU (a constant buffer view
+// near the end still has the 64 KiB its translated shader declares; WebGPU checks the bound range against it)
+#define GPU_RESOURCE_CBV_TAIL 0x80000000u
 // id
 #define GPU_R_DESTROY 2
 // id, bytes, the serialized root signature (RTS0 part or a whole container holding one)
@@ -50,7 +53,7 @@
 #define GPU_R_MARK 9
 
 // ---- explicit records: a front end that is not Direct3D 12 says what WebGPU should do, in WebGPU's own terms.
-// Direct3D 9 (rt/win32/d3d9_gpu.c) is the first: no root signatures, no pipeline-state descriptions, no command
+// Direct3D 9 (rt/windows-x86/d3d9_gpu.c) is the first: no root signatures, no pipeline-state descriptions, no command
 // lists. It shares GPU_R_RESOURCE / GPU_R_DESTROY (buffers and textures, without guest backing), GPU_R_PRESENT and
 // GPU_R_MARK with the records above, and with them the ids, the DXGI format numbers and the D3D12 numbers of
 // blend factors, blend operations, comparisons and address modes (Direct3D 9's own are the same numbers).
@@ -76,6 +79,7 @@
 #define GPU_BIND_TEXTURE_2D 2
 #define GPU_BIND_TEXTURE_3D 3
 #define GPU_BIND_SAMPLER 4
+#define GPU_BIND_TEXTURE_CUBE 5
 // buffer id, offset, bytes, mode (GPU_WRITE_*), then the bytes
 #define GPU_R_WRITE_BUFFER 13
 // the bytes replace what earlier draws read: those draws still see the old bytes
@@ -105,6 +109,11 @@
 #define GPU_DRAW_WORDS 12
 #define GPU_DRAW_INDEXED 1
 #define GPU_DRAW_INDEX32 2
+// A texture's pixels back into guest memory (Direct3D 9's GetRenderTargetData): texture id, mip level, layer,
+// width, height, bytes a row in guest memory, guest address. Everything recorded before it has run when the back
+// end moves past it, and the bytes are there: the writer waits with rt_gpu_drain. A back end without pixels (null)
+// leaves the bytes as they are.
+#define GPU_R_READ_TEXTURE 18
 
 // ---- command list words: [u16 op | u16 words of payload << 16][payload] ----
 #define GPU_L_CLEAR_RTV 1

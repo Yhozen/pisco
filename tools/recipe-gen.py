@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 # recipe-gen.py [title.toml] > recipe.gen.c: what a title's recipe says, for the runtime (rt/rt.h has the types).
 # Read so far: [cpu] features = ["fpu", ...] (the virtual CPU; without it, every feature the lifter supports) and
-# [registry] 'HKEY_LOCAL_MACHINE\Software\...' = { Name = 1, Other = "text" }. With no recipe: the defaults.
+# [registry] 'HKEY_LOCAL_MACHINE\Software\...' = { Name = 1, Other = "text" }, [quirks] heap_fill. With no recipe: the defaults.
 # recipe-gen.py --lifter-options title.toml prints the lifter's options the recipe implies instead:
 # `--builtin name.dll` for each `[dll] "name.dll" = "builtin"` (a shipped DLL the runtime answers for).
 import sys, tomllib
@@ -31,3 +31,8 @@ for key, values in recipe.get('registry', {}).items():
         rows.append(f'  {{{cstr(key)}, {cstr(name)}, {cstr(v) if isinstance(v, str) else "0"}, {v if isinstance(v, int) else 0}}},')
 print('const RegistryValue rt_registry[] = {'); print('\n'.join(rows)); print('  {0, 0, 0, 0}};')
 print(f'const unsigned rt_registry_count = {len(rows)};')
+# [quirks] heap_fill = 0xCD: what a heap block the title did not ask to be zeroed holds (kernel32's HeapAlloc);
+# without it, whatever the runtime's allocator left there
+fill = recipe.get('quirks', {}).get('heap_fill')
+if fill is not None and not (isinstance(fill, int) and 0 <= fill <= 255): sys.exit(f'recipe-gen.py: quirks.heap_fill is a byte, not {fill!r}')
+print(f'const int rt_heap_fill = {-1 if fill is None else fill};')

@@ -1,0 +1,26 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# base/windows-x64:1, what a 64-bit Windows desktop title is built FROM (docs/images.md): the core runtime, the
+# libraries it shares with the Xbox Series runtime (rt/gdk/: D3D12, DXGI, XAudio2, XGameRuntime, GameInput) and
+# its own (rt/windows-x64/: DXGI's factory and swap chains, the PC GDK's objects).
+name = "base/windows-x64"
+version = 1
+architecture = "amd64"   # as OCI names it: x86-64
+os = "windows"
+
+[cpu]
+# what a recipe without [cpu] gets: every feature the lifter supports
+features = ["fpu", "tsc", "cx8", "cmov", "mmx", "fxsr", "sse", "sse2", "sse3", "ssse3", "sse4.1", "sse4.2", "popcnt", "cx16", "pclmul"]
+
+[runtime]
+# paths from the repository's root, `*` within a file name
+sources = ["rt/*.c", "rt/gdk/*.c", "rt/windows-x64/*.c"]
+opt = "-O2"
+
+[registry]
+'HKLM\Software\Microsoft\Windows NT\CurrentVersion' = { ProductName = "Windows 10 Pro", CurrentVersion = "6.3", CurrentBuildNumber = "19045", CurrentMajorVersionNumber = 10, CurrentMinorVersionNumber = 0 }
+'HKLM\Software\Microsoft\Windows\CurrentVersion' = { ProgramFilesDir = 'C:\Program Files', CommonFilesDir = 'C:\Program Files\Common Files' }
+
+[files]
+dir = "files"
+dirs = ['WINDOWS\Temp', 'WINDOWS\System32', 'Users\player', 'Program Files\Common Files']
+system32 = 'WINDOWS\System32'

@@ -1,5 +1,8 @@
-# First run of a real title (Minecraft)
+# First run of a console title on the Xbox Series runtime (its goal: Minecraft)
 
+
+This is one runtime's first run of a real title: the Xbox Series runtime, whose goal is the Xbox Series build of
+Minecraft ([plan.md](plan.md)). Titles of the other runtimes are built from recipes (`pisco build`, [images.md](images.md)).
 The title's files stay outside this repository (e.g. `~/games/minecraft`, the unpacked package: the folder with
 `Minecraft.Windows.exe` and `MicrosoftGame.config`). Nothing below writes into that folder.
 
@@ -23,7 +26,7 @@ Also check `docs/memory.md`: the title's address-space needs decide wasm32 or wa
 ## 2. Build and run headless
 
 ```sh
-SPLIT=32 JOBS=$(nproc) OPT=-O2 tools/build-title.sh ~/games/minecraft/Minecraft.Windows.exe out/mc
+BASE=xbox-series SPLIT=32 JOBS=$(nproc) OPT=-O2 tools/build-title.sh ~/games/minecraft/Minecraft.Windows.exe out/mc
 SW_TRACE=1 node web/run-node.mjs out/mc/title.wasm ~/games/minecraft/Minecraft.Windows.exe
 ```
 

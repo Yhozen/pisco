@@ -9,7 +9,7 @@ set -euo pipefail
 root=$(cd "$(dirname "$0")/../.." && pwd); cd "$root"
 exe=out/xcltitle-game/xcl_testtitle.exe; o=out/regress-xcl
 [ -f out/ffmpeg/lib/libavcodec.a ] || tools/build-ffmpeg-audio.sh
-tools/build-title.sh "$exe" "$o" > "$o.build.log" 2>&1
+BASE=xbox-series tools/build-title.sh "$exe" "$o" > "$o.build.log" 2>&1
 # up to three rounds: a shader compiled now lets the title reach the next D3DCompile
 for i in 1 2 3; do
   timeout 600 node web/run-node.mjs "$o/title.wasm" "$exe" --hello > "$o.run.log" 2>&1 || true

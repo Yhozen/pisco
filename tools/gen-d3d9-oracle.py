@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-2.0-or-later
-# gen-d3d9-oracle.py [d3d9caps.txt [d3d9probe.txt]] > rt/win32/d3d9_oracle.gen.h
+# gen-d3d9-oracle.py [d3d9caps.txt [d3d9probe.txt]] > rt/windows-x86/d3d9_oracle.gen.h
 # What the oracle's Direct3D 9 answered (tools/oracle-wine/d3d9caps.txt and d3d9probe.txt, the output of
 # d3d9caps.c and d3d9probe.c run under Wine), as C tables for our own Direct3D 9: the device capabilities word by
 # word, the adapter's identity and display modes, CheckDeviceFormat's answers, and the state of a new device.
