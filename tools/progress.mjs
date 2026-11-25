@@ -53,8 +53,9 @@ if (argv.includes('--refresh')) {
     'Doom (our console title)': 'out/doom/wasm/title.c',
     "XCL's console test title": 'out/regress-xcl/title.c',
     'Stockfish 19 (official build)': 'out/regress-sf/title.c',
-    'SimpleTriangleDesktop (clang-cl)': 'out/st/local.c',   // target/release/lifter <exe> out/st/local.c (lift only)
-    'SimpleTriangleDesktop (MSVC)': 'out/st/boat-msvc.c',
+    'SimpleTriangleDesktop (clang-cl)': 'out/st-local/title.c',   // tests/gfx/st.sh builds both
+    'SimpleTriangleDesktop (MSVC)': 'out/st-boat-msvc/title.c',
+    'SimplePBR (clang-cl)': 'out/pbr/title.c',                    // tests/gfx/pbr.sh
   };
   const old = fs.existsSync(dataPath) ? JSON.parse(fs.readFileSync(dataPath, 'utf8')) : {};
   const data = { updated: new Date().toISOString().slice(0, 10), titles: old.titles || {}, xcl: old.xcl || [], ladder: old.ladder, facts: old.facts };
@@ -74,6 +75,20 @@ if (argv.includes('--refresh')) {
     for (const f of ['main.rs']) for (const m of fs.readFileSync(path.join(xclSrc, f), 'utf8').matchAll(/check\("([^"]*)"/g)) checks.push(m[1].replace(/\\\\/g, "\\"));
     const log = fs.readFileSync(run, 'utf8').split('\n');
     data.xcl = checks.map((t) => ({ check: t, pass: log.some((l) => l === `[PASS] ${t}`) }));
+  }
+  // what the graphics checks measured (tests/gfx/*.sh); kept from before when a check has not run
+  const fact = (label, value, ok) => { data.facts = (data.facts || []).filter((f) => f.label !== label); data.facts.push({ label, value, ok }); };
+  const logOf = (f) => { const p = path.join(root, f); return fs.existsSync(p) ? fs.readFileSync(p, 'utf8') : null; };
+  const st = logOf('out/st-local.chrome.log'), stm = logOf('out/st-boat-msvc.chrome.log'), soak = logOf('out/st-local.soak.log'), eh = logOf('out/msvc-eh.run.log');
+  const want = 'centre 187,137,137,255 corner 65,65,65,255 differ 259200';
+  if (st && stm) fact('SimpleTriangle pixels (clang-cl, MSVC)', `${[st, stm].filter((l) => l.includes(want)).length} / 2 builds exact`, st.includes(want) && stm.includes(want));
+  if (soak) { const h = soak.split('\n').filter((l) => l.startsWith('gpu frame')).map((l) => l.split(' ')[3]); fact('SimpleTriangle soak', `${h.length} frames, ${new Set(h).size} hash`, h.length >= 600 && new Set(h).size === 1); }
+  if (eh) { const n = (eh.match(/^\[PASS\]/gm) || []).length; fact('MSVC C++ exceptions (real vcruntime140)', `${n} / 6`, n === 6); }
+  const pbr = logOf('out/pbr.chrome.log');
+  if (pbr) {
+    const h = pbr.split('\n').filter((l) => l.startsWith('gpu frame')).map((l) => l.split(' ')[3]);
+    const errs = (pbr.match(/WebGPU error|page exception|has no translation/g) || []).length;
+    fact('SimplePBR in Chrome', `${h.length} frames, ${new Set(h.slice(5)).size} hash, ${errs} errors`, h.length >= 30 && new Set(h.slice(5)).size === 1 && errs === 0);
   }
   data.ladder ??= [
     { step: 'SimpleTriangle', note: 'desktop build; shaders translate, CPU bring-up to do', state: 'todo' },
@@ -177,12 +192,15 @@ svg += label(W - 10, y + 24, `updated ${data.updated}`, 13, DIM, 400, 'end');
 y += 40;
 // facts and the graphics ladder
 let fx = 10;
-for (const f of data.facts || []) {
-  const text = `${f.label}: ${f.value}`, w = text.length * 7.2 + 24;
-  svg += `<rect x="${fx}" y="${y}" width="${w}" height="26" rx="13" fill="${f.ok ? '#1f6f3a' : '#6e4a0b'}"/>` + label(fx + 12, y + 18, text, 13, TEXT, 500); fx += w + 10;
-}
+// one chip per fact, wrapped onto more rows when they do not fit
+const chip = (text, fill) => {
+  const w = text.length * 7.2 + 24;
+  if (fx > 10 && fx + w > W - 10) { fx = 10; y += 34; }
+  svg += `<rect x="${fx}" y="${y}" width="${w}" height="26" rx="13" fill="${fill}"/>` + label(fx + 12, y + 18, text, 13, TEXT, 500); fx += w + 10;
+};
+for (const f of data.facts || []) chip(`${f.label}: ${f.value}`, f.ok ? '#1f6f3a' : '#6e4a0b');
 const [xd, xt] = sum(xcl);
-{ const text = `XCL console checks: ${xd}/${xt}`, w = text.length * 7.2 + 24; svg += `<rect x="${fx}" y="${y}" width="${w}" height="26" rx="13" fill="#30363d"/>` + label(fx + 12, y + 18, text, 13, TEXT, 500); }
+chip(`XCL console checks: ${xd}/${xt}`, '#30363d');
 y += 40;
 svg += label(10, y + 18, 'Graphics ladder', 16);
 y += 26;
@@ -193,7 +211,7 @@ steps.forEach((st, i) => {
 });
 y += 64;
 svg += panel(y, 'D3D12 / D3D12.X methods (vtable slots with a runtime function)', d3d, 300); y += 340;
-svg += panel(y, 'Runtime imports our titles use (5 titles)', dlls, 330); y += 370;
+svg += panel(y, `Runtime imports our titles use (${titleBars.length} titles)`, dlls, 330); y += 370;
 // per title
 svg += label(10, y + 20, 'Imports of each title the runtime answers', 16); y += 30;
 for (const b of titleBars) {
@@ -235,7 +253,7 @@ fs.writeFileSync(path.join(out, 'progress.html'), `<!doctype html>
 <object data="progress.svg" type="image/svg+xml" width="1000">progress map</object>
 <ul>
 <li><b>D3D12 / D3D12.X methods</b>: every vtable slot of the PC interfaces (d3d12.h order) and the console methods known from XCL; green when a runtime function stands behind it.</li>
-<li><b>Runtime imports</b>: the union of what five titles import (Doom, XCL's test title, Stockfish 19, SimpleTriangleDesktop built by clang-cl and by MSVC), resolved as the runtime resolves them.</li>
+<li><b>Runtime imports</b>: the union of what the titles below import (${titleBars.map((b) => esc(b.name)).join(', ')}), resolved as the runtime resolves them.</li>
 <li><b>XCL's console test title</b>: its 50 checks, from the last run.</li>
 </ul>
 `);
