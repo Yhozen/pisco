@@ -39,6 +39,7 @@ def wine_digest(path):
     frames = collections.Counter(); order = []; frame = collections.Counter()
     with open(path, 'rb') as f:
         for line in f:
+            if line[10:21] == b'trace:d3d9:': line = line[5:]   # pid:tid: (a log with process ids) as tid:
             if line[5:16] != b'trace:d3d9:': continue
             m = entry.match(line)
             if not m:
@@ -78,7 +79,7 @@ def ours(path):
         elif state == 'args' and line.startswith('  ') and ':' in line:
             key, values = line.strip().split(':', 1)
             for v in values.split(','):
-                v = v.strip()
+                v = re.sub(r'\s*\.\.\. \d+ more$', '', v.strip())   # a list the runtime cut short
                 if v and ' x' in v and not v.startswith('...'): val, n = v.rsplit(' x', 1); args[key][str(number(val))] = int(n)
     return {'calls': calls, 'args': args, 'frames': frames, 'order': order}
 

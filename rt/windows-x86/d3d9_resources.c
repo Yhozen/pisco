@@ -107,7 +107,7 @@ static u32 dim(u32 v, u32 level) { v >>= level; return v ? v : 1; }
 IMP(d3d9, IDirect3DDevice9_CreateTexture) {
   STAT(device_CreateTexture); Device9 *d = DEV;
   u32 w = (u32)ARG(1), h = (u32)ARG(2), levels = (u32)ARG(3), usage = (u32)ARG(4), format = (u32)ARG(5), pool = (u32)ARG(6); u64 out = ARG(7);
-  ARGV("device_CreateTexture levels", levels); ARGV("device_CreateTexture usage", usage); ARGV("device_CreateTexture format", format); ARGV("device_CreateTexture pool", pool);
+  ARGV("device_CreateTexture width", w); ARGV("device_CreateTexture height", h); ARGV("device_CreateTexture levels", levels); ARGV("device_CreateTexture usage", usage); ARGV("device_CreateTexture format", format); ARGV("device_CreateTexture pool", pool);
   if (!out) { RET(D3DERR_INVALIDCALL); return; }
   M32(out) = 0;
   const Format9 *f = d3d9_format(format);
@@ -562,16 +562,16 @@ static u32 get_function(Cpu *c, Shader9 *s) {
   if (M32(ARG(2)) < 4 * s->count) return D3DERR_INVALIDCALL;
   memcpy((void *)GP(ARG(1)), s->tokens, 4 * s->count); return D3D_OK;
 }
-IMP(d3d9, IDirect3DVertexShader9_QueryInterface) { STAT(vertex_shader_QueryInterface); RET(query(c, SELF, IDirect3DVertexShader9_interface.iid, 0, 0)); }
-IMP(d3d9, IDirect3DVertexShader9_AddRef) { STAT(vertex_shader_AddRef); RET(d3d9_addref(SELF)); }
-IMP(d3d9, IDirect3DVertexShader9_Release) { STAT(vertex_shader_Release); RET(d3d9_release(SELF)); }
-IMP(d3d9, IDirect3DVertexShader9_GetDevice) { STAT(vertex_shader_GetDevice); RET(get_device(c, SELF)); }
-IMP(d3d9, IDirect3DVertexShader9_GetFunction) { STAT(vertex_shader_GetFunction); RET(get_function(c, (Shader9 *)SELF)); }
-IMP(d3d9, IDirect3DPixelShader9_QueryInterface) { STAT(pixel_shader_QueryInterface); RET(query(c, SELF, IDirect3DPixelShader9_interface.iid, 0, 0)); }
-IMP(d3d9, IDirect3DPixelShader9_AddRef) { STAT(pixel_shader_AddRef); RET(d3d9_addref(SELF)); }
-IMP(d3d9, IDirect3DPixelShader9_Release) { STAT(pixel_shader_Release); RET(d3d9_release(SELF)); }
-IMP(d3d9, IDirect3DPixelShader9_GetDevice) { STAT(pixel_shader_GetDevice); RET(get_device(c, SELF)); }
-IMP(d3d9, IDirect3DPixelShader9_GetFunction) { STAT(pixel_shader_GetFunction); RET(get_function(c, (Shader9 *)SELF)); }
+IMP(d3d9, IDirect3DVertexShader9_QueryInterface) { STAT(vertexshader_QueryInterface); RET(query(c, SELF, IDirect3DVertexShader9_interface.iid, 0, 0)); }
+IMP(d3d9, IDirect3DVertexShader9_AddRef) { STAT(vertexshader_AddRef); RET(d3d9_addref(SELF)); }
+IMP(d3d9, IDirect3DVertexShader9_Release) { STAT(vertexshader_Release); RET(d3d9_release(SELF)); }
+IMP(d3d9, IDirect3DVertexShader9_GetDevice) { STAT(vertexshader_GetDevice); RET(get_device(c, SELF)); }
+IMP(d3d9, IDirect3DVertexShader9_GetFunction) { STAT(vertexshader_GetFunction); RET(get_function(c, (Shader9 *)SELF)); }
+IMP(d3d9, IDirect3DPixelShader9_QueryInterface) { STAT(pixelshader_QueryInterface); RET(query(c, SELF, IDirect3DPixelShader9_interface.iid, 0, 0)); }
+IMP(d3d9, IDirect3DPixelShader9_AddRef) { STAT(pixelshader_AddRef); RET(d3d9_addref(SELF)); }
+IMP(d3d9, IDirect3DPixelShader9_Release) { STAT(pixelshader_Release); RET(d3d9_release(SELF)); }
+IMP(d3d9, IDirect3DPixelShader9_GetDevice) { STAT(pixelshader_GetDevice); RET(get_device(c, SELF)); }
+IMP(d3d9, IDirect3DPixelShader9_GetFunction) { STAT(pixelshader_GetFunction); RET(get_function(c, (Shader9 *)SELF)); }
 
 // ---- the buffers of the UP draws: the device's own, invisible to the title (no reference of its changes), grown
 // as needed and written whole for each draw (a DISCARD: the back end may hand out new storage)

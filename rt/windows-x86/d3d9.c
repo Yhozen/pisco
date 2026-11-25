@@ -71,9 +71,8 @@ void d3d9_stats_print(const char *title, int since_mark) {
     unsigned j = i, shown = 0;
     if (a[i].key == 0xFFFFFFFFu) put(&t, "  %s:", a[i].what); else put(&t, "  %s %u:", a[i].what, a[i].key);
     for (; j < m && !strcmp(a[j].what, a[i].what) && a[j].key == a[i].key; j++, shown++) {
-      if (shown < 10) put(&t, "%s %s%x x%llu", shown ? "," : "", a[j].value ? "0x" : "", a[j].value, a[j].count);
+      put(&t, "%s %s%x x%llu", shown ? "," : "", a[j].value ? "0x" : "", a[j].value, a[j].count);   // all of them: d3d9-compare.py sets them against Wine's
     }
-    if (shown > 10) put(&t, " ... %u more", shown - 10);
     flush(&t); i = j;
   }
   free(a); free(t.p);
