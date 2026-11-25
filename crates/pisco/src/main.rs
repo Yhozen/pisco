@@ -2,7 +2,7 @@
 // pisco: builds, runs and inspects title images (docs/images.md).
 //   pisco build <recipe dir> [--source <installer>] [--out <image dir>] [--cache <dir>] [--compare <installed folder>]
 //   pisco run <image> [--session <session.json>] [--saves <dir>] [--chrome] [-- title arguments]
-//   pisco census <image | title.exe> [--recipe <recipe dir> | --from base/windows-x86:1 --libraries a,b] [--all]
+//   pisco census <image | title.exe> [--recipe <recipe dir> | --from base/windows-x86:1 --libraries a,b] [--dll-dir <system32>] [--all]
 //   pisco inspect <image> [--files]
 //   pisco sources <base | recipe dir> [--libraries a,b | --all-libraries]: the runtime files a title of that base links
 // The repository is found from this program's own place (target/release/pisco), or SW_ROOT.
@@ -53,7 +53,7 @@ fn main() {
         "build" => { let a = parse(&args[1..], &["source", "out", "cache", "compare"]); let Some(p) = a.pos.first() else { usage() };
             build::build(&root, &build::Opts { recipe: p.into(), source: a.get("source"), out: a.get("out"), cache: a.get("cache"), compare: a.get("compare") }) }
         "run" => run(&root, &parse(&args[1..], &["session", "saves"])),
-        "census" => census(&root, &parse(&args[1..], &["from", "libraries", "recipe"])),
+        "census" => census(&root, &parse(&args[1..], &["from", "libraries", "recipe", "dll-dir"])),
         "inspect" => inspect(&parse(&args[1..], &[])),
         "sources" => sources(&root, &parse(&args[1..], &["libraries"])),
         "-h" | "--help" | "help" => usage(),
@@ -90,7 +90,10 @@ fn census(root: &Path, a: &Args) -> R<()> {
         let builtin: Vec<String> = rec.as_ref().map(|r| r.dll.keys().cloned().collect()).unwrap_or_default();
         let tmp = root.join("out/pisco-census"); let _ = std::fs::remove_dir_all(&tmp); std::fs::create_dir_all(&tmp).map_err(|e| e.to_string())?;
         let t = build::tools(root)?;
-        let o = Command::new(&t.lifter).arg(target.canonicalize().map_err(|e| format!("{}: {e}", target.display()))?).arg("title.c").args(builtin.iter().flat_map(|d| ["--builtin", d.as_str()])).current_dir(&tmp).output().map_err(|e| e.to_string())?;
+        // --dll-dir <folder>: DLLs it imports from the system's folder (an image's C:\WINDOWS\system32) are lifted with it
+        let dll_dir = a.get("dll-dir").map(|d| format!("{}=c:/WINDOWS/system32", d.canonicalize().unwrap_or(d.clone()).display()));
+        let o = Command::new(&t.lifter).arg(target.canonicalize().map_err(|e| format!("{}: {e}", target.display()))?).arg("title.c").args(builtin.iter().flat_map(|d| ["--builtin", d.as_str()]))
+            .args(dll_dir.iter().flat_map(|d| ["--dll-dir", d.as_str()])).current_dir(&tmp).output().map_err(|e| e.to_string())?;
         std::fs::write(tmp.join("lifter.log"), [&o.stdout[..], &o.stderr[..]].concat()).map_err(|e| e.to_string())?;
         if !o.status.success() { return Err(format!("the lifter failed: {}", tmp.join("lifter.log").display())); }
         let dir = target.parent().unwrap_or(Path::new("."));

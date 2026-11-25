@@ -39,16 +39,19 @@ static void put_rect(u64 p, s32 l, s32 t, s32 r, s32 b) { M32(p) = (u32)l; M32(p
 
 IMP(user32, LoadIconA) { RET(0x00020000u + ((u32)ARG(1) & 0xFFFF)); }
 IMP(user32, LoadCursorA) { RET(0x00030000u + ((u32)ARG(1) & 0xFFFF)); }
-IMP(user32, RegisterClassA) { // WNDCLASSA: style, lpfnWndProc, cbClsExtra, cbWndExtra, hInstance, hIcon, hCursor, hbrBackground, lpszMenuName, lpszClassName
-  u64 p = ARG(0);
-  if (class_count == 32 || !M32(p + 36)) { SET_LAST_ERROR(87); RET(0); return; }
-  if (class_of(M32(p + 36))) { SET_LAST_ERROR(1410); RET(0); return; } // ERROR_CLASS_ALREADY_EXISTS
+// WNDCLASSA at `p`: style, lpfnWndProc, cbClsExtra, cbWndExtra, hInstance, hIcon, hCursor, hbrBackground,
+// lpszMenuName, lpszClassName (WNDCLASSEXA is the same after its cbSize, with hIconSm at the end)
+static u32 register_class(Cpu *c, u64 p) {
+  if (class_count == 32 || !M32(p + 36)) { SET_LAST_ERROR(87); return 0; }
+  if (class_of(M32(p + 36))) { SET_LAST_ERROR(1410); return 0; } // ERROR_CLASS_ALREADY_EXISTS
   WndClass *k = &classes[class_count]; memset(k, 0, sizeof *k);
   if (M32(p + 36) >= 0x10000) strncpy(k->name, GSTR(M32(p + 36)), sizeof k->name - 1);
   k->atom = 0xC000 + class_count; k->style = M32(p); k->proc = M32(p + 4); k->wnd_extra = M32(p + 12); k->instance = M32(p + 16);
   k->icon = M32(p + 20); k->cursor = M32(p + 24); k->brush = M32(p + 28);
-  class_count++; RET(k->atom);
+  class_count++; return k->atom;
 }
+IMP(user32, RegisterClassA) { RET(register_class(c, ARG(0))); }
+IMP(user32, RegisterClassExA) { u64 p = ARG(0); if (!p || M32(p) < 48) { SET_LAST_ERROR(87); RET(0); return; } RET(register_class(c, p + 4)); }
 IMP(user32, UnregisterClassA) { WndClass *k = class_of(ARG(0)); if (k) k->name[0] = 0, k->atom = 0; RET(k != 0); }
 
 // CreateWindowExA(exstyle, class, title, style, x, y, w, h, parent, menu, instance, param). The window procedure
@@ -172,3 +175,44 @@ IMP(user32, PeekMessageA) {
 IMP(user32, TranslateMessage) { RET(0); }
 IMP(user32, DispatchMessageA) { u64 m = ARG(0); Window *w = window_of(M32(m)); RET(w ? send(c, w, M32(m + 4), M32(m + 8), M32(m + 12)) : 0); }
 IMP(user32, FillRect) { RET(ARG(1) ? gdi_fill_rect((u32)ARG(0), (const s32 *)GP(ARG(1)), (u32)ARG(2)) : 0); } // (dc, RECT *, brush)
+
+// ---- window longs: GWL_WNDPROC -4, GWL_HINSTANCE -6, GWL_ID -12, GWL_STYLE -16, GWL_EXSTYLE -20, GWL_USERDATA -21 ----
+static u32 *window_long(Window *w, s32 i) {
+  switch (i) { case -4: return &w->proc; case -6: return &w->instance; case -16: return &w->style; case -20: return &w->exstyle; case -21: return &w->userdata; default: return 0; }
+}
+IMP(user32, GetWindowLongA) { Window *w = window_of(ARG(0)); u32 *v = w ? window_long(w, (s32)ARG(1)) : 0; if (!v) { SET_LAST_ERROR(w ? 1413 : 1400); RET(0); return; } RET(*v); }
+IMP(user32, SetWindowLongA) { // the style's frame bits change what the client area is
+  Window *w = window_of(ARG(0)); u32 *v = w ? window_long(w, (s32)ARG(1)) : 0;
+  if (!v) { SET_LAST_ERROR(w ? 1413 : 1400); RET(0); return; }
+  u32 old = *v; *v = (u32)ARG(2);
+  if ((s32)ARG(1) == -16) w->has_frame = (w->style & 0x00C00000) == 0x00C00000;
+  RET(old);
+}
+// ---- the screen and the cursor ----
+IMP(user32, GetSystemMetrics) {
+  switch ((s32)ARG(0)) {
+  case 0: case 16: case 78: RET(SCREEN_W); return;   // SM_CXSCREEN, SM_CXFULLSCREEN, SM_CXVIRTUALSCREEN
+  case 1: case 79: RET(SCREEN_H); return;             // SM_CYSCREEN, SM_CYVIRTUALSCREEN
+  case 17: RET(SCREEN_H - CAPTION); return;           // SM_CYFULLSCREEN
+  case 4: RET(CAPTION); return;                       // SM_CYCAPTION
+  case 5: case 6: case 32: case 33: RET(FRAME); return; // borders and frames
+  case 19: RET(1); return;                            // SM_MOUSEPRESENT
+  case 43: RET(3); return;                            // SM_CMOUSEBUTTONS
+  case 80: RET(1); return;                            // SM_CMONITORS
+  default: RET(0); return;
+  }
+}
+// (device name or 0, index, DISPLAY_DEVICEA*, flags): one display, the page's canvas
+IMP(user32, EnumDisplayDevicesA) {
+  u64 d = ARG(2);
+  if (ARG(0) || ARG(1) != 0 || !d || M32(d) < 424) { RET(0); return; }
+  memset((void *)GP(d + 4), 0, 420);
+  strcpy(GSTR(d + 4), "\\\\.\\DISPLAY1"); strcpy(GSTR(d + 36), "PISCO WebGPU display");
+  M32(d + 164) = 0x1 | 0x4;                           // DISPLAY_DEVICE_ATTACHED_TO_DESKTOP | PRIMARY_DEVICE
+  strcpy(GSTR(d + 168), "PCI\\VEN_0000&DEV_0000");
+  RET(1);
+}
+IMP(user32, SetCursorPos) { RET(1); }                 // the page's pointer is not ours to move (Pointer Lock gives deltas)
+static s32 cursor_count;
+IMP(user32, ShowCursor) { cursor_count += ARG(0) ? 1 : -1; RET((u32)cursor_count); }
+IMP(user32, CharLowerBuffA) { char *s = GSTR(ARG(0)); u32 n = (u32)ARG(1); for (u32 i = 0; i < n; i++) if (s[i] >= 'A' && s[i] <= 'Z') s[i] = (char)(s[i] + 32); RET(n); }

@@ -388,7 +388,9 @@ static const char *module_path_of(u64 h) {
   static char buf[16][300]; static int k;
   const ModuleDef *m = h ? rt_module_of(h) : &rt_modules[0];
   if (!m) return 0;
-  char *b = buf[k++ & 15]; snprintf(b, 300, "C:\\title\\%s", m->name);
+  char *b = buf[k++ & 15];
+  if (!strncasecmp(m->name, "c:/", 3)) snprintf(b, 300, "C:\\%s", m->name + 3);   // a DLL lifted from the image's drive
+  else snprintf(b, 300, "C:\\title\\%s", m->name);
   for (char *p = b; *p; p++) if (*p == '/') *p = '\\';
   return b;
 }

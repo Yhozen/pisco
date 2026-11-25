@@ -82,7 +82,13 @@ static const AliasDef *alias_of(const char *full) {
   for (unsigned k = 0; k < rt_alias_table_count; k++) if (!strcmp(rt_alias_table[k].name, full)) return &rt_alias_table[k];
   return 0;
 }
+// a DLL that forwards its functions to another one's: wsock32's are ws2_32's (by name and by ordinal)
+static const char *forwarded(const char *full, char *buf, size_t cap) {
+  if (!strncmp(full, "wsock32.dll!", 12)) { snprintf(buf, cap, "ws2_32.dll!%s", full + 12); return buf; }
+  return full;
+}
 static int stdcall_bytes(const char *full) {
+  char fw[200]; full = forwarded(full, fw, sizeof fw);
   const AliasDef *al = alias_of(full);
   if (al) { if (al->bytes >= 0) return al->bytes; full = al->target; }
   for (unsigned k = 0; k < rt_stdcall_table_count; k++) if (!strcmp(rt_stdcall_table[k].name, full)) return rt_stdcall_table[k].bytes;
@@ -98,6 +104,7 @@ static ImportFn find_exact(const char *full) {
 // "dll!name". API sets resolve to the DLL behind them; ucrtbase falls back to msvcrt's functions, and
 // kernelbase / ntdll to kernel32's.
 static ImportFn find_import(const char *full) {
+  char fw[200]; full = forwarded(full, fw, sizeof fw);
   ImportFn f = find_exact(full);
   if (f) return f;
   const AliasDef *al = alias_of(full);   // by ordinal, or by a C++ name (ALIAS in the runtime's sources)
@@ -425,7 +432,8 @@ const ModuleDef *rt_module_named(const char *name) {
   slash = strrchr(name, '/'); if (slash) name = slash + 1;
   size_t n = strlen(name);
   for (unsigned k = 0; k < rt_module_count; k++) {
-    const char *m = rt_modules[k].name; size_t mn = strlen(m);
+    const char *m = rt_modules[k].name, *ms = strrchr(m, '/'); if (ms) m = ms + 1;   // a DLL from C:\WINDOWS\system32: "c:/WINDOWS/system32/x.dll"
+    size_t mn = strlen(m);
     if (!strcasecmp(m, name)) return &rt_modules[k];
     if (mn == n + 4 && !strncasecmp(m, name, n) && !strcasecmp(m + n, ".dll")) return &rt_modules[k];
   }

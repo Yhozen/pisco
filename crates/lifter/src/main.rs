@@ -1845,7 +1845,7 @@ fn main() {
 fn lift() {
     let args: Vec<String> = std::env::args().collect();
     if args.len() < 3 {
-        eprintln!("usage: lifter <image.exe> <out.c> [--split N] [--base hex] [--entry hex]... [--builtin name.dll]...");
+        eprintln!("usage: lifter <image.exe> <out.c> [--split N] [--base hex] [--entry hex]... [--builtin name.dll]... [--dll-dir <folder>=<guest folder>]...");
         std::process::exit(2);
     }
     let exe = std::path::Path::new(&args[1]);
@@ -1853,11 +1853,18 @@ fn lift() {
     let listing: Vec<String> = std::fs::read_dir(dir).map(|d| d.filter_map(|e| e.ok()).map(|e| e.file_name().to_string_lossy().into_owned()).collect()).unwrap_or_default();
     // --builtin name.dll: a DLL the title ships that is not lifted (the runtime answers for it: a recipe's choice)
     let builtin: Vec<&String> = args.iter().enumerate().filter(|(_, a)| *a == "--builtin").filter_map(|(i, _)| args.get(i + 1)).collect();
+    // --dll-dir <folder>=<guest folder>: where else an imported DLL is looked for after the exe's folder (an image's
+    // C:\WINDOWS\system32, given as c:/WINDOWS/system32): one found there is lifted with the title under its guest path
+    let dll_dirs: Vec<(std::path::PathBuf, String, Vec<String>)> = args.iter().enumerate().filter(|(_, a)| *a == "--dll-dir").filter_map(|(i, _)| args.get(i + 1)).map(|a| {
+        let (host, guest) = a.split_once('=').expect("--dll-dir <folder>=<guest folder>");
+        let list = std::fs::read_dir(host).map(|d| d.filter_map(|e| e.ok()).map(|e| e.file_name().to_string_lossy().into_owned()).collect()).unwrap_or_default();
+        (std::path::PathBuf::from(host), guest.trim_end_matches('/').to_string(), list)
+    }).collect();
     let mut mods: Vec<(String, Image)> = Vec::new();
-    let mut queue = vec![exe.file_name().unwrap().to_string_lossy().into_owned()];
-    while let Some(name) = queue.pop() {
+    let mut queue = vec![(exe.file_name().unwrap().to_string_lossy().into_owned(), exe.to_path_buf())];
+    while let Some((name, path)) = queue.pop() {
         if mods.iter().any(|(n, _)| n.eq_ignore_ascii_case(&name)) { continue; }
-        let data = std::fs::read(dir.join(&name)).expect("read image");
+        let data = std::fs::read(&path).expect("read image");
         let img = Image::load(&data).unwrap_or_else(|e| panic!("{name}: {e}"));
         for (_, imp) in &img.imports {
             let dll = imp.split('!').next().unwrap();
@@ -1867,7 +1874,9 @@ fn lift() {
             const RUNTIME: [&str; 3] = ["libhttpclient.dll", "xcurl.dll", "winpixeventruntime.dll"];
             if RUNTIME.contains(&dll.to_ascii_lowercase().as_str()) { continue; }
             if let Some(file) = listing.iter().find(|f| f.eq_ignore_ascii_case(dll)) {
-                queue.push(file.clone()); // a DLL the title ships: lifted with it
+                queue.push((file.clone(), dir.join(file))); // a DLL the title ships: lifted with it
+            } else if let Some((host, guest, file)) = dll_dirs.iter().find_map(|(h, g, l)| l.iter().find(|f| f.eq_ignore_ascii_case(dll)).map(|f| (h, g, f))) {
+                queue.push((format!("{guest}/{file}"), host.join(file))); // a DLL of the image's system folder
             }
         }
         mods.push((name, img));

@@ -98,3 +98,5 @@ IMP(advapi32, RegCloseKey) {
   pthread_mutex_unlock(&reg_lock);
   RET(0);
 }
+// (key, index, name, characters): the registry here has values, not subkeys a title would list
+IMP(advapi32, RegEnumKeyA) { RET(259); }   // ERROR_NO_MORE_ITEMS

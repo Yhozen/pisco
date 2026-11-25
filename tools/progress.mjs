@@ -54,6 +54,8 @@ function resolves(full, rt) {
   const alts = [];
   if (crt) alts.push(`ucrtbase.dll!${name}`, `msvcrt.dll!${name}`);
   if (core) alts.push(`kernel32.dll!${name}`);
+  if (dll === 'wsock32.dll') alts.push(`ws2_32.dll!${name}`);
+  if (dll === 'psapi.dll') alts.push(`kernel32.dll!K32${name}`);
   if (dll === 'xmem.dll') alts.push(`kernelx.dll!${name}`);
   if (dll === 'kernelx.dll' || dll === 'xmem.dll' || dll.includes('legacy.dll')) alts.push(`kernel32.dll!${name}`, `advapi32.dll!${name}`);
   if (dll.startsWith('ext-ms-win-rtcore-ntuser') || dll.startsWith('ext-ms-win-ntuser') || dll.startsWith('minuser')) alts.push(`user32.dll!${name}`);

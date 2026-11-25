@@ -112,3 +112,56 @@ IMP(kernel32, IsBadCodePtr) { RET(!ARG(0)); }
 IMP(kernel32, InterlockedIncrement) { RET(__atomic_add_fetch((u32 *)GP(ARG(0)), 1, __ATOMIC_SEQ_CST)); }
 IMP(kernel32, InterlockedDecrement) { RET(__atomic_sub_fetch((u32 *)GP(ARG(0)), 1, __ATOMIC_SEQ_CST)); }
 IMP(kernel32, InterlockedExchange) { RET(__atomic_exchange_n((u32 *)GP(ARG(0)), (u32)ARG(1), __ATOMIC_SEQ_CST)); }
+
+// ---- the locale: English (United States), code page 1252, as the rest of this file says ----
+// GetLocaleInfoA / W (lcid, LCTYPE, buffer, characters): the values an old C runtime and its setlocale read
+static const char *locale_value(u32 type) {
+  switch (type & 0xFFFF) {   // without LOCALE_NOUSEROVERRIDE / LOCALE_RETURN_NUMBER
+  case 0x01: return "0409";            // LOCALE_ILANGUAGE
+  case 0x03: return "ENU";             // LOCALE_SABBREVLANGNAME
+  case 0x05: return "1";               // LOCALE_ICOUNTRY
+  case 0x07: return "USA";             // LOCALE_SABBREVCTRYNAME
+  case 0x0B: return "437";             // LOCALE_IDEFAULTCODEPAGE (OEM)
+  case 0x0E: return ".";               // LOCALE_SDECIMAL
+  case 0x0F: return ",";               // LOCALE_STHOUSAND
+  case 0x10: return "3;0";             // LOCALE_SGROUPING
+  case 0x14: return "$";               // LOCALE_SCURRENCY
+  case 0x1001: return "English";       // LOCALE_SENGLANGUAGE
+  case 0x1002: return "United States"; // LOCALE_SENGCOUNTRY
+  case 0x1004: return "1252";          // LOCALE_IDEFAULTANSICODEPAGE
+  case 0x59: return "en";              // LOCALE_SISO639LANGNAME
+  case 0x5A: return "US";              // LOCALE_SISO3166CTRYNAME
+  default: return 0;
+  }
+}
+IMP(kernel32, GetLocaleInfoA) {
+  const char *v = locale_value((u32)ARG(1)); u32 n = (u32)ARG(3);
+  if (!v) { SET_LAST_ERROR(1004); RET(0); return; }   // ERROR_INVALID_FLAGS
+  u32 need = (u32)strlen(v) + 1;
+  if (!n) { RET(need); return; }
+  if (n < need) { SET_LAST_ERROR(122); RET(0); return; }
+  memcpy(GSTR(ARG(2)), v, need); RET(need);
+}
+IMP(kernel32, GetLocaleInfoW) {
+  const char *v = locale_value((u32)ARG(1)); u32 n = (u32)ARG(3);
+  if (!v) { SET_LAST_ERROR(1004); RET(0); return; }
+  u32 need = (u32)strlen(v) + 1;
+  if (!n) { RET(need); return; }
+  if (n < need) { SET_LAST_ERROR(122); RET(0); return; }
+  for (u32 i = 0; i < need; i++) M16(ARG(2) + 2 * i) = (u8)v[i];
+  RET(need);
+}
+// (callback, flags): the callback sees each installed locale's id as hex text; there is one
+IMP(kernel32, EnumSystemLocalesA) {
+  static u64 text; if (!text) { text = (uptr)calloc(1, 16); strcpy(GSTR(text), "00000409"); }
+  if (ARG(0)) rt_guest_call(c, ARG(0), text, 0, 0, 0);
+  RET(1);
+}
+IMP(kernel32, GetConsoleCP) { RET(437); }
+IMP(kernel32, IsDebuggerPresent) { RET(0); }
+// The last of an exception's handlers: on Windows the process ends (or a debugger is asked); here the run stops
+// with what was raised, where.
+IMP(kernel32, UnhandledExceptionFilter) { // (EXCEPTION_POINTERS*)
+  u64 ep = ARG(0), rec = ep ? MP(ep) : 0;
+  rt_fatal("unhandled exception 0x%08x at 0x%llx", rec ? M32(rec) : 0, rec ? (u64)MP(rec + 12) : 0);
+}
