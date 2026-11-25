@@ -55,7 +55,7 @@ void rt_gpu_rec_end(void) {
 void rt_gpu_rec_words(u32 op, const u32 *w, u32 n) { u8 *p = rt_gpu_rec_begin(op, 4 * n); memcpy(p, w, 4 * n); rt_gpu_rec_end(); }
 
 static u32 presents;
-void rt_gpu_present(u32 resource, u64 token, u32 interval) { // D3D12's PresentX, DXGI's Present (rt/gdk/dxgi.c), Direct3D 9's Present
+void rt_gpu_present(u32 resource, u64 token, u32 interval) { // D3D12's PresentX, DXGI's Present (rt/windows-x64/dxgi_swapchain.c), Direct3D 9's Present
   u32 w[4] = {resource, (u32)token, (u32)(token >> 32), interval}; rt_gpu_rec_words(GPU_R_PRESENT, w, 4);
   presents++;
   // two frames in flight at most: wait until the back end shows the one before last

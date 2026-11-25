@@ -81,7 +81,7 @@ async function startAudio(addr) {
     }, 100);
   }
 }
-// ---- input: keys held and the first gamepad, into the title's input block (rt/gdk/xgameruntime.c) ----
+// ---- input: keys held and the first gamepad, into the title's input block (rt/gdk/gameinput.c) ----
 function startInput(addr) {
   const u32 = new Uint32Array(memory.buffer, addr, 32), f32 = new Float32Array(memory.buffer, addr, 32);
   const held = new Map(); let seq = 0;
