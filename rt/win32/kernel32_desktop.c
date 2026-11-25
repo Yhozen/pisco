@@ -23,7 +23,6 @@ IMP(kernel32, HeapDestroy) { RET(1); }
 IMP(kernel32, SetHandleCount) { RET(ARG(0)); }
 
 // STARTUPINFOA: nothing inherited, no window placement asked for
-IMP(kernel32, GetStartupInfoA) { u64 p = ARG(0); memset((void *)GP(p), 0, 68); M32(p) = 68; }
 
 static const char *const environment[] = {"ALLUSERSPROFILE=C:\\Documents and Settings\\All Users", "COMPUTERNAME=SERIES-WEB", "ComSpec=C:\\WINDOWS\\system32\\cmd.exe",
   "NUMBER_OF_PROCESSORS=1", "OS=Windows_NT", "Path=C:\\WINDOWS\\system32;C:\\WINDOWS", "SystemDrive=C:", "SystemRoot=C:\\WINDOWS", "TEMP=C:\\WINDOWS\\Temp",

@@ -153,6 +153,8 @@ __attribute__((noreturn)) static void restore(Cpu *c, u64 ctx);
 typedef struct { u64 ctx; } HandlerFrame;
 static __thread HandlerFrame hframes[64];
 static __thread int hframe_n;
+// (also the consolidation callback of an MSVC catch: unwinding from it leads into the target frame, as through
+// Windows' RcConsolidateFrames, so an exception thrown in the catch block finds the function's other try blocks)
 static u64 call_handler(Cpu *c, u64 handler, u64 rec, u64 est, u64 ctx, u64 dc, u64 resume) {
   if (hframe_n >= 64) rt_fatal("exception handlers nested too deep");
   int k = hframe_n++;
@@ -165,7 +167,7 @@ static u64 call_handler(Cpu *c, u64 handler, u64 rec, u64 est, u64 ctx, u64 dc, 
   R[RSP] = sp;
   hframe_n = k;
   free((void *)GP(hframes[k].ctx));
-  return (u32)R[RAX];
+  return R[RAX];
 }
 // after a frame is unwound: a sentinel return address leads back to the context behind the handler call
 static void through_handlers(u64 ctx) {
@@ -213,7 +215,7 @@ static void dispatch(Cpu *c, u64 rec, u64 orig) {
       M64(dc + DC_CONTROL_PC) = pc; M64(dc + DC_IMAGE_BASE) = base_of(pc); M64(dc + DC_FUNCTION_ENTRY) = fe;
       M64(dc + DC_ESTABLISHER) = est; M64(dc + DC_CONTEXT) = frame; M64(dc + DC_HANDLER) = h; M64(dc + DC_HANDLER_DATA) = hd;
       M32(dc + DC_SCOPE_INDEX) = 0;
-      u64 r = call_handler(c, h, rec, est, orig, dc, orig);
+      u64 r = (u32)call_handler(c, h, rec, est, orig, dc, orig); // an EXCEPTION_DISPOSITION
       if (r == 0) { free((void *)GP(frame)); return; }                     // ExceptionContinueExecution
       if (r != 1 && rt_trace) rt_log("exception handler returned %llu", r); // 1: ExceptionContinueSearch
     }
@@ -272,6 +274,14 @@ static void unwind_to(Cpu *c, u64 target, u64 target_ip, u64 rec, u64 retval, u6
       // stop at the target frame: its own context, as it was before unwinding it
       M64(frame + CX_RAX) = retval; M64(frame + CX_RIP) = target_ip;
       M32(rec + ER_FLAGS) &= ~(EH_UNWINDING | EH_TARGET_UNWIND);
+      // STATUS_UNWIND_CONSOLIDATE (MSVC's C++ catch: vcruntime's __CxxCallCatchBlock): once the frames are
+      // unwound, the callback in ExceptionInformation[0] runs the catch block and returns where to resume
+      if (M32(rec + ER_CODE) == 0x80000029u && M32(rec + ER_NPARAMS) >= 1) {
+        u64 cb = M64(rec + ER_INFO);
+        u64 at = call_handler(c, cb, rec, 0, 0, 0, frame); // (unwinding from the catch block reaches `frame`)
+        if (rt_trace) rt_log("consolidated unwind: callback 0x%llx resumes at 0x%llx", cb, at);
+        M64(frame + CX_RIP) = at;
+      }
       restore(c, frame);
     }
     free((void *)GP(frame));
@@ -311,7 +321,7 @@ static void restore(Cpu *c, u64 ctx) {
 // ---- __C_specific_handler: C's __try / __except / __finally (scope tables) ----
 // (ExceptionRecord, EstablisherFrame, ContextRecord, DispatcherContext)
 IMP(msvcrt, __C_specific_handler) {
-  u64 rec = ARG(0), est = ARG(1), dc = ARG(3);
+  u64 rec = ARG(0), est = ARG(1), ctx = ARG(2), dc = ARG(3); // (read now: a filter call reuses the registers)
   u64 table = M64(dc + DC_HANDLER_DATA), ib = M64(dc + DC_IMAGE_BASE);
   u32 n = M32(table), rva = (u32)(M64(dc + DC_CONTROL_PC) - ib);
   u32 flags = M32(rec + ER_FLAGS);
@@ -327,7 +337,7 @@ IMP(msvcrt, __C_specific_handler) {
         r = (s32)rt_guest_call(c, ib + handler, ptrs, est, 0, 0);
       }
       if (r < 0) { RET(0); return; } // EXCEPTION_CONTINUE_EXECUTION
-      if (r > 0) { unwind_to(c, est, ib + jump, rec, M32(rec + ER_CODE), ARG(2)); }
+      if (r > 0) { unwind_to(c, est, ib + jump, rec, M32(rec + ER_CODE), ctx); }
     } else {
       if (jump) { if ((flags & EH_TARGET_UNWIND) && M64(dc + DC_TARGET_IP) == ib + jump) break; continue; }
       M32(dc + DC_SCOPE_INDEX) = i + 1;

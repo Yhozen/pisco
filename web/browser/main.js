@@ -12,6 +12,8 @@
 //          SW_SESSION_STEPS=<steps> (a scripted session, as web/session.mjs writes one; tools/run-chrome.mjs
 //          makes it from SW_SESSION=<session.json>). At each `shot` of a session the frame presented last is
 //          sent to the server (POST /capture/shot), which saves it as a PNG.
+//          &probe=<n> (log presented frame n's size, centre and corner pixels, and how many pixels differ from the
+//          corner: a check that needs no image file)
 import { startBackend } from '../gpu/backend.js';
 import { fetchImage } from '../image.mjs';
 const q = new URLSearchParams(location.search);
@@ -23,11 +25,17 @@ const POOL = 32; // guest threads come from workers the page starts ahead of tim
 let ctl, boot, memory, device, dir, drive = null, folder = null;
 const log = (s) => { console.log(s); out.textContent += s + '\n'; };
 const startPooled = (slot) => { const w = new Worker('worker.js', { type: 'module' }); workers.push(w); w.postMessage({ ...boot, pool: { ctl, slot } }); };
-const capture = q.get('capture') === '1', hashFrames = q.get('hash') === '1', clockStep = +(q.get('SW_CLOCK') || 0);
+const capture = q.get('capture') === '1', hashFrames = q.get('hash') === '1', clockStep = +(q.get('SW_CLOCK') || 0), probe = q.get('probe');
 const post = (path, body, headers = {}) => fetch(path, { method: 'POST', body, headers }).catch(() => {});
 
 // ---- presented frames: hashes for tests, frames for recordings ----
 function onFrame(f) {
+  if (probe !== null && String(f.index) === probe) {
+    const p = f.pixels, bgra = f.format.startsWith('bgra'), px = (x, y) => { const o = 4 * (y * f.width + x); return bgra ? [p[o + 2], p[o + 1], p[o], p[o + 3]] : [p[o], p[o + 1], p[o + 2], p[o + 3]]; };
+    const corner = px(0, 0); let differ = 0;
+    for (let i = 0; i < p.length; i += 4) if (p[i] !== p[0] || p[i + 1] !== p[1] || p[i + 2] !== p[2]) differ++;
+    console.log(`probe frame ${f.index}: ${f.width}x${f.height} ${f.format} centre ${px(f.width >> 1, f.height >> 1)} corner ${corner} differ ${differ}`);
+  }
   if (hashFrames) {
     let h = 2166136261 >>> 0; const p = f.pixels, bgra = f.format.startsWith('bgra');
     for (let i = 0; i < p.length; i += 4) for (const k of bgra ? [0, 1, 2] : [2, 1, 0]) h = Math.imul(h ^ p[i + k], 16777619) >>> 0;
@@ -167,7 +175,7 @@ bus.onmessage = (e) => {
   if (m.refill !== undefined) startPooled(m.refill);
   if (m.gpu !== undefined) {
     if (!device) { log('gpu: no WebGPU device: the title cannot draw'); return; }
-    startBackend({ memory, ring: m.gpu, device, canvas, dir, log, onFrame: capture || hashFrames ? onFrame : null, keepAll: hashFrames, onShot }).then((s) => {
+    startBackend({ memory, ring: m.gpu, device, canvas, dir, log, onFrame: capture || hashFrames || probe !== null ? onFrame : null, keepAll: hashFrames || probe !== null, onShot }).then((s) => {
       window.swGpu = s;
       if (q.get('stats') === '1') setInterval(() => console.log(`gpu stats: ${JSON.stringify({ ...s, errors: s.errors.count })}`), 3000);
     });

@@ -126,7 +126,9 @@ export async function startBackend({ memory, ring: ringAddr, device, canvas, dir
     if (dim === 0) {
       r.size = r.width;
       const usage = GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST | GPUBufferUsage.VERTEX | GPUBufferUsage.INDEX | GPUBufferUsage.UNIFORM | GPUBufferUsage.STORAGE | GPUBufferUsage.INDIRECT;
-      r.gpu = device.createBuffer({ size: Math.max(16, Math.ceil(r.size / 4) * 4), usage });
+      // 64 KiB past the end: a constant buffer view near the end still has the 64 KiB its translated shader
+      // declares (D3D12's limit; WebGPU checks the bound range against it). Only the real size is ever uploaded.
+      r.gpu = device.createBuffer({ size: Math.ceil(r.size / 4) * 4 + 65536, usage });
       const at = vas.findIndex((e) => e[0] > r.va); vas.splice(at < 0 ? vas.length : at, 0, [r.va, r.va + r.size, r]);
     } else {
       let f = r.format;
@@ -365,7 +367,7 @@ export async function startBackend({ memory, ring: ringAddr, device, canvas, dir
           if (rr?.constants) { const off = uniforms.length * 256; uniforms.push(rr.constants); resource = { buffer: st.uniformBuffer, offset: off, size: 256 }; }
           else {
             const va = rr?.va ?? (rr?.desc ? u64(rr.desc[2], rr.desc[3]) : 0), size = rr?.desc ? rr.desc[4] : 65536, f = va && bufferAt(va, size || 65536);
-            if (f) resource = { buffer: f.r.gpu, offset: f.offset, size: Math.min(65536, size || 65536, Math.ceil(f.r.size / 4) * 4 - f.offset) };
+            if (f) resource = { buffer: f.r.gpu, offset: f.offset, size: Math.min(65536, f.r.gpu.size - f.offset) };
           }
         } else if (rr?.desc && rr.desc[0] && !type.startsWith('array') && !type.startsWith('ptr')) {
           const r = res.get(rr.desc[1]);
@@ -498,7 +500,8 @@ export async function startBackend({ memory, ring: ringAddr, device, canvas, dir
             const wdt = box ? box[3] - box[0] : sl.width, hgt = box ? box[4] - box[1] : sl.height, dep = box ? box[5] - box[2] : sl.depth;
             const off = sl.offset + (box ? box[1] / bl * sl.pitch + box[0] / bl * (d.format.startsWith('bc') ? (d.format.startsWith('bc1') || d.format.startsWith('bc4') ? 8 : 16) : 4) : 0);
             useBuffer(s, off, sl.pitch * Math.ceil(hgt / bl) * dep);
-            enc.copyBufferToTexture({ buffer: s.gpu, offset: off, bytesPerRow: sl.pitch, rowsPerImage: Math.ceil(sl.height / bl) }, { texture: d.gpu, mipLevel: m.mipLevel, origin: { x: a[10], y: a[11], z: d.dim === 3 ? a[12] : m.layer } }, { width: wdt, height: hgt, depthOrArrayLayers: dep });
+            // block-compressed: the copy covers whole 4x4 blocks (a mip smaller than a block included)
+            enc.copyBufferToTexture({ buffer: s.gpu, offset: off, bytesPerRow: sl.pitch, rowsPerImage: Math.ceil(sl.height / bl) }, { texture: d.gpu, mipLevel: m.mipLevel, origin: { x: a[10], y: a[11], z: d.dim === 3 ? a[12] : m.layer } }, { width: Math.ceil(wdt / bl) * bl, height: Math.ceil(hgt / bl) * bl, depthOrArrayLayers: dep });
           } else if (dl.type === 1 && sl.type === 0) { // texture -> buffer footprint
             syncTitleTexture(s);
             const m = sub(s, sl.sub), hgt = box ? box[4] - box[1] : dl.height, dep = box ? box[5] - box[2] : dl.depth;
@@ -538,6 +541,8 @@ export async function startBackend({ memory, ring: ringAddr, device, canvas, dir
 @vertex fn vs(@builtin(vertex_index) i: u32) -> @builtin(position) vec4f { let p = vec2f(f32((i << 1u) & 2u), f32(i & 2u)); return vec4f(p * vec2f(2, -2) + vec2f(-1, 1), 0, 1); }
 @fragment fn fs(@builtin(position) p: vec4f) -> @location(0) vec4f { return vec4f(textureLoad(t, vec2i(p.xy), 0).rgb, 1); }` });
   const blit = device.createRenderPipeline({ layout: 'auto', vertex: { module: blitModule, entryPoint: 'vs' }, fragment: { module: blitModule, entryPoint: 'fs', targets: [{ format: canvasFormat }] }, primitive: { topology: 'triangle-list' } });
+  // read-backs are 8-bit RGBA: a back buffer in another format (R10G10B10A2, half floats) is drawn into one first
+  const blit8 = device.createRenderPipeline({ layout: 'auto', vertex: { module: blitModule, entryPoint: 'vs' }, fragment: { module: blitModule, entryPoint: 'fs', targets: [{ format: 'rgba8unorm' }] }, primitive: { topology: 'triangle-list' } });
   let capturing = 0, shown = null;
   async function present(w) {
     const r = res.get(w[0]);
@@ -550,10 +555,18 @@ export async function startBackend({ memory, ring: ringAddr, device, canvas, dir
       pass.setBindGroup(0, device.createBindGroup({ layout: blit.getBindGroupLayout(0), entries: [{ binding: 0, resource: view(r, { format: r.format, dim: '2d' }) }] }));
       pass.draw(3); pass.end();
       let rb = null, pitch = 0;
+      let rbFormat = r.format;
       if (onFrame && (keepAll || capturing < 3) && !r.format.startsWith('bc')) {
         pitch = Math.ceil(r.width * 4 / 256) * 256;
         rb = device.createBuffer({ size: pitch * r.height, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ });
-        enc.copyTextureToBuffer({ texture: r.gpu }, { buffer: rb, bytesPerRow: pitch }, { width: r.width, height: r.height });
+        let src = r.gpu;
+        if (!/^(rgba8|bgra8)unorm/.test(r.format)) {
+          src = device.createTexture({ size: { width: r.width, height: r.height }, format: 'rgba8unorm', usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC });
+          const p8 = enc.beginRenderPass({ colorAttachments: [{ view: src.createView(), loadOp: 'clear', clearValue: [0, 0, 0, 1], storeOp: 'store' }] });
+          p8.setPipeline(blit8); p8.setBindGroup(0, device.createBindGroup({ layout: blit8.getBindGroupLayout(0), entries: [{ binding: 0, resource: view(r, { format: r.format, dim: '2d' }) }] })); p8.draw(3); p8.end();
+          rbFormat = 'rgba8unorm'; const t = src; device.queue.onSubmittedWorkDone().then(() => t.destroy());
+        }
+        enc.copyTextureToBuffer({ texture: src }, { buffer: rb, bytesPerRow: pitch }, { width: r.width, height: r.height });
       }
       device.queue.submit([enc.finish()]);
       if (rb) {
@@ -563,7 +576,7 @@ export async function startBackend({ memory, ring: ringAddr, device, canvas, dir
           const src = new Uint8Array(rb.getMappedRange()), px = new Uint8Array(r.width * r.height * 4);
           for (let y = 0; y < r.height; y++) px.set(src.subarray(y * pitch, y * pitch + r.width * 4), y * r.width * 4);
           rb.unmap(); rb.destroy(); capturing--;
-          onFrame({ index: n, time: t, width: r.width, height: r.height, format: r.format, pixels: px });
+          onFrame({ index: n, time: t, width: r.width, height: r.height, format: rbFormat, pixels: px });
         });
       }
     }

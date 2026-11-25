@@ -1023,7 +1023,7 @@
    "pass": true
   },
   {
-   "check": "kernelx: XMemVirtualAlloc – graphics memory type in UMA, others from Windows",
+   "check": "kernelx: XMemVirtualAlloc \u2013 graphics memory type in UMA, others from Windows",
    "pass": true
   },
   {
@@ -1202,13 +1202,13 @@
  "ladder": [
   {
    "step": "SimpleTriangle",
-   "note": "desktop build; shaders translate, CPU bring-up to do",
-   "state": "todo"
+   "note": "desktop sample, clang-cl and MSVC builds, through DXGI and WebGPU",
+   "state": "done"
   },
   {
    "step": "SimplePBR",
-   "note": "desktop build",
-   "state": "todo"
+   "note": "DirectXTK12 PBR with IBL and HDR, in Chrome",
+   "state": "done"
   },
   {
    "step": "Doom",

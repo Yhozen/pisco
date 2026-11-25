@@ -121,6 +121,17 @@ static void create_event(Cpu *c, const char *name) {
 }
 IMP(kernel32, CreateEventA) { create_event(c, ARG(3) ? GSTR(ARG(3)) : 0); }
 IMP(kernel32, CreateEventW) { char *n = ARG(3) ? rt_narrow(GWSTR(ARG(3))) : 0; create_event(c, n); free(n); }
+IMP(kernel32, CreateEventExW) { // (attributes, name, flags: 1 manual reset, 2 initially set, access)
+  char *n = ARG(1) ? rt_narrow(GWSTR(ARG(1))) : 0; u32 fl = (u32)ARG(2); int ex; Object *o = named(OBJ_EVENT, n, &ex);
+  if (!ex) { o->manual = fl & 1; o->signaled = (fl & 2) != 0; }
+  SET_LAST_ERROR(ex ? 183 : 0); free(n); RET(rt_handle_new(o));
+}
+IMP(kernel32, CreateEventExA) { u32 fl = (u32)ARG(2); int ex; Object *o = named(OBJ_EVENT, ARG(1) ? GSTR(ARG(1)) : 0, &ex); if (!ex) { o->manual = fl & 1; o->signaled = (fl & 2) != 0; } SET_LAST_ERROR(ex ? 183 : 0); RET(rt_handle_new(o)); }
+IMP(kernel32, GetLocaleInfoEx) { // (locale name, type, buffer, size): the invariant "C" answers the C++ runtime asks for
+  u32 type = (u32)ARG(1) & 0xFFFF, n = (u32)ARG(3); const char *v = type == 0x0E ? "." : type == 0x0F ? "," : type == 0x10 ? "3;0" : type == 0x1004 ? "1252" : type == 0x0B ? "1252" : "";
+  size_t k = strlen(v) + 1; if (!n) { RET(k); return; } if (n < k) { SET_LAST_ERROR(122); RET(0); return; }
+  for (size_t i = 0; i < k; i++) M16(ARG(2) + 2 * i) = (u8)v[i]; RET(k);
+}
 IMP(kernel32, SetEvent) {
   Object *o = rt_handle_get(ARG(0)); if (!o) { RET(0); return; }
   pthread_mutex_lock(&rt_wait_lock); o->signaled = 1; rt_signal(); pthread_mutex_unlock(&rt_wait_lock); RET(1);
@@ -599,3 +610,56 @@ IMP(kernel32, WaitOnAddress) { // (address, compare, size, ms): returns when *ad
 static void addr_wake(void) { pthread_mutex_lock(&addr_lock); addr_seq++; pthread_cond_broadcast(&addr_cond); pthread_mutex_unlock(&addr_lock); }
 IMP(kernel32, WakeByAddressSingle) { addr_wake(); }
 IMP(kernel32, WakeByAddressAll) { addr_wake(); }
+
+// ---- interlocked singly linked lists (SLIST_HEADER: the first entry, then a depth); one lock for all ----
+static pthread_mutex_t slist_lock = PTHREAD_MUTEX_INITIALIZER;
+IMP(kernel32, InitializeSListHead) { M64(ARG(0)) = 0; M64(ARG(0) + 8) = 0; }
+IMP(kernel32, InterlockedPushEntrySList) { pthread_mutex_lock(&slist_lock); u64 h = ARG(0), e = ARG(1), old = M64(h); M64(e) = old; M64(h) = e; M64(h + 8) += 1; pthread_mutex_unlock(&slist_lock); RET(old); }
+IMP(kernel32, InterlockedPopEntrySList) { pthread_mutex_lock(&slist_lock); u64 h = ARG(0), e = M64(h); if (e) { M64(h) = M64(e); M64(h + 8) -= 1; } pthread_mutex_unlock(&slist_lock); RET(e); }
+IMP(kernel32, InterlockedFlushSList) { pthread_mutex_lock(&slist_lock); u64 h = ARG(0), e = M64(h); M64(h) = 0; M64(h + 8) = 0; pthread_mutex_unlock(&slist_lock); RET(e); }
+IMP(kernel32, QueryDepthSList) { RET((u16)M64(ARG(0) + 8)); }
+IMP(kernel32, EncodePointer) { RET(ARG(0)); } // no secret to mix in: the identity, which DecodePointer undoes
+IMP(kernel32, DecodePointer) { RET(ARG(0)); }
+IMP(kernel32, DisableThreadLibraryCalls) { RET(1); }
+IMP(kernel32, RtlPcToFileHeader) { // (pc, &base): the image holding pc
+  const ModuleDef *m = rt_module_of(ARG(0)); u64 b = m ? m->base : 0;
+  if (ARG(1)) M64(ARG(1)) = b; RET(b);
+}
+// STARTUPINFO: 68 bytes for a 32-bit guest, 104 for a 64-bit one; all zero but its size
+#define STARTUPINFO_SIZE (GUEST_BITS == 32 ? 68 : 104)
+IMP(kernel32, GetStartupInfoW) { u64 p = ARG(0); memset((void *)GP(p), 0, STARTUPINFO_SIZE); M32(p) = STARTUPINFO_SIZE; }
+IMP(kernel32, GetStartupInfoA) { u64 p = ARG(0); memset((void *)GP(p), 0, STARTUPINFO_SIZE); M32(p) = STARTUPINFO_SIZE; }
+IMP(kernel32, SetCurrentDirectoryA) { RET(1); } // the title's folder stays the current one (as SetCurrentDirectoryW)
+IMP(kernel32, RoInitialize) { RET(0); }
+IMP(kernel32, RoUninitialize) {}
+
+// ---- the thread pool's work objects: each submit runs the callback on a thread of its own ----
+u64 rt_spawn_native(void (*fn)(Cpu *, void *), void *arg); // process.c
+typedef struct { u32 magic; u64 cb, ctx; int pending; pthread_mutex_t m; pthread_cond_t cv; } TpWork;
+#define TPMAGIC 0x54505752u
+static TpWork *tp_work(u64 p) { TpWork *w = (TpWork *)GP(p); return p && w->magic == TPMAGIC ? w : 0; }
+typedef struct { TpWork *w; u64 cb, ctx, simple; } TpRun;
+static void tp_main(Cpu *c, void *arg) {
+  TpRun *r = arg; static u8 instance[64]; // PTP_CALLBACK_INSTANCE: an opaque pointer the callback may hand back to us
+  if (r->simple) rt_guest_call(c, r->cb, (uptr)instance, r->ctx, 0, 0);      // (instance, context)
+  else rt_guest_call(c, r->cb, (uptr)instance, r->ctx, (uptr)r->w, 0);      // (instance, context, work)
+  if (r->w) { pthread_mutex_lock(&r->w->m); r->w->pending--; pthread_cond_broadcast(&r->w->cv); pthread_mutex_unlock(&r->w->m); }
+  free(r);
+}
+IMP(kernel32, CreateThreadpoolWork) { // (callback, context, environment)
+  TpWork *w = calloc(1, sizeof *w); w->magic = TPMAGIC; w->cb = ARG(0); w->ctx = ARG(1);
+  pthread_mutex_init(&w->m, 0); pthread_cond_init(&w->cv, 0); RET((uptr)w);
+}
+IMP(kernel32, SubmitThreadpoolWork) {
+  TpWork *w = tp_work(ARG(0)); if (!w) return;
+  pthread_mutex_lock(&w->m); w->pending++; pthread_mutex_unlock(&w->m);
+  TpRun *r = calloc(1, sizeof *r); r->w = w; r->cb = w->cb; r->ctx = w->ctx; rt_spawn_native(tp_main, r);
+}
+IMP(kernel32, WaitForThreadpoolWorkCallbacks) { // (work, cancel pending): ours have all started
+  TpWork *w = tp_work(ARG(0)); if (!w) return;
+  pthread_mutex_lock(&w->m); while (w->pending) pthread_cond_wait(&w->cv, &w->m); pthread_mutex_unlock(&w->m);
+}
+IMP(kernel32, CloseThreadpoolWork) {} // kept: a callback still running may name it
+IMP(kernel32, TrySubmitThreadpoolCallback) { TpRun *r = calloc(1, sizeof *r); r->cb = ARG(0); r->ctx = ARG(1); r->simple = 1; rt_spawn_native(tp_main, r); RET(1); }
+IMP(kernel32, CallbackMayRunLong) { RET(1); }
+IMP(kernel32, FreeLibraryWhenCallbackReturns) {} // modules are never unloaded here

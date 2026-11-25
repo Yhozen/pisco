@@ -392,6 +392,62 @@ Milestone M7, as a proof of concept. The image was opened in Chrome on an M1 Mac
 - **Stopped there**: a scripted level 1 and a full playthrough were dropped; a playable game was the point. What is
   left is in [status.md](status.md).
 
+### 3.20 Step 1: SimpleTriangleDesktop, both builds (2026-11-24)
+Microsoft's SimpleTriangleDesktop (Xbox-GDK-Samples), built for Windows by clang-cl and by the real MSVC, runs in
+headless Chrome and draws its triangle through WebGPU. `tests/gfx/st.sh` checks it.
+- **The C++ runtime DLLs** (`msvcp140`, `vcruntime140`, `vcruntime140_1`, 14.44 redistributable, fetched from
+  Visual Studio's package manifest, never committed) sit beside the exe and are lifted with it, as decided.
+  The GDK's service DLLs (`libHttpClient`, `XCurl`, `WinPixEventRuntime`) are not: their calls fail offline.
+- **Lifter**: SSE4.2's string compares (`pcmpistri`/`pcmpestri`/…: the STL's string search), checked against
+  the CPU on 14.4 million random cases with no difference; an AVX instruction now traps where it is instead of
+  dropping its whole function (vcruntime's `memcpy` and `memset` have AVX branches the SSE path never takes);
+  switch bounds carried through `lea`/`and`/`shr` (memset's tables); MSVC C++ exceptions (below).
+- **The PC GDK's XGameRuntime**: `xgameruntime.lib` loads the runtime DLL and reaches each API as a method of a
+  COM object `QueryApiImpl` hands out by class and interface id; the families the sample uses forward to the
+  console functions (async, XGame, XSystem). The ids and slots are read from the sample's own code.
+- **DXGI** (`rt/dxgi.c`, `rt/d3d12.c`): factory, one adapter (the WebGPU device), `CreateSwapChainForHwnd`
+  with back buffers that are textures of the D3D12 device, `Present` (60 Hz with a sync interval, or
+  `SW_PACE=off`), `ResizeBuffers`, `GetCurrentBackBufferIndex`; `d3d12.dll` imported by ordinal (#101).
+- **Windows / CRT pieces** it needed: SList functions, `EncodePointer`, `RtlPcToFileHeader`, `CreateEventExW`,
+  the "C" locale's ctype table, wide `printf`, `_wfsopen`, `_wsplitpath_s`, `fgetpos` (it always said 0, so
+  `std::ifstream` read empty shader files), and bugs where an import read its arguments again after calling
+  back into the title (`XAsyncRun`, `XTaskQueueTerminate`, `__C_specific_handler`).
+- **Checks**: frame 120 read back from WebGPU has the clear colour (65,65,65) and a triangle of exactly
+  259,200 pixels (960 × 540 / 2) whose centre is 187,137,137, the sample's red/green/blue vertices weighted
+  ½, ¼, ¼ and sRGB-encoded; both builds draw the same pixels. 816 frames in a row hash the same, with no
+  WebGPU error.
+- **MSVC C++ exceptions (FH3)**: the lifter makes the language handlers named in unwind info, the catch and
+  cleanup funclets of each FuncInfo, the functions a throw's ThrowInfo names (destructor, copy constructor)
+  and the catch continuations (`lea rax,[continuation]` in each catch funclet) into entries and resume
+  points; `RtlUnwindEx` runs consolidated unwinds (vcruntime's `__CxxCallCatchBlock`), and unwinding out of
+  a catch block leads back into its function, so a throw inside a catch finds the outer `try`.
+  `fixtures/msvc/eh.exe` passes 6 / 6 with Microsoft's real `vcruntime140.dll`, lifted.
+- **Not covered**: FH4 (`__CxxFrameHandler4`, what current `cl.exe` emits) is not tested: no `cl.exe` here,
+  and clang emits FH3; the MSVC build of the sample throws nothing in normal play.
+
+### 3.21 Step 2: SimplePBR (2026-11-24)
+Microsoft's SimplePBR (desktop x64), built by clang-cl with all of DirectXTK12 (`tools/build-gdk-sample-pbr.sh`:
+DirectXTK12's 154 shaders compiled by the public dxc, as its `CompileShaders.cmd` does), renders its scene in
+headless Chrome: the toy robot, the lettered blocks and the floor with image-based lighting, the HDR skybox
+(blurred), sprite-font text, through an HDR target and a tone-mapping pass into an R10G10B10A2 swap chain.
+`tests/gfx/pbr.sh` checks it.
+- 25 draws a frame (indexed meshes, BC1/BC3-style textures and their small mips, cube maps, constant buffers,
+  descriptor tables, a sampler heap); 84 of the exe's 101 DXIL shaders translate, and none of the 17 that do
+  not (DirectXTK effects passing arrays between stages) is used by the sample.
+- New on the way: `CheckFeatureSupport` answers for root-signature 1.1, format info, GPU address bits,
+  architecture1 and zeros for options it does not know; the thread pool's work objects (`ResourceUploadBatch`);
+  the C math library in double and float; wide character classes; `rsqrtss` / `rcpss`.
+- Back end: buffers carry 64 KiB of room past their end (the translated shaders declare constant buffers at
+  D3D12's 64 KiB limit and WebGPU checks the bound range against it); block-compressed copies cover whole 4x4
+  blocks (mips smaller than a block); frames in formats other than 8-bit RGBA are converted before they are read
+  back (R10G10B10A2 read as bytes had made the first recording look psychedelic). The recorder drops a frame
+  cut short when the page stops.
+- Checks: 234 frames read back from WebGPU, all equal after start-up (the scene is static without input), 5,800
+  draws, none skipped, no WebGPU error. By eye the frame (`out/pbr-shots/frame.png`) shows what the sample's own
+  screenshot (`media/image3.PNG`) shows, from the sample's default camera; that screenshot was taken from another
+  position, so it is not used as a pixel reference. The title text is greyer than in Microsoft's screenshot.
+- Speed: about 2.2 frames per second at 1920x1080 on SwiftShader (CPU rendering), ~56 draws per second.
+
 ## 4. Roadblocks
 
 ### Resolved
@@ -439,7 +495,7 @@ Milestone M7, as a proof of concept. The image was opened in Chrome on an M1 Mac
 | O1 | **Graphics beyond Doom's and XCL's checks** | D3D12.X → WebGPU works for Doom and XCL's checks (depth, index buffers, derived pipelines, queries, UMA memory, copies); vertex / constant buffers with real data, many descriptors, compute and DXGI swap chains are written but untested | SimpleTriangleDesktop then SimplePBR (the ladder's steps 1–2) |
 | O2 | **Shader translation** RDNA2 → WGSL | the console ships GPU machine code, not portable shaders | the census tells which stages and instructions Minecraft needs; XCL's HLSL emitter is the reference; mesh/NGG programs may need compute + indirect draws |
 | O3 | **WebGPU limits** | no mesh shaders, no bindless heaps (XCL saw Minecraft use eight heaps of 73,727 descriptors), no 64-bit integers, no shared memory | per-draw bindings traced from each shader (VIctory's approach), compute emulation where needed; decided after the shader census |
-| O4 | MSVC C++ exceptions | Minecraft is an MSVC title; `__CxxFrameHandler3/4` are not implemented | an MSVC-ABI test title already builds (`fixtures/msvc`); implement if the title throws in normal play |
+| O4 | MSVC C++ exceptions | FH3 works with the real vcruntime (§3.20); FH4, which current `cl.exe` emits and Minecraft likely uses, is untested | build an FH4 test title with `cl.exe` (on the MSVC build machine) |
 | O5 | Audio codecs | PCM, XMA2 and Opus voices decode (FFmpeg); XMA buffers are decoded whole at submit, each buffer on its own; GameInput has no device callbacks yet | stream XMA across buffers when a title needs it |
 | O6 | Speed | 1.3–6× native on micro-benchmarks; a game needs headroom | lazy flags, registers across calls, AVX2 paths, wasm64 only if needed |
 | O7 | **The Minecraft files** | every Minecraft-specific answer (imports, memory, shaders, whether it needs `msvcp140` from its package) waits on them | run `tools/census.sh` first (`docs/first-run.md`) |

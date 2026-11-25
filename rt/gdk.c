@@ -283,6 +283,7 @@ IMP(xgameruntime, XTaskQueueDispatch) { // (queue, port, timeout ms) -> true whe
 }
 IMP(xgameruntime, XTaskQueueTerminate) { // (queue, wait, context, callback): its pending callbacks run canceled
   Queue *q = queue_of(ARG(0)); if (!q) { RET(E_INVALIDARG); return; }
+  u64 ctx = ARG(2), cb = ARG(3); // (read now: the canceled callbacks reuse the registers)
   q->terminated = 1;
   for (int k = 0; k < 2; k++) {
     Port *p = q->ports[k]; Item *mine = 0, **tail = &mine;
@@ -291,7 +292,7 @@ IMP(xgameruntime, XTaskQueueTerminate) { // (queue, wait, context, callback): it
     pthread_mutex_unlock(&p->m);
     while (mine) { Item *n = mine->next; run_item(c, mine, 1); mine = n; }
   }
-  if (ARG(3)) rt_guest_call(c, ARG(3), ARG(2), 0, 0, 0);
+  if (cb) rt_guest_call(c, cb, ctx, 0, 0, 0);
   RET(S_OK);
 }
 IMP(xgameruntime, XTaskQueueCloseHandle) { RET(S_OK); }
@@ -319,8 +320,9 @@ IMP(xgameruntime, XAsyncGetStatus) { Async *a = async_of(ARG(0)); RET(a ? a->sta
 IMP(xgameruntime, XAsyncGetResultSize) { Async *a = async_of(ARG(0)); if (!a) { RET(E_PENDING); return; } if (ARG(1)) M64(ARG(1)) = a->size; RET(a->status); }
 IMP(xgameruntime, XAsyncCancel) {}
 IMP(xgameruntime, XAsyncRun) { // (block, work): run the work callback with the block, then complete
-  u32 hr = (u32)rt_guest_call(c, ARG(1), ARG(0), 0, 0, 0);
-  RET(async_finish(c, ARG(0), hr, 0, 0));
+  u64 block = ARG(0), work = ARG(1); // (the call below reuses the argument registers)
+  u32 hr = (u32)rt_guest_call(c, work, block, 0, 0, 0);
+  RET(async_finish(c, block, hr, 0, 0));
 }
 
 // ---- XGameRuntime, XSystem, XPackage ----
@@ -342,6 +344,18 @@ IMP(xgameruntime, XGameRuntimeUninitialize) {}
 IMP(xgameruntime, XSystemGetDeviceType) { RET(7); } // XboxScarlettAnaconda
 IMP(xgameruntime, XSystemGetConsoleId) { const char *id = "0000000000000000-0000000000000000000"; if (ARG(0) >= 38) snprintf(GSTR(ARG(1)), 38, "%s", id); if (ARG(2)) M64(ARG(2)) = 38; RET(S_OK); }
 IMP(xgameruntime, XPackageGetCurrentProcessPackageIdentifier) { read_manifest(); if (ARG(0) <= strlen(package_id)) { RET(E_INVALIDARG); return; } snprintf(GSTR(ARG(1)), ARG(0), "%s", package_id); RET(S_OK); }
+IMP(xgameruntime, XThreadAssertNotTimeSensitive) { RET(S_OK); }
+IMP(xgameruntime, XSystemGetXboxLiveSandboxId) { // (size, buffer, &used): offline, the retail sandbox
+  const char *id = "RETAIL"; u64 n = strlen(id) + 1;
+  if (ARG(2)) M64(ARG(2)) = n; if (ARG(0) < n || !ARG(1)) { RET(0x8007007Au); return; } // ERROR_INSUFFICIENT_BUFFER
+  memcpy(GSTR(ARG(1)), id, n); RET(S_OK);
+}
+IMP(xgameruntime, XSystemGetAnalyticsInfo) { // XSystemAnalyticsInfo by value (hidden pointer): OS version, hosting OS version, family, form
+  u64 r = ARG(0); memset((void *)GP(r), 0, 144);
+  M16(r) = 10; M16(r + 2) = 0; M16(r + 4) = 25398; M16(r + 8) = 10; M16(r + 12) = 25398; // XVersion: major, minor, build, revision
+  strcpy(GSTR(r + 16), "Windows.Xbox"); strcpy(GSTR(r + 80), "Xbox Series X");
+  RET(r);
+}
 IMP(xgameruntime, XGameGetXboxTitleId) { M32(ARG(0)) = 0x7952987Au; RET(S_OK); }
 IMP(xgameruntime, XPersistentLocalStorageGetPath) {
   const char *p = "S:\\"; if (ARG(0) < 4) { RET(E_INVALIDARG); return; }
@@ -403,6 +417,12 @@ IMP(user32, DefWindowProcW) { RET(0); }
 IMP(user32, DefWindowProcA) { RET(0); }
 IMP(user32, GetWindowLongW) { Window *w = window(ARG(0)); s32 i = (s32)ARG(1); RET(!w ? 0 : i == -16 ? w->style : i == -20 ? w->exstyle : 0); }
 IMP(user32, SetWindowLongW) { RET(0); }
+IMP(user32, LoadIconW) { RET(0x10001); }   // icons and cursors: handles nothing draws
+IMP(user32, LoadIconA) { RET(0x10001); }
+IMP(user32, LoadCursorW) { RET(0x10002); }
+IMP(user32, LoadCursorA) { RET(0x10002); }
+IMP(user32, AdjustWindowRect) { RET(1); }  // no frame around the console screen: the rect stays
+IMP(user32, AdjustWindowRectEx) { RET(1); }
 IMP(user32, GetClientRect) { u64 r = ARG(1); M32(r) = 0; M32(r + 4) = 0; M32(r + 8) = 1920; M32(r + 12) = 1080; RET(1); }
 IMP(user32, GetWindowRect) { u64 r = ARG(1); M32(r) = 0; M32(r + 4) = 0; M32(r + 8) = 1920; M32(r + 12) = 1080; RET(1); }
 IMP(user32, PeekMessageW) { RET(0); }
@@ -507,3 +527,56 @@ IMP(kernel32, CreateWaitableTimerExW) { SET_LAST_ERROR(50); RET(0); }
 IMP(kernel32, CreateToolhelp32Snapshot) { SET_LAST_ERROR(50); RET(0xFFFFFFFFFFFFFFFFull); }
 IMP(kernel32, Module32FirstW) { RET(0); }
 IMP(kernel32, Module32NextW) { RET(0); }
+
+// ---- the PC GDK's XGameRuntime: xgameruntime.lib (linked into a desktop title) loads xgameruntime.dll, checks its
+// version through InitializeApiImpl*, then reaches every API as a method of a COM object it asks QueryApiImpl for
+// (a class id and an interface id per API family). Objects we model are in pc_apis; others are refused. ----
+static void guid_str(u64 g, char *out) {
+  snprintf(out, 40, "%08x-%04x-%04x-%02x%02x-%02x%02x%02x%02x%02x%02x", M32(g), M16(g + 4), M16(g + 6), M8(g + 8), M8(g + 9), M8(g + 10), M8(g + 11), M8(g + 12), M8(g + 13), M8(g + 14), M8(g + 15));
+}
+IMP(xgameruntime, InitializeApiImpl) { RET(S_OK); }
+IMP(xgameruntime, InitializeApiImplEx) { RET(S_OK); }
+IMP(xgameruntime, InitializeApiImplEx2) { rt_log("XGameRuntime (PC): initialised (game version 0x%llx, SDK 0x%llx)", ARG(0), ARG(1)); RET(S_OK); }
+IMP(xgameruntime, UninitializeApiImpl) { RET(S_OK); }
+IMP(xgameruntime, XErrorReport) { rt_log("XGameRuntime: XErrorReport 0x%08x %s", (u32)ARG(0), ARG(1) ? GSTR(ARG(1)) : ""); }
+// the API families the PC library asks for, as its thunks use them (facts read from a desktop title's code:
+// class id, interface id, method slots); slots 0-2 are IUnknown's
+typedef struct { const char *clsid, *iid; const char *methods[32]; } PcApi;
+static const PcApi pc_apis[] = {
+  {"073b7dcb-1fcf-4030-94be-e3c9eb623428", "073b7dcb-1fcf-4030-94be-e3c9eb623428", {[3] = "PcAsync_GetStatus", [6] = "PcAsync_Run", [29] = "PcThread_AssertNotTimeSensitive"}},
+  {"973a344e-24bf-4d0f-8457-56c534892b29", "2549f142-6419-4a06-97b5-931aab7c2f34", {[3] = "PcGame_GetXboxTitleId"}},
+  {"b884675d-b738-4a9c-815d-9a9a1e0c6c9b", "b884675d-b738-4a9c-815d-9a9a1e0c6c9b", {[3] = "PcSystem_GetAnalyticsInfo"}},
+  {"e349bd1a-fc20-4e40-b99c-4178cc6b409f", "1861cf2e-e18b-4834-a9f5-b4a4e6efb4cf", {[4] = "PcSystem_GetXboxLiveSandboxId"}},
+};
+IMP(xgameruntime, QueryApiImpl) { // (class id, interface id, &object)
+  char a[40], b[40]; guid_str(ARG(0), a); guid_str(ARG(1), b);
+  static u64 objs[sizeof pc_apis / sizeof *pc_apis];
+  for (unsigned k = 0; k < sizeof pc_apis / sizeof *pc_apis; k++) {
+    if (strcmp(a, pc_apis[k].clsid) || strcmp(b, pc_apis[k].iid)) continue;
+    if (!objs[k]) {
+      const char *names[32]; const char *prefix = "";
+      for (int i = 0; i < 32; i++) names[i] = i == 0 ? "Pc_QueryInterface" : i == 1 ? "Pc_AddRef" : i == 2 ? "Pc_Release" : pc_apis[k].methods[i];
+      u64 o = (uptr)calloc(1, 16); M64(o) = rt_com_vtable("xgameruntime", prefix, names, 32); objs[k] = o;
+    }
+    if (ARG(2)) M64(ARG(2)) = objs[k];
+    RET(S_OK); return;
+  }
+  rt_log("XGameRuntime (PC): QueryApiImpl %s / %s: not modelled", a, b);
+  if (ARG(2)) M64(ARG(2)) = 0;
+  RET(0x80040154u); // REGDB_E_CLASSNOTREG
+}
+// a method call on such an object: the console function with the object pointer taken out of the arguments
+static void drop_this(Cpu *c) {
+  R[RCX] = R[RDX]; R[RDX] = R[8]; R[8] = R[9]; R[9] = M64(R[RSP] + 0x28);
+  for (int k = 4; k < 10; k++) M64(R[RSP] + 8 + 8 * k) = M64(R[RSP] + 16 + 8 * k);
+}
+IMP(xgameruntime, Pc_QueryInterface) { if (ARG(2)) M64(ARG(2)) = ARG(0); RET(S_OK); }
+IMP(xgameruntime, Pc_AddRef) { RET(2); }
+IMP(xgameruntime, Pc_Release) { RET(1); } // one object per family, kept
+IMP(xgameruntime, PcAsync_GetStatus) { drop_this(c); imp_xgameruntime_XAsyncGetStatus(c); }
+IMP(xgameruntime, PcAsync_Run) { drop_this(c); imp_xgameruntime_XAsyncRun(c); }
+IMP(xgameruntime, PcThread_AssertNotTimeSensitive) { drop_this(c); imp_xgameruntime_XThreadAssertNotTimeSensitive(c); }
+IMP(xgameruntime, PcGame_GetXboxTitleId) { drop_this(c); imp_xgameruntime_XGameGetXboxTitleId(c); }
+IMP(xgameruntime, PcSystem_GetXboxLiveSandboxId) { drop_this(c); imp_xgameruntime_XSystemGetXboxLiveSandboxId(c); }
+// the PC method fills the caller's structure; the console function returns it through a hidden pointer: the same call
+IMP(xgameruntime, PcSystem_GetAnalyticsInfo) { drop_this(c); imp_xgameruntime_XSystemGetAnalyticsInfo(c); }

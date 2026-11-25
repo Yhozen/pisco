@@ -31,7 +31,7 @@ u64 rt_dxgi_device(u64 d3d_device) {
   return (uptr)dev_obj;
 }
 static u64 adapter(void) {
-  static const char *const names[] = {OBJECT_SLOTS, "EnumOutputs", "GetDesc", "CheckInterfaceSupport", "GetDesc1"};
+  static const char *const names[] = {OBJECT_SLOTS, "EnumOutputs", "GetDesc", "CheckInterfaceSupport", "GetDesc1", "GetDesc2", 0, 0, "QueryVideoMemoryInfo", "SetVideoMemoryReservation", 0, 0, "GetDesc3"};
   if (!adapter_obj) adapter_obj = make("Adapter_", names, sizeof names / sizeof *names, 0);
   adapter_obj->refs++;
   return (uptr)adapter_obj;
@@ -73,7 +73,45 @@ static void adapter_desc(Cpu *c, int one) { // DXGI_ADAPTER_DESC(1): description
   RET(S_OK);
 }
 IMP(dxgi, Adapter_GetDesc) { adapter_desc(c, 0); }
-IMP(dxgi, Adapter_GetDesc1) { adapter_desc(c, 1); }
+IMP(dxgi, Adapter_GetDesc1) { adapter_desc(c, 1); M32(ARG(1) + 304) = 0; } // flags: a hardware adapter
+IMP(dxgi, Adapter_GetDesc2) { adapter_desc(c, 1); M32(ARG(1) + 304) = 0; M32(ARG(1) + 308) = 0; M32(ARG(1) + 312) = 0; }
+IMP(dxgi, Adapter_GetDesc3) { adapter_desc(c, 1); M32(ARG(1) + 304) = 0; M32(ARG(1) + 308) = 0; M32(ARG(1) + 312) = 0; }
+IMP(dxgi, Adapter_QueryVideoMemoryInfo) { u64 o = ARG(3); if (!o) { RET(E_INVALIDARG); return; } M64(o) = 4ull << 30; M64(o + 8) = 0; M64(o + 16) = 4ull << 30; M64(o + 24) = 0; RET(S_OK); } // budget, usage, available, reserved
+IMP(dxgi, Adapter_SetVideoMemoryReservation) { RET(S_OK); }
+
+// ---- the factory (CreateDXGIFactory / 1 / 2): one adapter (the page's WebGPU device), swap chains for windows ----
+u64 rt_dxgi_swapchain(u64 queue, u64 desc1, u32 win_w, u32 win_h); // d3d12.c
+static u64 factory;
+static void make_factory(Cpu *c, u64 ppv) {
+  static const char *const names[] = {OBJECT_SLOTS, "EnumAdapters", "MakeWindowAssociation", "GetWindowAssociation", "CreateSwapChain", "CreateSoftwareAdapter",
+    "EnumAdapters1", "IsCurrent", "IsWindowedStereoEnabled", "CreateSwapChainForHwnd", "CreateSwapChainForCoreWindow", "GetSharedResourceAdapterLuid", "RegisterStereoStatusWindow",
+    "RegisterStereoStatusEvent", "UnregisterStereoStatus", "RegisterOcclusionStatusWindow", "RegisterOcclusionStatusEvent", "UnregisterOcclusionStatus", "CreateSwapChainForComposition",
+    "GetCreationFlags", "EnumAdapterByLuid", "EnumWarpAdapter", "CheckFeatureSupport", "EnumAdapterByGpuPreference", "RegisterAdaptersChangedEvent", "UnregisterAdaptersChangedNotification"};
+  if (!factory) factory = (uptr)make("Factory_", names, sizeof names / sizeof *names, 0);
+  if (!ppv) { RET(E_POINTER); return; }
+  M64(ppv) = factory; RET(S_OK);
+}
+IMP(dxgi, CreateDXGIFactory) { make_factory(c, ARG(1)); }  // (riid, ppv)
+IMP(dxgi, CreateDXGIFactory1) { make_factory(c, ARG(1)); }
+IMP(dxgi, CreateDXGIFactory2) { make_factory(c, ARG(2)); } // (flags, riid, ppv)
+IMP(dxgi, DXGIGetDebugInterface1) { if (ARG(2)) M64(ARG(2)) = 0; RET(E_NOINTERFACE); }
+IMP(dxgi, Factory_QueryInterface) { if (!ARG(2)) { RET(E_POINTER); return; } M64(ARG(2)) = ARG(0); RET(S_OK); } // IDXGIFactory .. IDXGIFactory7
+IMP(dxgi, Factory_AddRef) { RET(2); }
+IMP(dxgi, Factory_Release) { RET(1); }
+static void one_adapter(Cpu *c, u32 i, u64 out) { if (!out) { RET(E_POINTER); return; } if (i) { M64(out) = 0; RET(DXGI_ERROR_NOT_FOUND); return; } M64(out) = adapter(); RET(S_OK); }
+IMP(dxgi, Factory_EnumAdapters) { one_adapter(c, (u32)ARG(1), ARG(2)); }
+IMP(dxgi, Factory_EnumAdapters1) { one_adapter(c, (u32)ARG(1), ARG(2)); }
+IMP(dxgi, Factory_EnumAdapterByGpuPreference) { one_adapter(c, (u32)ARG(1), ARG(4)); } // (index, preference, riid, ppv)
+IMP(dxgi, Factory_EnumAdapterByLuid) { one_adapter(c, 0, ARG(3)); }                    // (luid, riid, ppv)
+IMP(dxgi, Factory_EnumWarpAdapter) { if (ARG(2)) M64(ARG(2)) = 0; RET(DXGI_ERROR_NOT_FOUND); }
+IMP(dxgi, Factory_MakeWindowAssociation) { RET(S_OK); }
+IMP(dxgi, Factory_IsCurrent) { RET(1); }
+IMP(dxgi, Factory_GetCreationFlags) { RET(0); }
+IMP(dxgi, Factory_CheckFeatureSupport) { if (ARG(2)) memset((void *)GP(ARG(2)), 0, (size_t)(u32)ARG(3)); RET(S_OK); } // no tearing
+IMP(dxgi, Factory_CreateSwapChainForHwnd) { // (device: the queue, window, desc1, fullscreen desc, output, &swap chain)
+  if (!ARG(3) || !ARG(6)) { RET(E_INVALIDARG); return; }
+  M64(ARG(6)) = rt_dxgi_swapchain(ARG(1), ARG(3), 1920, 1080); RET(S_OK);
+}
 IMP(dxgi, Adapter_CheckInterfaceSupport) { RET(0x887A0004u); }
 
 // ---- MFPlat: the DXGI device manager (IMFDXGIDeviceManager) and its console reset ----

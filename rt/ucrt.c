@@ -87,7 +87,37 @@ IMP(ucrtbase, __stdio_common_vsprintf_s) {
   if ((u64)n < cap) { M8(buf + n) = 0; RET(n); } else { if (cap) M8(buf) = 0; RET(-1); }
 }
 IMP(ucrtbase, __stdio_common_vfwprintf) { RET(0); }
-IMP(ucrtbase, __stdio_common_vswprintf) { if (ARG(1) && ARG(2)) M16(ARG(1)) = 0; RET(0); }
+// wide printf: the format narrowed with Microsoft's wide meanings made explicit (%s and %c: wide, %S: narrow),
+// formatted by the narrow formatter, then widened into the caller's buffer. Returns the length, or -1 when
+// `cap` (in characters) is too small; the result is truncated and terminated then.
+static int wide_format(Cpu *c, u64 buf, u64 cap, u64 wfmt, u64 va) {
+  const wchar16 *w = GWSTR(wfmt); size_t n = rt_wcslen(w);
+  char *f = malloc(2 * n + 1), *o = f;
+  for (size_t i = 0; i < n; i++) {
+    *o++ = (char)w[i];
+    if (w[i] != '%') continue;
+    if (i + 1 < n && w[i + 1] == '%') { *o++ = '%'; i++; continue; }
+    size_t j = i + 1; int sized = 0;
+    while (j < n && strchr("-+ #0123456789.*", (char)w[j])) *o++ = (char)w[j++];
+    while (j < n && strchr("hlLwIjzt0123456789", (char)w[j])) { sized = 1; *o++ = (char)w[j++]; }
+    if (j < n) { char k = (char)w[j]; if (!sized && (k == 's' || k == 'c')) *o++ = 'l'; if (k == 'S') k = 's'; else if (k == 'C') k = 'c'; *o++ = k; }
+    i = j;
+  }
+  *o = 0;
+  int len; u64 tmp = (uptr)malloc(4096);
+  rt_msvcrt_format(c, 0, tmp, 4096, (uptr)f, va, &len);
+  if (len > 4095) len = 4095;
+  M8(tmp + len) = 0;
+  int ok = buf && (u64)len < cap;
+  if (buf && cap) { u64 k = ok ? (u64)len : cap - 1; for (u64 i = 0; i < k; i++) M16(buf + 2 * i) = M8(tmp + i); M16(buf + 2 * k) = 0; }
+  free(f); free((void *)GP(tmp));
+  return ok || !buf ? len : -1;
+}
+IMP(ucrtbase, __stdio_common_vswprintf) { int n = wide_format(c, ARG(1), ARG(2), ARG(3), M64(R[RSP] + 0x30)); RET((s64)n); } // (options, buffer, count, format, locale, va_list)
+IMP(ucrtbase, __stdio_common_vswprintf_s) { int n = wide_format(c, ARG(1), ARG(2), ARG(3), M64(R[RSP] + 0x30)); RET((s64)n); }
+IMP(ucrtbase, __stdio_common_vsnwprintf_s) { // (options, buffer, count, max, format, locale, va_list)
+  u64 cap = ARG(2), max = ARG(3); int n = wide_format(c, ARG(1), max + 1 < cap ? max + 1 : cap, M64(R[RSP] + 0x28), M64(R[RSP] + 0x38)); RET((s64)n);
+}
 IMP(ucrtbase, _set_fmode) { init_globals(); M32(fmode) = (u32)ARG(0); RET(0); }
 IMP(ucrtbase, __setusermatherr) {}
 IMP(ucrtbase, _query_app_type) { RET(1); }
@@ -141,3 +171,69 @@ IMP(ucrtbase, __stdio_common_vsscanf) { // (options, buffer, count, format, loca
 }
 IMP(user32, MessageBoxW) { char *t = rt_narrow(GWSTR(ARG(1))), *cap = ARG(2) ? rt_narrow(GWSTR(ARG(2))) : 0; rt_log("message box: %s%s%s", cap ? cap : "", cap ? ": " : "", t); free(t); free(cap); RET(1); }
 IMP(user32, MessageBoxA) { rt_log("message box: %s", GSTR(ARG(1))); RET(1); }
+
+// ---- the "C" locale, as the C++ runtime (msvcp140) asks for it ----
+static u64 ctype_table; // 257 shorts: [0] for EOF, then 0..255
+IMP(ucrtbase, __pctype_func) {
+  if (!ctype_table) {
+    u16 *t = calloc(257, 2);
+    for (int ch = 0; ch < 128; ch++) {
+      u16 v = 0;
+      if (ch >= 'A' && ch <= 'Z') v |= 0x101; if (ch >= 'a' && ch <= 'z') v |= 0x102; if (ch >= '0' && ch <= '9') v |= 0x4;
+      if (ch == ' ' || (ch >= 9 && ch <= 13)) v |= 0x8; if (ch < 32 || ch == 127) v |= 0x20; if (ch == ' ' || ch == 9) v |= 0x40;
+      if ((ch >= '0' && ch <= '9') || (ch >= 'a' && ch <= 'f') || (ch >= 'A' && ch <= 'F')) v |= 0x80;
+      if (ch > 32 && ch < 127 && !(v & 0x107)) v |= 0x10; // punctuation
+      t[ch + 1] = v;
+    }
+    ctype_table = (uptr)(t + 1);
+  }
+  RET(ctype_table);
+}
+IMP(ucrtbase, ___lc_locale_name_func) { static u64 names; if (!names) names = (uptr)calloc(6, 8); RET(names); } // every category: NULL ("C")
+IMP(ucrtbase, ___lc_codepage_func) { RET(0); }
+IMP(ucrtbase, ___mb_cur_max_func) { RET(1); }
+IMP(ucrtbase, _lock_locales) {}
+IMP(ucrtbase, _unlock_locales) {}
+// (stream, &base, &ptr, &count): the stream's buffer as the C++ runtime peeks at it. Ours has no buffer the
+// title can see: an empty one, so basic_filebuf goes through fgetc / fputc / fread / fwrite.
+IMP(ucrtbase, _get_stream_buffer_pointers) {
+  static u64 cells; if (!cells) cells = (uptr)calloc(4, 8); // a null pointer and a zero count to point at
+  if (ARG(1)) M64(ARG(1)) = cells; if (ARG(2)) M64(ARG(2)) = cells + 8; if (ARG(3)) M64(ARG(3)) = cells + 16;
+  RET(0);
+}
+extern const char *rt_command_line;
+IMP(ucrtbase, _get_wide_winmain_command_line) { // the command line after the program name, as WinMain gets it
+  static u64 p; if (!p) { const char *s = rt_command_line; int q = 0; while (*s && (q || (*s != ' ' && *s != '\t'))) { if (*s == '"') q = !q; s++; } while (*s == ' ' || *s == '\t') s++; p = (uptr)rt_widen_guest(s); }
+  RET(p);
+}
+IMP(ucrtbase, wcscat_s) { // (dst, size, src)
+  wchar16 *d = GWSTR(ARG(0)), *s = GWSTR(ARG(2)); u64 n = ARG(1), l = rt_wcslen(d), k = rt_wcslen(s);
+  if (!ARG(0) || !ARG(2) || l + k + 1 > n) { if (ARG(0) && n) d[0] = 0; RET(34); return; } // ERANGE
+  memcpy(d + l, s, (k + 1) * 2); RET(0);
+}
+IMP(ucrtbase, wcscpy_s) { wchar16 *d = GWSTR(ARG(0)), *s = GWSTR(ARG(2)); u64 n = ARG(1), k = rt_wcslen(s); if (!ARG(0) || !ARG(2) || k + 1 > n) { if (ARG(0) && n) d[0] = 0; RET(34); return; } memcpy(d, s, (k + 1) * 2); RET(0); }
+IMP(ucrtbase, strcpy_s) { char *d = GSTR(ARG(0)); const char *s = GSTR(ARG(2)); u64 n = ARG(1), k = strlen(s); if (!ARG(0) || !ARG(2) || k + 1 > n) { if (ARG(0) && n) d[0] = 0; RET(34); return; } memcpy(d, s, k + 1); RET(0); }
+IMP(ucrtbase, strcat_s) { char *d = GSTR(ARG(0)); const char *s = GSTR(ARG(2)); u64 n = ARG(1), l = strlen(d), k = strlen(s); if (!ARG(0) || !ARG(2) || l + k + 1 > n) { if (ARG(0) && n) d[0] = 0; RET(34); return; } memcpy(d + l, s, k + 1); RET(0); }
+// _wsplitpath_s(path, drive, n, dir, n, name, n, ext, n) and _wmakepath_s(out, n, drive, dir, name, ext)
+static int wput(u64 dst, u64 cap, const wchar16 *s, size_t len) { if (!dst) return 0; if (len + 1 > cap) { if (cap) M16(dst) = 0; return 34; } for (size_t i = 0; i < len; i++) M16(dst + 2 * i) = s[i]; M16(dst + 2 * len) = 0; return 0; }
+IMP(ucrtbase, _wsplitpath_s) {
+  const wchar16 *p = GWSTR(ARG(0)); size_t n = rt_wcslen(p), at = 0;
+  size_t drive = n >= 2 && p[1] == ':' ? 2 : 0, last = drive, dot = n;
+  for (size_t i = drive; i < n; i++) if (p[i] == '\\' || p[i] == '/') last = i + 1;
+  for (size_t i = n; i > last; i--) if (p[i - 1] == '.') { dot = i - 1; break; }
+  int e = wput(ARG(1), ARG(2), p, drive) | wput(ARG(3), M64(R[RSP] + 0x28), p + drive, last - drive)
+        | wput(M64(R[RSP] + 0x30), M64(R[RSP] + 0x38), p + last, dot - last) | wput(M64(R[RSP] + 0x40), M64(R[RSP] + 0x48), p + dot, n - dot);
+  (void)at; RET(e ? 34 : 0);
+}
+IMP(ucrtbase, _wmakepath_s) {
+  u64 out = ARG(0), cap = ARG(1); u64 parts[4] = {ARG(2), ARG(3), M64(R[RSP] + 0x28), M64(R[RSP] + 0x30)};
+  wchar16 buf[1024]; size_t k = 0;
+  for (int i = 0; i < 4; i++) {
+    if (!parts[i]) continue; const wchar16 *s = GWSTR(parts[i]); size_t l = rt_wcslen(s); if (!l) continue;
+    if (i == 3 && s[0] != '.' && k < 1023) buf[k++] = '.';
+    for (size_t j = 0; j < l && k < 1023; j++) buf[k++] = s[j];
+    if (i == 1 && buf[k - 1] != '\\' && buf[k - 1] != '/' && k < 1023) buf[k++] = '\\';
+    if (i == 0 && l == 1 && k < 1023) buf[k++] = ':';
+  }
+  RET(wput(out, cap, buf, k));
+}

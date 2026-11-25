@@ -324,6 +324,36 @@ static inline V pmovzxbq(V s) { return pmovzxdq(pmovzxwd(pmovzxbw(s))); }
 static inline V pmovzxwq(V s) { return pmovzxdq(pmovzxwd(s)); }
 static inline u32 movmskps(V a) { return (u32)wasm_i32x4_bitmask(TOV(a)); }
 static inline u32 movmskpd(V a) { return (u32)wasm_i64x2_bitmask(TOV(a)); }
+// SSE4.2 string compares (pcmp[ei]str[im]), Intel SDM vol. 2 "PCMPxSTRx": the intermediate result IntRes2 as a
+// bit mask, flags set. la / lb: explicit lengths (absolute value, saturated), or -1 for implicit (up to a zero element).
+static inline s64 pcmp_elem(V v, int i, int fmt) { switch (fmt) { case 0: return v.b[i]; case 1: return v.w[i]; case 2: return v.sb[i]; default: return v.sw[i]; } }
+static inline u32 pcmpstr(Flags *f, V a, V b, s64 la, s64 lb, u8 imm) {
+  int fmt = imm & 3, n = fmt & 1 ? 8 : 16, agg = (imm >> 2) & 3, pol = (imm >> 4) & 3;
+  if (la < 0) { la = 0; while (la < n && pcmp_elem(a, (int)la, fmt)) la++; } else { if (la < 0) la = -la; if (la > n) la = n; }
+  if (lb < 0) { lb = 0; while (lb < n && pcmp_elem(b, (int)lb, fmt)) lb++; } else { if (lb < 0) lb = -lb; if (lb > n) lb = n; }
+  u32 r = 0;
+  for (int j = 0; j < n; j++) {
+    int bit = 0, vb = j < lb;
+    switch (agg) {
+    case 0: for (int i = 0; i < la && vb && !bit; i++) bit = pcmp_elem(a, i, fmt) == pcmp_elem(b, j, fmt); break;     // equal any
+    case 1: for (int i = 0; i + 1 < la && vb && !bit; i += 2) bit = pcmp_elem(b, j, fmt) >= pcmp_elem(a, i, fmt) && pcmp_elem(b, j, fmt) <= pcmp_elem(a, i + 1, fmt); break; // ranges
+    case 2: { int va = j < la; bit = va && vb ? pcmp_elem(a, j, fmt) == pcmp_elem(b, j, fmt) : !va && !vb; break; } // equal each
+    default: bit = 1; for (int k = 0; k < n - j && bit; k++) { int va = k < la, vbk = j + k < lb; if (!va) break; bit = vbk && pcmp_elem(a, k, fmt) == pcmp_elem(b, j + k, fmt); } // equal ordered
+    }
+    r |= (u32)bit << j;
+  }
+  u32 valid = lb >= 32 ? 0xFFFFFFFFu : (1u << lb) - 1, all = (1u << n) - 1;
+  if (pol == 1) r = ~r & all; else if (pol == 3) r ^= valid;
+  f->cf = r != 0; f->zf = lb < n; f->sf = la < n; f->of = r & 1; f->af = f->pf = 0;
+  return r;
+}
+static inline u32 pcmpstri(u32 r, u8 imm) { int n = imm & 1 ? 8 : 16; return !r ? (u32)n : imm & 0x40 ? 31 - (u32)__builtin_clz(r) : (u32)__builtin_ctz(r); }
+static inline V pcmpstrm(u32 r, u8 imm) {
+  V m; m.q[0] = m.q[1] = 0;
+  if (!(imm & 0x40)) { m.d[0] = r; return m; }
+  for (int j = 0; j < (imm & 1 ? 8 : 16); j++) if (r >> j & 1) { if (imm & 1) m.w[j] = 0xFFFF; else m.b[j] = 0xFF; }
+  return m;
+}
 static inline void ptest(Flags *f, V a, V b) { f->zf = ((a.q[0] & b.q[0]) | (a.q[1] & b.q[1])) == 0; f->cf = ((~a.q[0] & b.q[0]) | (~a.q[1] & b.q[1])) == 0; f->of = f->sf = f->af = f->pf = 0; }
 static inline s32 cvt_f2i32(double v) { return (v >= -2147483648.0 && v < 2147483648.0) ? (s32)v : (s32)0x80000000; }
 static inline s64 cvt_f2i64(double v) { return (v >= -9223372036854775808.0 && v < 9223372036854775808.0) ? (s64)v : (s64)0x8000000000000000ull; }

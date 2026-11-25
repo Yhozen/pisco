@@ -18,6 +18,8 @@ const types = { '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/ja
 const FPS = 35; // Doom's tic rate; other titles get every 35th of a second
 let cap = null, audioChunks = [], marks = []; // audio chunks (with their times) may come before the first frame
 function captureFrame(meta, body) {
+  // a frame cut short (the page stopped while sending it) or arriving after the end is dropped
+  if (body.length !== meta.width * meta.height * 4 || cap?.ending) return;
   if (!cap) {
     const tmp = captureOut + '.video.mp4';
     const ff = spawn('ffmpeg', ['-y', '-loglevel', 'error', '-f', 'rawvideo', '-pix_fmt', meta.format.startsWith('bgra') ? 'bgra' : 'rgba', '-s', `${meta.width}x${meta.height}`, '-r', String(FPS), '-i', '-',

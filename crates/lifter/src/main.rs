@@ -274,7 +274,41 @@ fn jump_table(img: &Image, insns: &BTreeMap<u64, Instruction>, jmp: &Instruction
     } else {
         (base.wrapping_add(load.memory_displacement64()), add_base.and_then(lea_of).unwrap_or(base))
     };
-    let bound = table_bound(&prev, load.ip(), index);
+    // the index computed from a compared register by non-decreasing steps (MSVC's memset / memcpy:
+    // `cmp R8,0x80; jae loop; lea R9,[R8+0xF]; and R9,-16; mov R11,R9; shr R11,4; mov R11D,[R10+R11*4+rva]`):
+    // the compared maximum carried forward to the load. Tried first: it follows the value live at the load,
+    // where the backward search below can pick a compare of an older value of the same register.
+    let mut sim = None;
+    {
+        let fwd: Vec<&Instruction> = prev.iter().rev().copied().collect(); // in program order, up to the load
+        let at_load = fwd.iter().position(|i| i.ip() == load.ip());
+        if let Some(at_load) = at_load {
+            for c in (0..at_load).rev() {
+                let i = fwd[c];
+                if i.mnemonic() != Mnemonic::Cmp || i.op_kind(0) != OpKind::Register || !is_imm(i.op_kind(1)) || c + 1 >= at_load { continue; }
+                let max = match fwd[c + 1].mnemonic() { Mnemonic::Jae | Mnemonic::Jb => i.immediate(1).wrapping_sub(1), Mnemonic::Ja | Mnemonic::Jbe => i.immediate(1), _ => continue };
+                let mut vals: std::collections::HashMap<Register, u64> = std::collections::HashMap::new();
+                vals.insert(i.op0_register().full_register(), max);
+                for j in &fwd[c + 2..at_load] {
+                    if j.op_count() == 0 || j.op_kind(0) != OpKind::Register { continue; }
+                    let d = j.op0_register().full_register();
+                    let src = |n: u32| if j.op_kind(n) == OpKind::Register { vals.get(&j.op_register(n).full_register()).copied() } else { None };
+                    let v = match j.mnemonic() {
+                        Mnemonic::Mov | Mnemonic::Movzx | Mnemonic::Movsxd => src(1),
+                        Mnemonic::Lea if j.memory_index() == Register::None => vals.get(&j.memory_base().full_register()).map(|b| b.wrapping_add(j.memory_displacement64())),
+                        Mnemonic::And if is_imm(j.op_kind(1)) => vals.get(&d).map(|x| x & j.immediate(1)),
+                        Mnemonic::Shr if is_imm(j.op_kind(1)) => vals.get(&d).map(|x| x >> (j.immediate(1) & 63)),
+                        Mnemonic::Add if is_imm(j.op_kind(1)) => vals.get(&d).map(|x| x.wrapping_add(j.immediate(1))),
+                        _ => None,
+                    };
+                    match v { Some(v) => { vals.insert(d, v); } None => { vals.remove(&d); } }
+                }
+                if let Some(&v) = vals.get(&index) { if v < 4096 { sim = Some(v + 1); } }
+                break;
+            }
+        }
+    }
+    let bound = sim.or_else(|| table_bound(&prev, load.ip(), index));
     if bound.is_none() && std::env::var_os("LIFTER_DEBUG").is_some() { eprintln!("table without bound: jmp at 0x{:x}, load at 0x{:x}", jmp.ip(), load.ip()); }
     let bound = Some(bound?); // a table with no bound is not trusted: its end is unknown
     // a target may be in another part of the function (GCC's .cold): any code will do
@@ -730,9 +764,13 @@ fn decode_func(img: &Image, entry: u64, entries: &BTreeSet<u64>) -> (Func, BTree
                             calls.insert(ins.near_branch_target()); // (`call $+5` only pushes its return address)
                         }
                         f.leaders.insert(next);
+                        if !m32 && is_import_thunk(img, ins.near_branch_target(), "_CxxThrowException") { calls.extend(throw_info_functions(img, &f.insns, &ins)); }
                     }
                     FlowControl::IndirectCall => {
                         f.leaders.insert(next);
+                        if !m32 && ins.is_ip_rel_memory_operand() && img.imports.iter().any(|(slot, n)| *slot == ins.ip_rel_memory_address() && n.ends_with("!_CxxThrowException")) {
+                            calls.extend(throw_info_functions(img, &f.insns, &ins));
+                        }
                     }
                     FlowControl::ConditionalBranch => {
                         let t = ins.near_branch_target();
@@ -816,6 +854,9 @@ fn decode_func(img: &Image, entry: u64, entries: &BTreeSet<u64>) -> (Func, BTree
 struct Emit<'a> {
     img: &'a Image,
     unimpl: BTreeMap<String, u32>,
+    /// AVX-and-later instructions: lifted as traps (the virtual CPU does not report AVX, so code that checks
+    /// CPUID never runs them; the rest of their function still runs)
+    avx: u32,
     /// `jmp reg` with no table found: a tail call through a pointer, or a switch the lifter missed
     unresolved: u32,
     /// the entries that cut a function: a jump to one is a call. Every entry in 64-bit code, the hard ones in 32-bit code
@@ -973,6 +1014,10 @@ impl Emit<'_> {
             if let Some(s) = self.insn32(i, f, entries, entry) {
                 return s;
             }
+        }
+        if i.encoding() != iced_x86::EncodingKind::Legacy && i.encoding() != iced_x86::EncodingKind::D3NOW {
+            self.avx += 1;
+            return format!("rt_unimpl(0x{:x}ull); /* AVX or later */", i.ip());
         }
         let bits = if i.op_count() > 0 && matches!(i.op_kind(0), OpKind::Register | OpKind::Memory) && !i.op0_register().is_xmm() { opsize(i, 0) * 8 } else { 64 };
         let cut = self.cut;
@@ -1209,6 +1254,8 @@ impl Emit<'_> {
             M::Cvtss2sd => format!("X[{}].pd[0]=(double){};", i.op0_register().number(), fsrc(1, "f32")),
             M::Sqrtsd => format!("X[{}].pd[0]=__builtin_sqrt({});", i.op0_register().number(), fsrc(1, "f64")),
             M::Sqrtss => format!("X[{}].ps[0]=__builtin_sqrtf({});", i.op0_register().number(), fsrc(1, "f32")),
+            M::Rsqrtss => format!("X[{}].ps[0]=1.0f/__builtin_sqrtf({});", i.op0_register().number(), fsrc(1, "f32")),
+            M::Rcpss => format!("X[{}].ps[0]=1.0f/({});", i.op0_register().number(), fsrc(1, "f32")),
             M::Ucomisd | M::Comisd => format!("fcmp(&f,X[{}].pd[0],{});", i.op0_register().number(), fsrc(1, "f64")),
             M::Ucomiss | M::Comiss => format!("fcmp(&f,X[{}].ps[0],{});", i.op0_register().number(), fsrc(1, "f32")),
             M::Cmpsd if i.op_count() == 3 => format!("X[{d}].q[0]=fpred({},X[{d}].pd[0],{})?~0ull:0;", i.immediate(2), fsrc(1, "f64"), d = i.op0_register().number()),
@@ -1441,7 +1488,7 @@ impl Emit<'_> {
             let mut w = format!("static void b_{entry:x}(Cpu*__restrict c,u64 resume);\nvoid f_{entry:x}(Cpu*__restrict c){{LANDING(b_{entry:x});}}\n");
             write!(w, "static void b_{entry:x}(Cpu*__restrict c,u64 resume){{Flags f={{0}};(void)f;if(resume){{switch(resume){{").unwrap();
             for p in &f.pads {
-                if f.insns.contains_key(p) {
+                if f.insns.contains_key(p) && f.leaders.contains(p) { // (a pad lifted as an entry of its own goes to the default)
                     write!(w, "case 0x{p:x}ull:goto L_{p:x};").unwrap();
                 }
             }
@@ -1815,6 +1862,10 @@ fn lift() {
         for (_, imp) in &img.imports {
             let dll = imp.split('!').next().unwrap();
             if builtin.iter().any(|b| b.eq_ignore_ascii_case(dll)) { continue; }
+            // service libraries the GDK ships beside a title (HTTP, curl, PIX markers) stay the runtime's: offline,
+            // their calls fail, nothing leaves the machine
+            const RUNTIME: [&str; 3] = ["libhttpclient.dll", "xcurl.dll", "winpixeventruntime.dll"];
+            if RUNTIME.contains(&dll.to_ascii_lowercase().as_str()) { continue; }
             if let Some(file) = listing.iter().find(|f| f.eq_ignore_ascii_case(dll)) {
                 queue.push(file.clone()); // a DLL the title ships: lifted with it
             }
@@ -1886,10 +1937,15 @@ fn lift() {
         img.pdata.extend(m.pdata.iter());
         img.unwind.extend(m.unwind.iter());
         img.imports.extend(m.imports.iter().cloned());
+        img.exports.extend(m.exports.iter().cloned());
         img.ranges.extend(m.ranges.iter().cloned());
     }
     // function entries: the entry point, the exception table, then every call target, to a fixpoint
     let mut entries: BTreeSet<u64> = img.pdata.keys().copied().collect();
+    let handlers: Vec<u64> = img.pdata.keys().filter_map(|&e| unwind_handler(&img, e)).collect();
+    entries.extend(handlers);
+    let funclets: Vec<u64> = img.pdata.keys().flat_map(|&e| msvc_funclets(&img, e)).collect();
+    entries.extend(funclets);
     for (_, m) in &mods {
         entries.insert(m.entry);
         entries.extend(m.exports.iter().map(|e| e.2).filter(|&a| img.is_code(a)));
@@ -1932,7 +1988,7 @@ fn lift() {
     }
     // a fallthrough into another function's entry is emitted as a call to it: make sure it exists
     let cut = found32.as_ref().map(|f| &f.hard).unwrap_or(&entries);
-    let mut em = Emit { img: &img, unimpl: BTreeMap::new(), unresolved: 0, cut, counted: BTreeSet::new(), unresolved_at: BTreeSet::new(), pointer_jumps: BTreeSet::new() };
+    let mut em = Emit { img: &img, unimpl: BTreeMap::new(), avx: 0, unresolved: 0, cut, counted: BTreeSet::new(), unresolved_at: BTreeSet::new(), pointer_jumps: BTreeSet::new() };
     let _ = em.img;
     let parts: usize = args.iter().position(|a| a == "--split").map(|i| args[i + 1].parse().expect("--split N")).unwrap_or(1).max(1);
     // (a 64-bit title's files stay as they were: cpu.h takes GUEST_BITS as 64 when it is not defined)
@@ -1942,17 +1998,10 @@ fn lift() {
     }
     let mut bodies: Vec<String> = vec![header.clone(); parts];
     let mut total = 0;
-    let mut stubbed = 0;
     let mut sizes = vec![0usize; parts];
     for (e, f) in &funcs {
         total += f.insns.len();
-        // code for AVX and later (VEX / EVEX): the virtual CPU does not report it, so such functions never run
-        let body = if f.insns.values().any(|i| i.encoding() != iced_x86::EncodingKind::Legacy && i.encoding() != iced_x86::EncodingKind::D3NOW) {
-            stubbed += 1;
-            std::iter::once(e).chain(&f.alts).map(|e| format!("void f_{e:x}(Cpu*c){{rt_unimpl(0x{e:x}ull);}}\n")).collect()
-        } else {
-            em.func(*e, f, &entries)
-        };
+        let body = em.func(*e, f, &entries);
         let k = (0..parts).min_by_key(|&k| sizes[k]).unwrap();
         sizes[k] += body.len();
         bodies[k].push_str(&body);
@@ -2006,13 +2055,13 @@ fn lift() {
     write(&format!("{stem}.env"), &format!("GUEST_BITS={bits}\nIMAGE_LOW=0x{image_low:x}\nIMAGE_HIGH=0x{image_high:x}\nFIXED_BASE={}\n", u32::from(mods.iter().any(|(_, m)| m.fixed))));
 
     if let Some(found) = &found32 {
-        census32(&img, &mods, found, &funcs, &em, stubbed, resolved.len());
+        census32(&img, &mods, found, &funcs, &em, resolved.len());
         return;
     }
     let missing: u32 = em.unimpl.values().sum();
     eprintln!("lifted {} functions ({} from the exception tables) in {} images, {} instructions, {} imports ({} between the images)", entries.len(), img.pdata.len(), mods.len(), total, img.imports.len(), resolved.len());
     eprintln!("{} jump tables recovered; {} `jmp reg` left as indirect calls (tail calls through pointers, or switches not recognised)", funcs.values().map(|f| f.tables.len()).sum::<usize>(), em.unresolved);
-    eprintln!("{stubbed} functions use AVX or later and are left out (the virtual CPU does not report those)");
+    eprintln!("{} AVX-or-later instructions become traps (the virtual CPU does not report AVX: code that checks CPUID takes its SSE paths)", em.avx);
     eprintln!("not lifted yet, in the other functions: {missing} instructions ({:.2} %)", 100.0 * f64::from(missing) / total.max(1) as f64);
     let mut v: Vec<_> = em.unimpl.iter().collect();
     v.sort_by(|a, b| b.1.cmp(a.1));
@@ -2022,7 +2071,7 @@ fn lift() {
 }
 
 /// The census of a 32-bit title: what was found and how, and what is left.
-fn census32(img: &Image, mods: &[(String, Image)], found: &Found, funcs: &BTreeMap<u64, Func>, em: &Emit, stubbed: usize, between: usize) {
+fn census32(img: &Image, mods: &[(String, Image)], found: &Found, funcs: &BTreeMap<u64, Func>, em: &Emit, between: usize) {
     let debug = std::env::var_os("LIFTER_DEBUG").is_some();
     let total: usize = funcs.values().map(|f| f.insns.len()).sum();
     let mut cover = Cover::new(img);
@@ -2080,7 +2129,7 @@ fn census32(img: &Image, mods: &[(String, Image)], found: &Found, funcs: &BTreeM
                 100.0 * code as f64 / size, 100.0 * table as f64 / size, 100.0 * pad as f64 / size, 100.0 * rest as f64 / size);
         }
     }
-    eprintln!("{stubbed} functions use AVX or later and are left out (the virtual CPU does not report those)");
+    eprintln!("{} AVX-or-later instructions become traps (the virtual CPU does not report AVX)", em.avx);
     let missing: u32 = em.unimpl.values().sum();
     eprintln!("not lifted, each stops the title if reached: {missing} instructions ({:.2} % of the distinct ones)", 100.0 * f64::from(missing) / unique.max(1) as f64);
     let mut v: Vec<_> = em.unimpl.iter().collect();
@@ -2363,6 +2412,17 @@ fn extra(i: &Instruction) -> Option<String> {
         M::Movmskps => wreg(i.op_register(0), &format!("movmskps(X[{}])", i.op_register(1).number())),
         M::Movmskpd => wreg(i.op_register(0), &format!("movmskpd(X[{}])", i.op_register(1).number())),
         M::Ptest => format!("ptest(&f,X[{}],{});", xd(), xsrc(i)),
+        M::Pcmpistri | M::Pcmpestri | M::Pcmpistrm | M::Pcmpestrm => {
+            let imm = i.immediate(2) as u8;
+            let wide = format!("{:?}", i.code()).contains("64");
+            let (la, lb) = if matches!(m, M::Pcmpestri | M::Pcmpestrm) {
+                if wide { ("(s64)R[0]".to_string(), "(s64)R[2]".to_string()) } else { ("(s64)(s32)R[0]".to_string(), "(s64)(s32)R[2]".to_string()) }
+            } else { ("-1".to_string(), "-1".to_string()) };
+            let abs = |x: &str| if x == "-1" { x.to_string() } else { format!("({x}<0?-{x}:{x})") };
+            let r = format!("pcmpstr(&f,X[{}],{},{},{},{imm})", xd(), xsrc(i), abs(&la), abs(&lb));
+            if matches!(m, M::Pcmpistri | M::Pcmpestri) { format!("{{u32 r={r};R[1]=pcmpstri(r,{imm});}}") } else { format!("{{u32 r={r};X[0]=pcmpstrm(r,{imm});}}") }
+        }
+        M::Rdsspq | M::Rdsspd => wr(i, 0, "0"), // no shadow stack: reads as 0, as when CET is off
         M::Movntdq | M::Movntps | M::Movntpd | M::Movntdqa => format!("{}={};", xmm_op(i, 0), xmm_op(i, 1)),
         M::Movnti => wr(i, 0, &rd(i, 1)),
         M::Cvttsd2si | M::Cvttss2si | M::Cvtsd2si | M::Cvtss2si => {
@@ -2441,6 +2501,11 @@ fn landing_pads(img: &Image, entry: u64) -> Vec<u64> {
     let ib = img.base_of(entry);
     let Some(handler) = img.u32(h).map(|r| ib + u64::from(r)) else { return vec![] };
     let data = h + 4;
+    // MSVC C++ (__CxxFrameHandler3, also behind the /GS check): a catch block is a funclet that returns where
+    // the function resumes (`lea rax,[continuation]` before its `ret`); the FuncInfo lists the funclets
+    if ["__CxxFrameHandler3", "__GSHandlerCheck_EH"].iter().any(|n| is_import_thunk(img, handler, n)) {
+        return msvc_continuations(img, ib, img.u32(data).map(|r| ib + u64::from(r)).unwrap_or(0), entry, end);
+    }
     // __C_specific_handler (through its import thunk): a scope table; jump targets are the __except blocks
     if is_import_thunk(img, handler, "__C_specific_handler") {
         let n = img.u32(data).unwrap_or(0).min(4096) as u64;
@@ -2448,7 +2513,87 @@ fn landing_pads(img: &Image, entry: u64) -> Vec<u64> {
     }
     gcc_lsda(img, data, entry, end).unwrap_or_default()
 }
+/// FH3's FuncInfo (magic, max state, unwind map, try blocks {low, high, catch high, catches, handlers},
+/// ...): each handler's funclet, decoded up to its `ret`, gives the continuations it can return.
+/// The functions an MSVC throw site's ThrowInfo names (`lea rdx,[ThrowInfo]` before the call to
+/// _CxxThrowException): the thrown type's destructor and each catchable type's copy constructor, as image-
+/// relative addresses vcruntime calls. ThrowInfo: attributes, destructor, forward compat, catchable type array
+/// (count, types); CatchableType: properties, type, displacement (12), size, copy function.
+fn throw_info_functions(img: &Image, insns: &BTreeMap<u64, Instruction>, call: &Instruction) -> Vec<u64> {
+    let mut out = Vec::new();
+    let Some(lea) = insns.range(..call.ip()).rev().take(8).map(|(_, i)| i).find(|i| i.mnemonic() == Mnemonic::Lea && i.op0_register() == Register::RDX && i.is_ip_rel_memory_operand()) else { return out };
+    let ti = lea.ip_rel_memory_address();
+    let ib = img.base_of(call.ip());
+    let mut add = |r: Option<u32>| if let Some(r) = r.filter(|&r| r != 0) { let a = ib + u64::from(r); if img.is_code(a) { out.push(a); } };
+    add(img.u32(ti + 4));
+    if let Some(cta) = img.u32(ti + 12).filter(|&r| r != 0).map(|r| ib + u64::from(r)) {
+        for k in 0..img.u32(cta).unwrap_or(0).min(64) as u64 {
+            if let Some(ct) = img.u32(cta + 4 + 4 * k).map(|r| ib + u64::from(r)) { add(img.u32(ct + 24)); }
+        }
+    }
+    out
+}
+/// The catch funclets FH3's FuncInfo lists for the function at `entry` (vcruntime calls them by address)
+fn msvc_funclets(img: &Image, entry: u64) -> Vec<u64> {
+    let mut out = Vec::new();
+    let (Some(&info), Some(h)) = (img.unwind.get(&entry), unwind_handler(img, entry)) else { return out };
+    if !["__CxxFrameHandler3", "__GSHandlerCheck_EH"].iter().any(|n| is_import_thunk(img, h, n)) { return out; }
+    let Some(b) = img.bytes(info) else { return out };
+    let ib = img.base_of(entry);
+    let data = info + 4 + 2 * ((b[2] as u64 + 1) & !1) + 4;
+    let Some(fi) = img.u32(data).map(|r| ib + u64::from(r)) else { return out };
+    if !(0x19930520..=0x19930522).contains(&img.u32(fi).unwrap_or(0)) { return out; }
+    // the unwind map's cleanup actions (destructors run while unwinding): {to state, action}
+    let (n_state, umap) = (img.u32(fi + 4).unwrap_or(0).min(4096) as u64, ib + u64::from(img.u32(fi + 8).unwrap_or(0)));
+    for k in 0..n_state { if let Some(r) = img.u32(umap + 8 * k + 4) { if r != 0 { let a = ib + u64::from(r); if img.is_code(a) { out.push(a); } } } }
+    let (n_try, tries) = (img.u32(fi + 12).unwrap_or(0).min(1024) as u64, ib + u64::from(img.u32(fi + 16).unwrap_or(0)));
+    for t in 0..n_try {
+        let e = tries + 20 * t;
+        let (n_catch, handlers) = (img.u32(e + 12).unwrap_or(0).min(64) as u64, ib + u64::from(img.u32(e + 16).unwrap_or(0)));
+        for k in 0..n_catch { if let Some(r) = img.u32(handlers + 20 * k + 12) { let a = ib + u64::from(r); if img.is_code(a) { out.push(a); } } }
+    }
+    out
+}
+fn msvc_continuations(img: &Image, ib: u64, info: u64, entry: u64, end: u64) -> Vec<u64> {
+    let mut out = Vec::new();
+    let Some(magic) = img.u32(info) else { return out };
+    if !(0x19930520..=0x19930522).contains(&magic) { return out; }
+    let (n_try, tries) = (img.u32(info + 12).unwrap_or(0).min(1024) as u64, ib + u64::from(img.u32(info + 16).unwrap_or(0)));
+    for t in 0..n_try {
+        let e = tries + 20 * t;
+        let (n_catch, handlers) = (img.u32(e + 12).unwrap_or(0).min(64) as u64, ib + u64::from(img.u32(e + 16).unwrap_or(0)));
+        for k in 0..n_catch {
+            let Some(rva) = img.u32(handlers + 20 * k + 12) else { continue };
+            let mut ip = ib + u64::from(rva);
+            for _ in 0..4096 {
+                let Some(b) = img.bytes(ip) else { break };
+                let mut d = Decoder::with_ip(64, &b[..b.len().min(16)], ip, DecoderOptions::NONE);
+                let i = d.decode();
+                if i.is_invalid() { break; }
+                if i.mnemonic() == Mnemonic::Lea && i.op0_register() == Register::RAX && i.is_ip_rel_memory_operand() {
+                    let x = i.ip_rel_memory_address();
+                    if x >= entry && x < end && !out.contains(&x) { out.push(x); }
+                }
+                if matches!(i.mnemonic(), Mnemonic::Ret | Mnemonic::Int3) { break; }
+                ip = i.next_ip();
+            }
+        }
+    }
+    out
+}
+/// The language handler an image's unwind info names for the function at `entry` (a personality routine, or
+/// an import thunk to one): the exception dispatcher calls it, so it must be a lifted entry.
+fn unwind_handler(img: &Image, entry: u64) -> Option<u64> {
+    let info = *img.unwind.get(&entry)?;
+    let b = img.bytes(info)?;
+    if b.len() < 4 || b[0] >> 3 & 3 == 0 || b[0] >> 3 & 4 != 0 { return None; }
+    let h = info + 4 + 2 * ((b[2] as u64 + 1) & !1);
+    img.u32(h).map(|r| img.base_of(entry) + u64::from(r)).filter(|&a| img.is_code(a))
+}
+/// `at` is the function `name`: a thunk to its import, or (inside the DLL that has it, as vcruntime has
+/// __C_specific_handler) its export
 fn is_import_thunk(img: &Image, at: u64, name: &str) -> bool {
+    if img.exports.iter().any(|(n, _, a)| *a == at && n == name) { return true; }
     let Some(b) = img.bytes(at) else { return false };
     let mut d = Decoder::with_ip(64, &b[..b.len().min(16)], at, DecoderOptions::NONE);
     let i = d.decode();

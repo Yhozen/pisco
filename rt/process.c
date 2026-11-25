@@ -88,9 +88,12 @@ static ImportFn find_exact(const char *full) {
 }
 // "dll!name". API sets resolve to the DLL behind them; ucrtbase falls back to msvcrt's functions, and
 // kernelbase / ntdll to kernel32's.
+// imports by ordinal (from the SDK's import libraries)
+static const struct { const char *ord, *name; } ordinals[] = {{"d3d12.dll!#101", "d3d12.dll!D3D12CreateDevice"}, {"d3d12.dll!#102", "d3d12.dll!D3D12GetDebugInterface"}};
 static ImportFn find_import(const char *full) {
   ImportFn f = find_exact(full);
   if (f) return f;
+  for (unsigned i = 0; i < sizeof ordinals / sizeof *ordinals; i++) if (!strcmp(full, ordinals[i].ord)) return find_exact(ordinals[i].name);
   const char *bang = strchr(full, '!');
   if (!bang) return 0;
   char alt[200];
@@ -122,7 +125,7 @@ static ImportFn find_import(const char *full) {
 static int strict = -1;
 static u32 stub_value(const char *full) {
   if (strstr(full, "X::#")) return 0; // a D3D12.X extension slot no one models: 0, as XCL answers them
-  static const char *hresult[] = {"xgameruntime.dll!", "d3d12_xs.dll!", "d3d12.dll!", "dxgi.dll!", "xaudio2_9.dll!", "d3d12_x.dll!", "xg_xs.dll!", "xg_x.dll!", "acphal.dll!", "xapu.dll!", "chad.dll!", "xcrdapi.dll!", "gameinput.dll!", "mfplat.dll!", "d3dcompiler_47.dll!", "xaudio2_9.dll!"};
+  static const char *hresult[] = {"xgameruntime.dll!", "d3d12_xs.dll!", "d3d12.dll!", "dxgi.dll!", "xaudio2_9.dll!", "d3d12_x.dll!", "xg_xs.dll!", "xg_x.dll!", "acphal.dll!", "xapu.dll!", "chad.dll!", "xcrdapi.dll!", "gameinput.dll!", "mfplat.dll!", "d3dcompiler_47.dll!", "xaudio2_9.dll!", "libhttpclient.dll!", "xcurl.dll!"};
   for (unsigned i = 0; i < sizeof hresult / sizeof hresult[0]; i++) if (!strncmp(full, hresult[i], strlen(hresult[i]))) return 0x80004001u;
   return 0;
 }

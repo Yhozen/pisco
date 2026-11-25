@@ -15,6 +15,9 @@
   XGameSave's folder kept in OPFS. Its `-timedemo` frames, read back from WebGPU, equal native doomgeneric's on
   every frame native draws deterministically. Video: `fixtures/doom/video.sh`.
 
+- **The graphics ladder's steps 1–2**: SimpleTriangleDesktop (both builds, through DXGI, with Microsoft's C++
+  runtime DLLs lifted and MSVC C++ exceptions) and SimplePBR (DirectXTK12, PBR with image-based lighting, HDR)
+  render in headless Chrome (§3.20, §3.21).
 - **XCL's console test title: 50 of 50 checks** in headless Chrome (step 4 of the ladder; `docs/journey.md`
   §3.10, `tests/gfx/xcl.sh`): D3D12.X's UMA memory and console methods, DirectStorage, MFPlat, XG, XAudio2
   with XMA2 / Opus. What passing does not cover is listed in §3.10 (no raytracing, our own XG layout, no
@@ -112,7 +115,8 @@ word, 80-bit precision, and every import beyond the four the two test titles cal
 
 ## Not done, in the order Minecraft probably needs it
 
-0. **The graphics ladder's steps 1–2** (SimpleTriangleDesktop, SimplePBR):
+0. ~~**The graphics ladder's steps 1–2**~~: done 2026-11-24 (SimpleTriangleDesktop with clang-cl and MSVC builds,
+   SimplePBR; `docs/journey.md` §3.20–3.21, `tests/gfx/st.sh`, `tests/gfx/pbr.sh`). What they needed:
    the MSVC C++ runtime DLLs, the AVX rule in the lifter, DXGI swap chains, vertex / index / constant buffers,
    depth, BC textures. The shared D3D12 core they need exists (written for all of D3D12, tested on Doom's part).
 1. **D3D12.X** (historical note, before 2026-11-24): nothing yet. First a null device (objects that accept every call, as XCL's M1) to reach the
@@ -120,9 +124,7 @@ word, 80-bit precision, and every import beyond the four the two test titles cal
    lists → WebGPU, title memory copied to GPU buffers before each submission (VIctory's `shadow.rs` model).
 2. **Shaders**: the census exists (`crates/shaders`, decoder and container parser from XCL). A translator
    RDNA2 → WGSL is the big piece; XCL's HLSL emitter (`gpu/recomp/emit.rs`) is the reference.
-3. **MSVC C++ exceptions** (`__CxxFrameHandler3/4`, `_CxxThrowException`): a test title builds
-   (`fixtures/msvc`, clang for the MSVC ABI with import libraries from .def files) but the runtime has no
-   handler yet. Needed only if the title throws during normal play; the census and a run will say.
+3. **MSVC C++ exceptions**: FH3 works (§3.20); FH4 (current `cl.exe`) is untested.
 4. **Audio**: done for PCM, XMA2 and Opus (FFmpeg); XMA streamed across buffers is not.
 5. **Input**: GameInput's object exists with timestamps only; readings from the Gamepad API next.
 6. **Persistence**: the VFS overlay is in memory; saves should go to OPFS in the browser, a folder in Node.
