@@ -213,6 +213,23 @@ const char *rt_import_name(u64 a) {
   return import_name_of[(a - import_base) / 8];
 }
 
+// SW_TRACE_DLL=a,b: the imports from those DLLs (by file name without ".dll") are traced as Wine's +snoop does
+static int snooped(u32 i) {
+  static signed char *mark; static u32 marked; static int ready;
+  if (!ready) {
+    ready = 1; const char *e = getenv("SW_TRACE_DLL");
+    if (e && *e) {
+      marked = import_total; mark = calloc(marked ? marked : 1, 1);
+      for (u32 k = 0; k < import_total; k++) {
+        const char *n = import_name_of[k], *bang = strchr(n, '!'); if (!bang) continue;
+        size_t len = (size_t)(bang - n); if (len > 4 && !strncasecmp(bang - 4, ".dll", 4)) len -= 4;
+        for (const char *p = e; *p;) { const char *q = strchr(p, ','); size_t l = q ? (size_t)(q - p) : strlen(p);
+          if (l == len && !strncasecmp(p, n, l)) mark[k] = 1; p += l + (q != 0); }
+      }
+    }
+  }
+  return mark && i < marked && mark[i];
+}
 void rt_call(Cpu *c, u64 t) {
   if (t >= import_base && t < import_base + 8ull * import_total) {
     u32 i = (u32)((t - import_base) / 8);
@@ -233,6 +250,18 @@ void rt_call(Cpu *c, u64 t) {
       return;
     }
     if (rt_trace > 1) rt_log("[%u] %s ret=%08llx", THREAD(c)->id, import_name_of[i], (u64)MP(R[RSP])); // as Wine's relay trace names the caller
+#if GUEST_BITS == 32
+    if (snooped(i)) {   // SW_TRACE_DLL: the call as Wine's +snoop prints it once it returns (the stack's words, the result)
+      u32 n = (u32)import_pop[i] / 4, w[16], at = (u32)R[RSP], caller = M32(at);
+      for (u32 k = 0; k < n && k < 16; k++) w[k] = M32(at + 4 + 4 * k);
+      import_fn[i](c);
+      char line[400]; int len = snprintf(line, sizeof line, "RET  %s(", strchr(import_name_of[i], '!') ? strchr(import_name_of[i], '!') + 1 : import_name_of[i]);
+      for (u32 k = 0; k < n && k < 16 && len < 300; k++) len += snprintf(line + len, sizeof line - len, "%s%08x", k ? "," : "", w[k]);
+      rt_log("snoop: %s) retval=%08x ret=%08x", line, (u32)R[RAX], caller);
+      R[RSP] += pop;
+      return;
+    }
+#endif
     import_fn[i](c);
     R[RSP] += pop;
     return;
