@@ -48,6 +48,8 @@ static u64 open_file(Cpu *c, const char *name, u32 access, u32 disposition, u32 
   Object *o = rt_object_new(OBJ_FILE); o->vf = f;
   o->delete_on_close = (flags & 0x04000000) != 0; // FILE_FLAG_DELETE_ON_CLOSE
   SET_LAST_ERROR(err);
+  static int files = -1; if (files < 0) { const char *e = getenv("SW_FILES"); files = e && *e == '1'; }
+  if (files) rt_log("file %s", name);   // SW_FILES=1: every file a title opens, to set against Wine's +file trace
   return rt_handle_new(o);
 }
 IMP(kernel32, CreateFileW) { char *n = name_w(ARG(0)); RET(open_file(c, n, (u32)ARG(1), (u32)ARG(4), (u32)ARG(5))); free(n); }

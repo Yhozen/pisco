@@ -121,6 +121,12 @@ SW_STRICT=1 SW_CLOCK=16667 SW_D3D9_STATS=1 SW_D3D9_FRAMES=1 SW_SESSION=recipes/n
 python3 tools/oracle-wine/d3d9-compare.py out/oracle/narbacular-drop/d3d9/wine.log out/nd.session.log
 ```
 
+Counts that are not per frame (textures made, locks) can differ because a phase lasts longer on one side: Wine
+tracing `+d3d9` draws far fewer frames. To tell that from a different path, set the files opened on each side:
+`SW_FILES=1` prints every file our runtime opens (`file <name>`), Wine's `TRACE=+file` the same as `CreateFileW`
+(the oracle needs its sound on, or Tag stops at FMOD's error box). For Tag both open the same 86 textures, and
+only how often the particle texture is opened differs.
+
 ## GDI: asking the oracle about fonts
 
 `gdiprobe.c` asks Wine's GDI about the fonts Narbacular Drop makes (the face it picks, metrics, kerning, ranges,
