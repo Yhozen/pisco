@@ -1948,7 +1948,8 @@ fn lift() {
         panic!("no room below 4 GiB for the import addresses");
     }
     // imports from a DLL we lift resolve to its exports here; the rest go to the runtime
-    let lower: Vec<String> = mods.iter().map(|(n, _)| n.to_ascii_lowercase()).collect();
+    // (by file name: a DLL from the system folder is named by its guest path, "c:/WINDOWS/system32/x.dll")
+    let lower: Vec<String> = mods.iter().map(|(n, _)| n.rsplit('/').next().unwrap_or(n).to_ascii_lowercase()).collect();
     let mut resolved: BTreeMap<u64, u64> = BTreeMap::new(); // IAT slot -> function
     for (_, img) in &mods {
         for (slot, imp) in &img.imports {
