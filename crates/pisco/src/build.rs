@@ -343,8 +343,20 @@ pub fn build(root: &Path, o: &Opts) -> R<()> {
     let exe_guest = recipe::drive_path(&r.exe)?;
     let exe = ex.files.iter().find(|(g, _)| g.eq_ignore_ascii_case(&exe_guest)).map(|x| x.1.clone()).ok_or(format!("{}: not among the installer's files", r.exe))?;
 
-    // 2. lifted
-    let lifted = lift(&t, &r, &exe, &ex, &cache)?;
+    // 2. lifted: the exe, or every program of a Linux title (each ELF among its files: execve starts them; the same
+    // program under two names is lifted once). A Linux title's exe may be a script: its first process starts in
+    // any program's module and runs it (rt/linux-x64/start.c)
+    let is_elf = |p: &Path| std::fs::File::open(p).ok().and_then(|mut f| { let mut b = [0u8; 4]; std::io::Read::read_exact(&mut f, &mut b).ok().map(|_| b == *b"\x7fELF") }).unwrap_or(false);
+    let programs: Vec<(String, PathBuf)> = if base.os == "linux" { ex.files.iter().filter(|(_, h)| is_elf(h)).map(|(g, h)| (g.clone(), h.clone())).collect() } else { vec![(exe_guest.clone(), exe.clone())] };
+    if programs.is_empty() { return Err(format!("{}: no program among the title's files", r.exe)); }
+    let mut lifts: Vec<Lifted> = Vec::new(); let mut lift_of: BTreeMap<String, usize> = BTreeMap::new(); let mut by_sha: BTreeMap<String, usize> = BTreeMap::new();
+    for (g, h) in &programs {
+        let sha = oci::sha256(&io(std::fs::read(h), h)?);
+        let k = match by_sha.get(&sha) { Some(&k) => k, None => { if programs.len() > 1 { say(&format!("program /{g}")); } lifts.push(lift(&t, &r, h, &ex, &cache)?); by_sha.insert(sha, lifts.len() - 1); lifts.len() - 1 } };
+        lift_of.insert(g.clone(), k);
+    }
+    let main_lift = lift_of.get(&exe_guest).copied().unwrap_or(0);
+    let lifted = &lifts[main_lift];
     // the imports against what the base and the libraries answer for
     let shipped: Vec<String> = ex.files.keys().filter(|g| g.rsplit_once('/').map(|x| x.0).unwrap_or("").eq_ignore_ascii_case(exe_guest.rsplit_once('/').map(|x| x.0).unwrap_or("")))
         .map(|g| g.rsplit('/').next().unwrap().to_ascii_lowercase()).filter(|n| n.ends_with(".dll") && !r.dll.contains_key(n)).collect();
@@ -388,7 +400,8 @@ pub fn build(root: &Path, o: &Opts) -> R<()> {
     let (gen_objs, _) = compile_cached(&t, &cache, "gen", gen_items, &rt_flags)?;
     say(&format!("runtime: {} sources, {rt_new} compiled, {} cached ({:.1} s)", sources.len(), sources.len() - rt_new, t3.elapsed().as_secs_f64()));
 
-    // 4. the module
+    // 4. the modules
+    let link_module = |lifted: &Lifted| -> R<PathBuf> {
     let mut layout_flags = String::from("--stack-first,-z,stack-size=8388608");
     // (a Linux program that is not position-independent loads low too: 0x400000 unless its link said otherwise)
     if lifted.bits == 32 || (lifted.linux && lifted.low < 0x1000_0000) {
@@ -416,6 +429,10 @@ pub fn build(root: &Path, o: &Opts) -> R<()> {
         let _ = std::fs::remove_dir_all(&tmp);
         say(&format!("link: {} objects ({:.1} s)", objects.len(), t4.elapsed().as_secs_f64()));
     }
+    Ok(wasm)
+    };
+    let wasms: Vec<PathBuf> = lifts.iter().map(|l| link_module(l)).collect::<R<_>>()?;
+    let wasm = wasms[main_lift].clone();
 
     // 5. the image
     let tmp_out = tmp_name(&out);
@@ -433,6 +450,16 @@ pub fn build(root: &Path, o: &Opts) -> R<()> {
     for (g, h) in &ex.files { game.file(g, io(std::fs::read(h), h)?); }
     layers.push(lay.put(LAYER, &game.tar(), &[(ROLE, "game"), (TITLE, &r.name), (LOCAL, "true")])?);
     let module = lay.put(MODULE, &io(std::fs::read(&wasm), &wasm)?, &[(ROLE, "module"), (TITLE, "title.wasm"), (LOCAL, "true")])?;
+    // a Linux title's other programs: a module each (the first module above is the one its first process starts in)
+    let mut program_layers = Vec::new(); let mut digest_of: BTreeMap<usize, String> = BTreeMap::new();
+    digest_of.insert(main_lift, format!("sha256:{}", module.digest));
+    for (k, w) in wasms.iter().enumerate() {
+        if k == main_lift { continue; }
+        let name = lift_of.iter().find(|(_, &v)| v == k).map(|(g, _)| format!("/{g}")).unwrap_or_default();
+        let b = lay.put(MODULE, &io(std::fs::read(w), w)?, &[(ROLE, "program"), (TITLE, &name), (LOCAL, "true")])?;
+        digest_of.insert(k, format!("sha256:{}", b.digest)); program_layers.push(b);
+    }
+    let program_map: BTreeMap<String, String> = if base.os == "linux" { lift_of.iter().map(|(g, k)| (format!("/{g}"), digest_of[k].clone())).collect() } else { BTreeMap::new() };
     let registry = recipe::merge_registry(&base.registry, &r.registry);
     let config = json!({
         "architecture": base.architecture, "os": base.os, "base": base.reference(), "title": r.name,
@@ -444,12 +471,14 @@ pub fn build(root: &Path, o: &Opts) -> R<()> {
             RegData::Dword(n) => json!({ "key": v.key, "name": v.name, "type": "dword", "value": n }),
             RegData::Sz(s) => json!({ "key": v.key, "name": v.name, "type": "sz", "value": s }) }).collect::<Vec<_>>(),
         "imports": lifted.imports,
+        "programs": if program_map.is_empty() { serde_json::Value::Null } else { json!(program_map) },
         "source": { "sha256": sha, "extract": r.source.extract },
         "build": { "lift": lifted.key, "lifter": t.lifter_hash, "clang": t.clang_version, "opt": r.opt, "runtime_opt": base.opt },
     });
     let cfg = lay.put_json(oci::CONFIG, &config, &[])?;
     let mut descs: Vec<_> = layers.iter().map(|b| b.descriptor()).collect();
     descs.push(module.descriptor());
+    for b in &program_layers { descs.push(b.descriptor()); }
     let manifest = json!({ "schemaVersion": 2, "mediaType": oci::MANIFEST, "artifactType": oci::ARTIFACT, "config": cfg.descriptor(), "layers": descs,
         "annotations": { TITLE: r.name, "org.pisco.base": base.reference() } });
     let man = lay.put_json(oci::MANIFEST, &manifest, &[])?;
@@ -457,7 +486,7 @@ pub fn build(root: &Path, o: &Opts) -> R<()> {
     if out.exists() { io(std::fs::remove_dir_all(&out), &out)?; }
     if let Some(p) = out.parent() { io(std::fs::create_dir_all(p), p)?; }
     io(std::fs::rename(&tmp_out, &out), &out)?;
-    for (b, what) in layers.iter().zip(std::iter::repeat("layer")).chain([(&module, "module"), (&cfg, "config")]) {
+    for (b, what) in layers.iter().zip(std::iter::repeat("layer")).chain([(&module, "module")]).chain(program_layers.iter().zip(std::iter::repeat("module"))).chain([(&cfg, "config")]) {
         say(&format!("  {what:6} {:8} sha256:{} {:>10} bytes  {}", b.annotations.get(ROLE).map(|s| s.as_str()).unwrap_or(""), b.digest, b.size, b.annotations.get(TITLE).map(|s| s.as_str()).unwrap_or("")));
     }
     say(&format!("image {}: manifest sha256:{} ({:.1} s)", out.display(), man.digest, start.elapsed().as_secs_f64()));

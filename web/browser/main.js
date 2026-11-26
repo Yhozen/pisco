@@ -15,7 +15,8 @@
 //          &probe=<n> (log presented frame n's size, centre and corner pixels, and how many pixels differ from the
 //          corner: a check that needs no image file)
 import { startBackend } from '../gpu/backend.js';
-import { fetchImage } from '../image.mjs';
+import { fetchImage, blobPath } from '../image.mjs';
+import { createKernel } from '../kernel.mjs';
 const q = new URLSearchParams(location.search);
 const status = document.getElementById('status'), out = document.getElementById('out'), canvas = document.getElementById('screen');
 const bus = new BroadcastChannel('pisco');
@@ -23,43 +24,91 @@ const workers = [];
 let line = '';
 const POOL = 32; // guest threads come from workers the page starts ahead of time (see worker.js)
 let ctl, boot, memory, device, dir, drive = null, folder = null;
-// ---- the title's text. Of a terminal the page knows the colours (the SGR sequences: 16, 256 and 24-bit colours,
-// bold, dim, italic, underline, reverse); any other control sequence is left out. ----
+// ---- the title's text: a terminal. Lines of cells, a cursor that moves (CR, LF as CR LF, BS, TAB, and the CSI
+// sequences for the cursor, erasing and the SGR colours: 16, 256 and 24-bit, bold, dim, italic, underline, reverse).
+// What it does not know (other escapes, OSC) is left out. A Linux title is told how wide it is (SW_TTY, below). ----
 const ANSI = ['#000', '#c33', '#3a3', '#c90', '#48c', '#a4a', '#3aa', '#ccc', '#666', '#f55', '#5d5', '#fd5', '#6af', '#f6f', '#5ff', '#fff'];
 const colour256 = (n) => n < 16 ? ANSI[n] : n < 232 ? `rgb(${[Math.floor((n - 16) / 36), Math.floor((n - 16) / 6) % 6, (n - 16) % 6].map((v) => v ? 55 + 40 * v : 0)})` : `rgb(${Array(3).fill(8 + 10 * (n - 232))})`;
-let pen = {}, held = '';   // the style in force, and the start of a sequence whose end has not come yet
+const term = { lines: [[]], row: 0, col: 0, cols: 100000, rows: 40, wrap: true, pen: {}, style: '', held: '', saved: [0, 0], dirty: new Set(), els: [] };
 function sgr(codes) {
+  const pen = term.pen;
   for (let i = 0; i < codes.length; i++) {
     const c = codes[i];
     const far = (key) => { if (codes[i + 1] === 5) { pen[key] = colour256(codes[i + 2] | 0); i += 2; } else if (codes[i + 1] === 2) { pen[key] = `rgb(${codes.slice(i + 2, i + 5).map((v) => v | 0)})`; i += 4; } };
-    if (c === 0) pen = {}; else if (c === 1) pen.bold = true; else if (c === 2) pen.dim = true; else if (c === 3) pen.italic = true; else if (c === 4) pen.underline = true;
+    if (c === 0) term.pen = {}; else if (c === 1) pen.bold = true; else if (c === 2) pen.dim = true; else if (c === 3) pen.italic = true; else if (c === 4) pen.underline = true;
     else if (c === 7) pen.reverse = true; else if (c === 22) { delete pen.bold; delete pen.dim; } else if (c === 23) delete pen.italic; else if (c === 24) delete pen.underline; else if (c === 27) delete pen.reverse;
     else if (c >= 30 && c <= 37) pen.fg = ANSI[c - 30]; else if (c === 38) far('fg'); else if (c === 39) delete pen.fg;
     else if (c >= 40 && c <= 47) pen.bg = ANSI[c - 40]; else if (c === 48) far('bg'); else if (c === 49) delete pen.bg;
     else if (c >= 90 && c <= 97) pen.fg = ANSI[c - 82]; else if (c >= 100 && c <= 107) pen.bg = ANSI[c - 92];
   }
+  const p = term.pen, fg = p.reverse ? p.bg || '#111' : p.fg, bg = p.reverse ? p.fg || '#ddd' : p.bg;
+  term.style = [fg && `color:${fg}`, bg && `background:${bg}`, p.bold && 'font-weight:bold', p.dim && 'opacity:.6', p.italic && 'font-style:italic', p.underline && 'text-decoration:underline'].filter(Boolean).join(';');
 }
-function put(text) {
-  if (!text) return;
-  if (!Object.keys(pen).length) { out.append(text); return; }
-  const span = document.createElement('span'), fg = pen.reverse ? pen.bg || '#111' : pen.fg, bg = pen.reverse ? pen.fg || '#ddd' : pen.bg;
-  if (fg) span.style.color = fg; if (bg) span.style.background = bg;
-  if (pen.bold) span.style.fontWeight = 'bold'; if (pen.dim) span.style.opacity = '0.6'; if (pen.italic) span.style.fontStyle = 'italic'; if (pen.underline) span.style.textDecoration = 'underline';
-  span.textContent = text; out.append(span);
+const lineAt = (r) => { while (term.lines.length <= r) term.lines.push([]); term.dirty.add(r); return term.lines[r]; };
+function down(n = 1) { term.row += n; lineAt(term.row); }
+function putChar(ch) {
+  if (term.col >= term.cols) { if (term.wrap) { term.col = 0; down(); } else term.col = term.cols - 1; }
+  const l = lineAt(term.row);
+  while (l.length < term.col) l.push({ c: ' ', s: '' });
+  l[term.col++] = { c: ch, s: term.style };
+}
+function csi(params, final) {
+  const n = params.split(';').map((v) => parseInt(v, 10)), a = n[0] || 1, top = Math.max(0, term.lines.length - term.rows);
+  switch (final) {
+    case 'A': term.row = Math.max(top, term.row - a); break;
+    case 'B': down(a); break;
+    case 'C': term.col = Math.min(term.cols - 1, term.col + a); break;
+    case 'D': term.col = Math.max(0, term.col - a); break;
+    case 'E': down(a); term.col = 0; break;
+    case 'F': term.row = Math.max(top, term.row - a); term.col = 0; break;
+    case 'G': term.col = Math.min(term.cols - 1, a - 1); break;
+    case 'H': case 'f': term.row = top + (n[0] || 1) - 1; lineAt(term.row); term.col = Math.min(term.cols - 1, (n[1] || 1) - 1); break;
+    case 'K': { const l = lineAt(term.row), k = n[0] || 0; if (k === 0) l.length = Math.min(l.length, term.col); else if (k === 1) for (let i = 0; i <= term.col && i < l.length; i++) l[i] = { c: ' ', s: '' }; else l.length = 0; break; }
+    case 'J': if ((n[0] || 0) >= 2) { term.lines = [[]]; term.row = term.col = 0; out.textContent = ''; term.els = []; term.dirty = new Set([0]); } else { lineAt(term.row).length = Math.min(lineAt(term.row).length, term.col); term.lines.length = term.row + 1; } break;
+    case 'm': sgr(params === '' ? [0] : params.split(/[;:]/).map(Number)); break;
+    case 's': term.saved = [term.row, term.col]; break;
+    case 'u': [term.row, term.col] = term.saved; lineAt(term.row); break;
+    case 'h': case 'l': if (params === '?7') term.wrap = final === 'h'; break;   // (?25: the cursor is not drawn)
+  }
 }
 function print(s) {
-  s = held + s; held = '';
+  s = term.held + s; term.held = '';
   for (let at = 0; at < s.length;) {
-    const esc = s.indexOf('\x1b', at);
-    if (esc < 0) { put(s.slice(at)); break; }
-    put(s.slice(at, esc));
-    const m = /^\x1b(?:\[([0-9;:?<=>]*)([ -\/]*[@-~])|\][^\x07\x1b]*(?:\x07|\x1b\\)|[@-Z\\^_])/.exec(s.slice(esc, esc + 256));
-    if (!m) { if (s.length - esc < 256) { held = s.slice(esc); break; } at = esc + 1; continue; }   // (not complete yet: kept for the next write)
-    if (m[2] === 'm') sgr(m[1] === '' ? [0] : m[1].split(/[;:]/).map(Number));
-    at = esc + m[0].length;
+    const ch = s[at];
+    if (ch === '\x1b') {
+      const m = /^\x1b(?:\[([0-9;:?<=>]*)[ -\/]*([@-~])|\][^\x07\x1b]*(?:\x07|\x1b\\)|[()][0-9A-Za-z]|[@-Z\\^_`a-z{|}~78=>])/.exec(s.slice(at, at + 256));
+      if (!m) { if (s.length - at < 256) { term.held = s.slice(at); break; } at++; continue; }   // (not complete yet: kept for the next write)
+      if (m[2]) csi(m[1], m[2]);
+      at += m[0].length; continue;
+    }
+    if (ch === '\n') { term.col = 0; down(); } else if (ch === '\r') term.col = 0; else if (ch === '\b') term.col = Math.max(0, term.col - 1);
+    else if (ch === '\t') term.col = Math.min(term.cols - 1, (term.col >> 3 << 3) + 8);
+    else if (ch >= ' ') { const cp = s.codePointAt(at); const g = String.fromCodePoint(cp); putChar(g); at += g.length; continue; }
+    at++;
   }
-  while (out.childNodes.length > 20000) out.firstChild.remove();
-  if (document.body.classList.contains('text')) scrollTo(0, document.body.scrollHeight);
+  render();
+}
+let pending = false;
+function render() {
+  if (pending) return; pending = true;
+  requestAnimationFrame(() => {
+    pending = false;
+    // at most so many lines are kept: the oldest go
+    const MAX = 20000;
+    if (term.lines.length > MAX) { const drop = term.lines.length - MAX; term.lines.splice(0, drop); term.els.splice(0, drop).forEach((e) => e.remove()); term.row -= drop; term.dirty = new Set([...term.dirty].map((r) => r - drop).filter((r) => r >= 0)); }
+    for (const r of term.dirty) {
+      while (term.els.length <= r) { const e = document.createElement('div'); out.append(e); term.els.push(e); }
+      const e = term.els[r], l = term.lines[r] || []; e.textContent = '';
+      for (let i = 0; i < l.length;) {
+        let j = i, text = ''; while (j < l.length && l[j].s === l[i].s) text += l[j++].c;
+        if (l[i].s) { const span = document.createElement('span'); span.style.cssText = l[i].s; span.textContent = text; e.append(span); } else e.append(text);
+        i = j;
+      }
+      if (!l.length) e.append('​');   // (an empty line keeps its height)
+    }
+    term.dirty.clear();
+    if (document.body.classList.contains('text')) scrollTo(0, document.body.scrollHeight);
+  });
 }
 const log = (s) => { console.log(s); print(s + '\n'); };
 const startPooled = (slot) => { const w = new Worker('worker.js', { type: 'module' }); workers.push(w); w.postMessage({ ...boot, pool: { ctl, slot } }); };
@@ -260,12 +309,30 @@ else {
     document.body.classList.add('text');
     const probe1 = document.createElement('span'); probe1.textContent = 'M'.repeat(50); out.append(probe1); const w = probe1.getBoundingClientRect().width / 50; probe1.remove();
     if (env.SW_TTY === undefined) env.SW_TTY = `${Math.max(40, Math.min(240, Math.floor(out.clientWidth / (w || 8.4))))}x40`;
+    const [cols, rows] = env.SW_TTY.split('x').map(Number); if (cols && rows) { term.cols = cols; term.rows = rows; }
   }
   if (q.get('pace') === 'off') env.SW_PACE = 'off';
   let store = [];
   try { store = await openStore(image ? `image:${image.settings.title}` : new URL(q.get('exe'), location.href).pathname); if (store.length) console.log(`storage: ${store.length} file(s) from earlier sessions`); } catch (e) { log(`storage: ${e.message} (saves will not survive a reload)`); }
-  boot = { module, memory, dir, drive, folder, tids, args, env, store, t0: performance.timeOrigin };
+  // a Linux title: its processes (web/kernel.mjs), each a worker this page starts (the first, a fork's, an execve's)
+  const kernel = WebAssembly.Module.exports(module).some((e) => e.name === 'rt_fork_resume') ? createKernel() : null, programs = image?.config.programs || null;
+  boot = { module, memory, dir, drive, folder, tids, args, env, store, t0: performance.timeOrigin, kernel, programs };
   for (let i = 0; i < POOL; i++) startPooled(i);
-  const w = new Worker('worker.js', { type: 'module' }); workers.push(w);
-  w.postMessage({ ...boot, tid: 0, pool: { ctl, slot: -1 } });
+  const compiled = new Map();
+  const moduleOf = (digest) => { if (!compiled.has(digest)) compiled.set(digest, fetch(image.url + blobPath(digest)).then((r) => r.arrayBuffer()).then((b) => WebAssembly.compile(b))); return compiled.get(digest); };
+  const startProcess = (data) => {
+    const w = new Worker('worker.js', { type: 'module' }); workers.push(w);
+    w.onmessage = async (e) => {
+      const m = e.data, one = () => new Int32Array(new SharedArrayBuffer(4)).fill(1);
+      if (m.fork) startProcess({ ...boot, module: m.fork.module, memory: m.fork.memory, pid: m.fork.pid, mode: 'fork', tids: one(), args: [], tid: 0, pool: { ctl, slot: -1 } });
+      if (m.exec) {
+        const mod = await moduleOf(m.exec.program.blob);
+        startProcess({ ...boot, module: mod, memory: new WebAssembly.Memory({ initial: 1024, maximum: 65536, shared: true }), pid: m.exec.pid, mode: 'exec', tids: one(),
+          args: m.exec.args, env: { ...env, ...m.exec.settings }, tid: 0, pool: { ctl, slot: -1 } });
+        w.terminate();
+      }
+    };
+    w.postMessage(data);
+  };
+  startProcess({ ...boot, tid: 0, pid: 1, mode: 'start', pool: { ctl, slot: -1 } });
 }

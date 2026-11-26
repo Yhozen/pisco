@@ -1,0 +1,21 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# neofetch 7.1.0 (https://github.com/dylanaraps/neofetch, MIT), a bash script, on a small Linux made of bash 5.2.37
+# and busybox 1.36.1, each one static x86-64 program (docs/neofetch.md). tools/build-neofetch.sh builds the three from
+# their checked sources into out/neofetch/root, the title's root; nothing of them is in the repository. Every ELF there
+# is lifted into a module of its own: the processes neofetch starts (its subshells, uname, awk, grep, ...) run in them.
+name = "neofetch"
+from = "base/linux-x64:1"
+
+[source]
+# built on this machine from checked sources: their bytes depend on the compiler's, so no sha256 here
+file = "../../out/neofetch/root"
+extract = "folder"
+app = "/"
+
+[run]
+exe = "/usr/bin/neofetch"
+# its defaults, without writing a configuration file into the user's home (the file system is read-only)
+args = ["--no_config"]
+
+[lifter]
+split = 16

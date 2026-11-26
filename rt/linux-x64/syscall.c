@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // The `syscall` instruction: the number in RAX, the arguments in RDI, RSI, RDX, R10, R8 and R9, the result (or a
-// negated errno) back in RAX. A title is one process with one thread: the calls that would make another say no,
-// and a program that asked for a helper does without it. A call the runtime does not know says ENOSYS and is
+// negated errno) back in RAX. A process has one thread: clone for a thread says no. fork, execve, wait4 and pipes
+// are the host's (process.c, fd.c). A call the runtime does not know says ENOSYS and is
 // logged once; with SW_STRICT=1 it stops the title. SW_TRACE=1 logs every call.
 #include <unistd.h>
 #include "linux.h"
@@ -10,10 +10,10 @@ static const struct { u16 nr; const char *name; } names[] = {
   {0,"read"},{1,"write"},{2,"open"},{3,"close"},{4,"stat"},{5,"fstat"},{6,"lstat"},{7,"poll"},{8,"lseek"},{9,"mmap"},{10,"mprotect"},{11,"munmap"},{12,"brk"},
   {13,"rt_sigaction"},{14,"rt_sigprocmask"},{15,"rt_sigreturn"},{16,"ioctl"},{17,"pread64"},{18,"pwrite64"},{19,"readv"},{20,"writev"},{21,"access"},{22,"pipe"},
   {23,"select"},{24,"sched_yield"},{25,"mremap"},{26,"msync"},{27,"mincore"},{28,"madvise"},{32,"dup"},{33,"dup2"},{34,"pause"},{35,"nanosleep"},{39,"getpid"},
-  {41,"socket"},{42,"connect"},{56,"clone"},{57,"fork"},{58,"vfork"},{59,"execve"},{60,"exit"},{61,"wait4"},{62,"kill"},{63,"uname"},{72,"fcntl"},{73,"flock"},
+  {41,"socket"},{42,"connect"},{43,"accept"},{44,"sendto"},{45,"recvfrom"},{46,"sendmsg"},{47,"recvmsg"},{48,"shutdown"},{49,"bind"},{50,"listen"},{51,"getsockname"},{52,"getpeername"},{53,"socketpair"},{54,"setsockopt"},{55,"getsockopt"},{56,"clone"},{57,"fork"},{58,"vfork"},{59,"execve"},{60,"exit"},{61,"wait4"},{62,"kill"},{63,"uname"},{72,"fcntl"},{73,"flock"},
   {74,"fsync"},{76,"truncate"},{77,"ftruncate"},{78,"getdents"},{79,"getcwd"},{80,"chdir"},{82,"rename"},{83,"mkdir"},{84,"rmdir"},{86,"link"},{87,"unlink"},
   {88,"symlink"},{89,"readlink"},{90,"chmod"},{92,"chown"},{95,"umask"},{96,"gettimeofday"},{97,"getrlimit"},{98,"getrusage"},{99,"sysinfo"},{100,"times"},
-  {102,"getuid"},{104,"getgid"},{107,"geteuid"},{108,"getegid"},{109,"setpgid"},{110,"getppid"},{111,"getpgrp"},{112,"setsid"},{115,"getgroups"},{118,"getresuid"},
+  {102,"getuid"},{104,"getgid"},{107,"geteuid"},{108,"getegid"},{109,"setpgid"},{110,"getppid"},{111,"getpgrp"},{112,"setsid"},{105,"setuid"},{106,"setgid"},{113,"setreuid"},{114,"setregid"},{115,"getgroups"},{116,"setgroups"},{117,"setresuid"},{119,"setresgid"},{122,"setfsuid"},{123,"setfsgid"},{118,"getresuid"},
   {120,"getresgid"},{121,"getpgid"},{124,"getsid"},{131,"sigaltstack"},{137,"statfs"},{138,"fstatfs"},{157,"prctl"},{158,"arch_prctl"},{186,"gettid"},{200,"tkill"},
   {201,"time"},{202,"futex"},{203,"sched_setaffinity"},{204,"sched_getaffinity"},{217,"getdents64"},{218,"set_tid_address"},{228,"clock_gettime"},
   {229,"clock_getres"},{230,"clock_nanosleep"},{231,"exit_group"},{234,"tgkill"},{257,"openat"},{258,"mkdirat"},{262,"newfstatat"},{263,"unlinkat"},
@@ -40,7 +40,13 @@ static s64 sys_sysinfo(u64 s) {
   M64(s) = rt_uptime_us() / 1000000; M64(s + 32) = LINUX_MEM_TOTAL; M64(s + 40) = LINUX_MEM_TOTAL - linux_mem_used(); M16(s + 80) = 1; M32(s + 104) = 1;
   return 0;
 }
-static s64 sys_getcwd(u64 buf, u64 n) { if (n < 2) return -L_ERANGE; M8(buf) = '/'; M8(buf + 1) = 0; return 2; }
+static s64 sys_getcwd(u64 buf, u64 n) { size_t l = strlen(linux_cwd) + 1; if (n < l) return -L_ERANGE; memcpy((void *)GP(buf), linux_cwd, l); return (s64)l; }
+static s64 sys_chdir(const char *path) {
+  char abs[1024]; Node n; s64 r = fs_path(-100, path, abs, sizeof abs); if (r) return r;
+  r = fs_lookup(abs, &n, 1); if (r) return r; free(n.data);
+  if (n.type != N_DIR) return -L_ENOTDIR;
+  strcpy(linux_cwd, abs); return 0;
+}
 static s64 sys_prlimit(u64 pid, u64 what, u64 set, u64 old) {
   (void)pid; if (set) return -L_EPERM;
   if (old) { u64 v = what == 3 ? rt_modules[0].stack_reserve : what == 7 ? 256 : ~0ull;   // RLIMIT_STACK, RLIMIT_NOFILE; the rest unlimited
@@ -68,7 +74,7 @@ static s64 unknown(Cpu *c, u64 nr) {
   (void)c; return -L_ENOSYS;
 }
 
-void rt_syscall(Cpu *c) {
+void rt_syscall(Cpu *c, u64 next) {
   u64 nr = R[RAX], a = R[RDI], b = R[RSI], d = R[RDX], e = R[10], f = R[8], g = R[9];
   #define S(p) ((const char *)GP(p))
   #define P(p) ((void *)GP(p))
@@ -92,10 +98,11 @@ void rt_syscall(Cpu *c) {
   case 20: r = sys_writev((s64)a, b, d); break;
   case 21: r = sys_faccessat(AT_FDCWD, S(a), b); break;
   case 32: r = sys_dup((s64)a, -1); break;
-  case 33: case 292: r = sys_dup((s64)a, (s64)b); break;
+  case 33: r = sys_dup((s64)a, (s64)b); break;
+  case 292: r = a == b ? -L_EINVAL : sys_dup((s64)a, (s64)b); if (r >= 0 && (d & 02000000)) sys_fcntl(r, 2, 1); break;
   case 72: r = sys_fcntl((s64)a, b, d); break;
   case 79: r = sys_getcwd(a, b); break;
-  case 80: { char abs[1024]; Node n; r = fs_path(AT_FDCWD, S(a), abs, sizeof abs); if (!r) r = fs_lookup(abs, &n, 1); if (!r) { free(n.data); r = !strcmp(abs, "/") ? 0 : n.type == N_DIR ? -L_EACCES : -L_ENOTDIR; } break; }
+  case 80: r = sys_chdir(S(a)); break;
   case 89: r = sys_readlinkat(AT_FDCWD, S(a), P(b), d); break;
   case 137: r = sys_statfs(S(a), b); break;
   case 138: r = fd_is_file((s64)a) ? sys_statfs("/", b) : -L_EBADF; break;
@@ -114,11 +121,15 @@ void rt_syscall(Cpu *c) {
   case 12: r = sys_brk(a); break;
   case 25: r = sys_mremap(a, b, d, e, f); break;
   // the process: one, with one thread
-  case 39: case 186: case 111: case 121: case 124: r = 1; break;   // getpid, gettid, getpgrp, getpgid, getsid
-  case 110: r = 0; break;   // getppid: nobody started it
+  case 39: case 186: r = host_proc_pid(); break;   // getpid, gettid
+  case 111: case 121: case 124: r = 1; break;   // getpgrp, getpgid, getsid: one group, the first process's
+  case 110: r = host_proc_ppid(); break;
+  case 109: case 112: r = 0; break;   // setpgid, setsid
   case 102: case 104: case 107: case 108: r = LINUX_UID; break;
   case 118: case 120: M32(a) = LINUX_UID; M32(b) = LINUX_UID; M32(d) = LINUX_UID; r = 0; break;
   case 115: r = 0; break;   // getgroups: none besides its own
+  case 105: case 106: case 113: case 114: case 116: case 117: case 119: r = (a == LINUX_UID || a == (u64)-1 || nr == 116) ? 0 : -L_EPERM; break;   // setuid and the rest: to what it is already
+  case 122: case 123: r = LINUX_UID; break;   // setfsuid, setfsgid: the old value
   case 218: r = 1; break;   // set_tid_address
   case 158: if (a == 0x1002) { c->fs_base = b; r = 0; } else if (a == 0x1003) { M64(b) = c->fs_base; r = 0; } else if (a == 0x1001) { c->gs_base = b; r = 0; } else r = -L_EINVAL; break;
   case 13: if (d) memset(P(d), 0, 32); r = 0; break;   // rt_sigaction: no signal is ever delivered
@@ -131,13 +142,20 @@ void rt_syscall(Cpu *c) {
   case 203: r = 0; break;
   case 204: if (b < 8) r = -L_EINVAL; else { memset(P(d), 0, 8); M8(d) = 1; r = 8; } break;   // one CPU
   case 309: if (a) M32(a) = 0; if (b) M32(b) = 0; r = 0; break;
-  case 56: case 57: case 58: case 435: r = -L_ENOSYS; break;   // no second process or thread
-  case 59: r = -L_ENOSYS; break;
-  case 61: r = -L_ECHILD; break;
-  case 62: case 200: case 234: if ((nr == 234 ? d : b) == 0) { r = 0; break; } rt_fatal("the title sent itself signal %llu (abort is 6)", nr == 234 ? d : b);
-  case 60: case 231: rt_exit_process((u32)a); r = 0; break;
-  case 22: case 293: case 290: case 291: case 319: r = -L_ENOSYS; break;   // pipes, eventfd, epoll, memfd: nothing to talk to
+  case 57: case 58: r = sys_fork(c, next); break;   // fork, vfork (as a fork: the child has memory of its own)
+  case 56: r = (a & 0x100) ? -L_ENOSYS : sys_fork(c, next); break;   // clone: a process, not a thread (CLONE_VM)
+  case 435: r = -L_ENOSYS; break;
+  case 59: r = sys_execve(S(a), b, d); break;
+  case 61: r = sys_wait4((s64)(s32)a, b, d); break;
+  case 62: if (b == 0 || ((s32)a != (s32)host_proc_pid() && (s32)a > 0)) { r = 0; break; }   // kill: no signal reaches another process yet
+           rt_fatal("the title sent itself (or its group) signal %llu (abort is 6)", b);
+  case 200: case 234: if ((nr == 234 ? d : b) == 0) { r = 0; break; } rt_fatal("the title sent itself signal %llu (abort is 6)", nr == 234 ? d : b);
+  case 60: case 231: linux_exit((u32)a); r = 0; break;
+  case 22: r = sys_pipe2(a, 0); break;
+  case 293: r = sys_pipe2(a, b); break;
+  case 290: case 291: case 319: r = -L_ENOSYS; break;   // eventfd, epoll, memfd
   case 41: r = -L_EAFNOSUPPORT; break;   // no network
+  case 42: case 43: case 44: case 45: case 46: case 47: case 48: case 49: case 50: case 51: case 52: case 53: case 54: case 55: r = -88; break;   // ENOTSOCK: no descriptor is a socket
   // the machine and the time
   case 63: r = sys_uname(a); break;
   case 99: r = sys_sysinfo(a); break;

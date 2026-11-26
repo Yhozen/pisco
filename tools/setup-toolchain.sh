@@ -16,6 +16,8 @@
 #                                                          static Linux build, checked by sha256)
 #   cabextract  cabextract 1.11 in ~/tools/cabextract       `pisco build`: a recipe's [[source.cab]] (built from its
 #                                                          source, checked by sha256; needs cc and make)
+#   linux-headers  the Linux kernel's headers (Alpine 3.20's linux-headers 6.6 and, for <drm/...>, its libdrm-dev, each
+#          checked by sha256) in ~/tools/linux-headers-6.6-r0      tools/build-fastfetch.sh, tools/build-neofetch.sh
 #   musl   musl 1.2.5 in ~/tools/musl-1.2.5                 fixtures/linux-hello, tools/build-fastfetch.sh: Linux titles are
 #                                                          linked statically with it (built from its source, checked
 #                                                          by sha256; needs gcc and make)
@@ -35,7 +37,17 @@ untar() { # url, the folder under $T it unpacks to
   mv "$tmp/$2" "$T/$2"; rmdir "$tmp"
 }
 UPX=upx-5.3.0-amd64_linux
-for step in ${*:-wasi mingw rust naga dxil wine dxc upx reuse innoextract cabextract musl}; do case $step in
+for step in ${*:-wasi mingw rust naga dxil wine dxc upx reuse innoextract cabextract musl linux-headers}; do case $step in
+  linux-headers)
+    HEADERS=linux-headers-6.6-r0; HEADERS_SHA=eac03f9d5ac52a86734f73bb444272aebf323e6dc03e9b69f87545f9da122f8a
+    DRM=libdrm-dev-2.4.120-r0; DRM_SHA=b61c61279b28dc4827cf0b05f067a36bdf6a1672c4dfb2e07cee79b09307cdea
+    if [ -d "$T/$HEADERS/include/drm" ]; then echo "have $T/$HEADERS"; else
+    tmp=$(mktemp -d "$T/.fetch.XXXXXX"); A=https://dl-cdn.alpinelinux.org/alpine/v3.20/main/x86_64
+    curl -fsSL -o "$tmp/h.apk" "$A/$HEADERS.apk"; curl -fsSL -o "$tmp/d.apk" "$A/$DRM.apk"
+    printf '%s  %s\n' "$HEADERS_SHA" "$tmp/h.apk" "$DRM_SHA" "$tmp/d.apk" | sha256sum -c --quiet
+    mkdir "$tmp/h" "$tmp/d"; tar -xzf "$tmp/h.apk" -C "$tmp/h" usr/include 2> /dev/null; tar -xzf "$tmp/d.apk" -C "$tmp/d" usr/include/libdrm 2> /dev/null   # (an .apk is a gzipped tar)
+    rm -rf "$T/$HEADERS"; mkdir -p "$T/$HEADERS"; mv "$tmp/h/usr/include" "$T/$HEADERS/include"; mv "$tmp/d/usr/include/libdrm" "$T/$HEADERS/include/drm"; rm -rf "$tmp"
+  fi ;;
   musl)
     if [ -x "$T/musl-1.2.5/bin/musl-gcc" ]; then echo "have $T/musl-1.2.5"; else
       tmp=$(mktemp -d "$T/.fetch.XXXXXX"); curl -fsSL -o "$tmp/musl.tar.gz" https://musl.libc.org/releases/musl-1.2.5.tar.gz

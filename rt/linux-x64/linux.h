@@ -22,7 +22,7 @@ extern u16 linux_cols, linux_rows;
 extern char linux_exe[];                  // the title's path as it sees it: "/<file name>", or where its image puts it
 extern int linux_drive;                   // the root is a title image's drive (the host knows its files as "c:/..."), not the title's folder
 extern int linux_argc; extern char **linux_argv;   // its arguments (argv[0] is linux_exe)
-extern const char *linux_env[];           // its environment
+extern const char **linux_env;            // its environment
 extern u64 linux_image_end;               // where the image ends (the program break never moves from there)
 
 // ---- files (fs.c): absolute paths, read-only ----
@@ -52,3 +52,15 @@ s64 sys_faccessat(s64 dirfd, const char *path, u64 mode); s64 sys_ioctl(s64 fd, 
 s64 sys_dup(s64 fd, s64 to); s64 sys_poll(u64 fds, u64 n, s64 ms); s64 sys_statfs(const char *path, u64 buf);
 s64 sys_pread_fd(s64 fd, void *buf, u64 n, u64 off);
 int fd_is_file(s64 fd);
+s64 sys_pipe2(u64 out, u64 flags);
+void fd_fork(void); void fd_close_all(void); char *fd_export(void); void fd_import(const char *list);
+extern char linux_cwd[1024];   // the working directory (fs.c)
+
+// ---- processes: each its own module instance and memory, the host's (start.c, process.c) ----
+HOST("proc_pid") u32 host_proc_pid(void);
+HOST("proc_ppid") u32 host_proc_ppid(void);
+void linux_run(Cpu *c, u64 pc) __attribute__((noreturn));   // the guest from pc on, entered again at each return address
+void linux_resume_at(Cpu *c, u64 pc) __attribute__((noreturn));   // unwinds the runtime's stack, then the guest goes on at pc
+s64 sys_fork(Cpu *c, u64 next); s64 sys_execve(const char *path, u64 argv, u64 envp); s64 sys_wait4(s64 pid, u64 status, u64 options);
+void linux_exit(u32 code) __attribute__((noreturn));
+extern const char *linux_argv0;

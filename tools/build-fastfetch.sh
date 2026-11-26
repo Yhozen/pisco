@@ -6,25 +6,17 @@
 # repository (docs/fastfetch.md). No library it can load at run time is built in, and no threads: a title is one
 # process with one thread.
 # fastfetch is C23: it is compiled with llvm-mingw's clang (a cross compiler: its x86-64 back end serves Linux as
-# well), against musl (tools/setup-toolchain.sh musl) and the kernel's headers (Alpine's linux-headers package and, for
-# the graphics drivers' <drm/...>, which fastfetch needs to compile, its libdrm-dev; both checked by sha256).
+# well), against musl (tools/setup-toolchain.sh musl) and the kernel's headers (tools/setup-toolchain.sh linux-headers).
 # The link is GNU ld's (fastfetch passes it an option of its own).
 # Environment: MUSL, MINGW (the toolchains' folders), TOOLS (default ~/tools: the kernel headers go there).
 set -euo pipefail
 root=$(cd "$(dirname "$0")/.." && pwd); out=$(mkdir -p "${1:-$root/out/fastfetch}" && cd "${1:-$root/out/fastfetch}" && pwd)
 T=${TOOLS:-$HOME/tools}; MUSL=${MUSL:-$T/musl-1.2.5}; MINGW=${MINGW:-$T/llvm-mingw-20261117-ucrt-ubuntu-22.04-x86_64}
 VERSION=2.71.0; SHA=e71d93de41e8e4b2554c36d2ae51758112a21ecf3a8c98605a2c689251e62987
-HEADERS=linux-headers-6.6-r0; HEADERS_SHA=eac03f9d5ac52a86734f73bb444272aebf323e6dc03e9b69f87545f9da122f8a
-DRM=libdrm-dev-2.4.120-r0; DRM_SHA=b61c61279b28dc4827cf0b05f067a36bdf6a1672c4dfb2e07cee79b09307cdea
+HEADERS=linux-headers-6.6-r0   # (tools/setup-toolchain.sh linux-headers)
 [ -x "$MUSL/bin/musl-gcc" ] || { echo "build-fastfetch.sh: no musl in $MUSL (tools/setup-toolchain.sh musl)" >&2; exit 2; }
 [ -x "$MINGW/bin/clang" ] || { echo "build-fastfetch.sh: no clang in $MINGW (tools/setup-toolchain.sh mingw)" >&2; exit 2; }
-if [ ! -d "$T/$HEADERS/include/drm" ]; then
-  tmp=$(mktemp -d "$T/.fetch.XXXXXX"); A=https://dl-cdn.alpinelinux.org/alpine/v3.20/main/x86_64
-  curl -fsSL -o "$tmp/h.apk" "$A/$HEADERS.apk"; curl -fsSL -o "$tmp/d.apk" "$A/$DRM.apk"
-  printf '%s  %s\n' "$HEADERS_SHA" "$tmp/h.apk" "$DRM_SHA" "$tmp/d.apk" | sha256sum -c --quiet
-  mkdir "$tmp/h" "$tmp/d"; tar -xzf "$tmp/h.apk" -C "$tmp/h" usr/include 2> /dev/null; tar -xzf "$tmp/d.apk" -C "$tmp/d" usr/include/libdrm 2> /dev/null   # (an .apk is a gzipped tar)
-  rm -rf "$T/$HEADERS"; mkdir -p "$T/$HEADERS"; mv "$tmp/h/usr/include" "$T/$HEADERS/include"; mv "$tmp/d/usr/include/libdrm" "$T/$HEADERS/include/drm"; rm -rf "$tmp"
-fi
+"$root/tools/setup-toolchain.sh" linux-headers > /dev/null
 src=$out/fastfetch-$VERSION
 if [ ! -d "$src" ]; then
   curl -fsSL -o "$out/src.tar.gz" "https://github.com/fastfetch-cli/fastfetch/archive/refs/tags/$VERSION.tar.gz"

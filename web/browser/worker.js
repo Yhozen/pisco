@@ -3,6 +3,7 @@
 // The title's files come from its folder's URL (`dir`), or for a title image from its drive (`drive`: the file layers,
 // served by tools/serve.mjs) where its folder is `folder` (web/image.mjs).
 import { driveName } from '../image.mjs';
+import { processImports } from '../kernel.mjs';
 const bus = new BroadcastChannel('pisco');
 bus.onmessage = (e) => { if (e.data.stop) close(); };
 const kinds = ['trap', 'instruction not lifted', 'import not implemented', 'indirect call to unknown code', 'image does not fit', 'fatal'];
@@ -18,7 +19,7 @@ onmessage = (e) => {
   } else run(e.data);
 };
 function run(d) {
-  const { module, memory, dir, drive = null, folder = null, tids, tid, args, env, start, pool, store = [], t0 = 0 } = d;
+  const { module, memory, dir, drive = null, folder = null, tids, tid, args, env, start, pool, store = [], t0 = 0, kernel = null, programs = null, pid = 1, mode = 'start' } = d;
   // one monotonic clock for every thread: each worker's performance.now() counts from its own start
   const clock = () => performance.timeOrigin + performance.now() - t0;
   const u8 = () => new Uint8Array(memory.buffer), dv = () => new DataView(memory.buffer);
@@ -97,6 +98,9 @@ function run(d) {
     win32_input_open: (ring) => bus.postMessage({ win32input: ring >>> 0 }), // a desktop title's keyboard and mouse events (rt/windows-x86/input.c)
     exit: (code) => exit(code),
   };
+  // a Linux title's process (web/kernel.mjs): the page starts the workers of a fork and of an execve
+  if (kernel) Object.assign(host, processImports(kernel, { pid, memory: () => memory, module, ask: (m) => postMessage(m), end: () => close(),
+    program: (name) => { const p = '/' + name.replace(/^c:\//i, ''); return programs && programs[p] ? { blob: programs[p] } : null; } }), pid === 1 ? { exit: host.exit } : {});
   // a new guest thread: claim an idle pooled worker (the page cannot start one for us while we block)
   const spawn = (arg) => {
     const { ctl } = pool;
@@ -112,7 +116,8 @@ function run(d) {
   };
   const instance = new WebAssembly.Instance(module, { env: { memory }, wasi_snapshot_preview1: wasi, wasi: { 'thread-spawn': spawn }, host });
   try {
-    if (tid === 0) { instance.exports._start(); exit(0); }
+    if (tid === 0 && mode === 'fork') { instance.exports.rt_fork_resume(); exit(0); }
+    else if (tid === 0) { instance.exports._start(); exit(0); }
     else instance.exports.wasi_thread_start(tid, start);
   } catch (err) { bus.postMessage({ out: `pisco: ${err && err.stack || err}\n` }); exit(123); }
 }

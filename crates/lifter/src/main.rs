@@ -280,6 +280,9 @@ struct Func {
     bad: bool,
     /// 32-bit code: soft entries that sit inside this function. Each is one more way into its body
     alts: BTreeSet<u64>,
+    /// where a call or a system call returns to: a Linux title's function can be entered there (`c->resume`), as a
+    /// forked process and a longjmp go on from a return address
+    rets: BTreeSet<u64>,
 }
 
 /// A near branch or call with its target in the instruction (far ones exist in 32-bit code).
@@ -330,6 +333,28 @@ fn table_bound(prev: &[&Instruction], load_ip: u64, index: Register) -> Option<u
 /// - relative: `lea B,[rip+T] ... movsxd R,[B+I*4]; add R,B; jmp R` (LLVM, GCC; B may be set far earlier);
 /// - image-relative (MSVC): `lea B,[__ImageBase] ... mov R32,[B+I*4+rva]; add R,B; jmp R`.
 /// The bound comes from the `cmp I,N; ja` before it; without one, entries are read while they land in the function.
+/// A `switch` of code that is not position-independent (a static Linux program): `jmp [I*8+T]`, T a table of
+/// absolute addresses in data. Bounded by the `cmp I,N; ja` before it, else read while the entries land between the
+/// function's start and the next function a symbol names.
+fn jump_table_abs64(img: &Image, insns: &BTreeMap<u64, Instruction>, jmp: &Instruction, entry: u64) -> Option<Vec<u64>> {
+    if jmp.op0_kind() != OpKind::Memory || jmp.memory_base() != Register::None || jmp.memory_index() == Register::None || jmp.memory_index_scale() != 8 || jmp.segment_prefix() != Register::None {
+        return None;
+    }
+    let table = jmp.memory_displacement64();
+    if img.is_code(table) { return None; }
+    let prev: Vec<&Instruction> = std::iter::once(jmp).chain(insns.range(..jmp.ip()).rev().take(32).map(|(_, i)| i)).collect();
+    let bound = table_bound(&prev, jmp.ip(), jmp.memory_index().full_register());
+    let end = img.seeds.iter().copied().find(|&s| s > entry).unwrap_or(u64::MAX);
+    let mut out = Vec::new();
+    for k in 0..bound.unwrap_or(1024).min(4096) {
+        let Some(b) = img.bytes(table + 8 * k) else { break };
+        if b.len() < 8 { break; }
+        let t = u64::from_le_bytes(b[..8].try_into().unwrap());
+        if !img.is_code(t) || (bound.is_none() && (t < entry || t >= end)) { if bound.is_some() { return None; } break; }
+        out.push(t);
+    }
+    if out.is_empty() { None } else { Some(out) }
+}
 fn jump_table(img: &Image, insns: &BTreeMap<u64, Instruction>, jmp: &Instruction, range: Option<(u64, u64)>) -> Option<Vec<u64>> {
     let target = jmp.op0_register().full_register();
     let prev: Vec<&Instruction> = insns.range(..jmp.ip()).rev().take(64).map(|(_, i)| i).collect();
@@ -802,7 +827,7 @@ fn is_table_jump(i: &Instruction) -> bool {
 fn decode_func(img: &Image, entry: u64, entries: &BTreeSet<u64>) -> (Func, BTreeSet<u64>, BTreeSet<u64>) {
     let m32 = img.bits == 32;
     let range_end = img.pdata.get(&entry).copied();
-    let mut f = Func { insns: BTreeMap::new(), leaders: BTreeSet::new(), tables: BTreeMap::new(), pads: BTreeSet::new(), data: Vec::new(), bad: false, alts: BTreeSet::new() };
+    let mut f = Func { insns: BTreeMap::new(), leaders: BTreeSet::new(), tables: BTreeMap::new(), pads: BTreeSet::new(), data: Vec::new(), bad: false, alts: BTreeSet::new(), rets: BTreeSet::new() };
     let mut calls = BTreeSet::new();
     let mut taken = BTreeSet::new();
     let mut refs = BTreeSet::new();
@@ -852,21 +877,21 @@ fn decode_func(img: &Image, entry: u64, entries: &BTreeSet<u64>) -> (Func, BTree
                 let next = ins.next_ip();
                 match ins.flow_control() {
                     FlowControl::Next => {}
-                    FlowControl::Call if ins.mnemonic() == Mnemonic::Syscall => {} // the runtime's (rt_syscall): it returns here
+                    FlowControl::Call if ins.mnemonic() == Mnemonic::Syscall => { f.leaders.insert(next); f.rets.insert(next); } // the runtime's (rt_syscall): it returns here
                     FlowControl::Call => {
                         if !m32 {
                             calls.insert(ins.near_branch_target());
-                            // a Linux title's setjmp: a longjmp resumes after the call, in this frame (rt/linux-x64/jump.c)
-                            if matches!(img.jumps.get(&ins.near_branch_target()), Some(1 | 2)) { f.pads.insert(next); work.push(next); }
                         } else if is_near(&ins) && ins.near_branch_target() != next {
                             calls.insert(ins.near_branch_target()); // (`call $+5` only pushes its return address)
                             if is_setjmp_thunk(img, ins.near_branch_target()) { f.pads.insert(next); work.push(next); }   // (a longjmp resumes there)
                         }
                         f.leaders.insert(next);
+                        f.rets.insert(next);
                         if !m32 && is_import_thunk(img, ins.near_branch_target(), "_CxxThrowException") { calls.extend(throw_info_functions(img, &f.insns, &ins)); }
                     }
                     FlowControl::IndirectCall => {
                         f.leaders.insert(next);
+                        f.rets.insert(next);
                         // 32-bit `call [__imp__setjmp3]`: a longjmp resumes after the call, in this frame (rt/msvcrt.c);
                         // its return address is a landing pad
                         if m32 && ins.op0_kind() == OpKind::Memory && ins.memory_base() == Register::None && ins.memory_index() == Register::None {
@@ -906,8 +931,11 @@ fn decode_func(img: &Image, entry: u64, entries: &BTreeSet<u64>) -> (Func, BTree
                     FlowControl::IndirectBranch => {
                         if m32 {
                             pending.push(ip);
-                        } else if ins.op0_kind() == OpKind::Register {
-                            if let Some(ts) = jump_table(img, &f.insns, &ins, range_end.map(|e| (entry, e))) {
+                        } else {
+                            let found = if ins.op0_kind() == OpKind::Register { jump_table(img, &f.insns, &ins, range_end.map(|e| (entry, e))) }
+                                else if img.elf { jump_table_abs64(img, &f.insns, &ins, entry) } else { None };
+                            if let Some(ts) = found {
+                                if ins.op0_kind() == OpKind::Memory { let t = ins.memory_displacement64(); f.data.push((t, t + 8 * ts.len() as u64)); }   // (its slots are no code pointers: lift)
                                 for &t in &ts {
                                     if outside(t) {
                                         calls.insert(t);
@@ -1326,7 +1354,7 @@ impl Emit<'_> {
                 format!("{{u{bits} t={}?{}:{};{}}}", cond(i.condition_code()), rd(i, 1), rd(i, 0), wr(i, 0, "t"))
             }
             M::Int3 | M::Ud2 | M::Hlt => format!("rt_trap(0x{:x}ull);", i.ip()),
-            M::Syscall => "rt_syscall(c);".into(), // a Linux title's way to the system (rt/linux-x64/syscall.c)
+            M::Syscall => format!("rt_syscall(c,0x{:x}ull);", i.next_ip()), // a Linux title's way to the system (rt/linux-x64/syscall.c)
             // SSE moves
             M::Movaps | M::Movups | M::Movapd | M::Movupd | M::Movdqa | M::Movdqu => format!("{}={};", xmm(i, 0), xmm(i, 1)),
             M::Movd | M::Movq => {
@@ -1593,6 +1621,15 @@ impl Emit<'_> {
                 write!(w, "case 0x{a:x}u:goto L_{a:x};").unwrap();
             }
             writeln!(w, "}}goto L_{entry:x};").unwrap();
+            w
+        } else if f.pads.is_empty() && self.img.elf {
+            // a Linux title: entered at a return address when c->resume says so (rt/linux-x64/start.c, a forked process
+            // and a longjmp go on from there)
+            let mut w = format!("void f_{entry:x}(Cpu*__restrict c){{Flags f={{0}};(void)f;if(__builtin_expect(c->resume!=0,0)){{u64 at=c->resume;c->resume=0;switch(at){{");
+            for r in f.rets.iter().filter(|r| f.insns.contains_key(r) && f.leaders.contains(r)) {
+                write!(w, "case 0x{r:x}ull:goto L_{r:x};").unwrap();
+            }
+            writeln!(w, "}}rt_unimpl(at);}}goto L_{entry:x};").unwrap();
             w
         } else if f.pads.is_empty() {
             format!("void f_{entry:x}(Cpu*__restrict c){{Flags f={{0}};(void)f;goto L_{entry:x};\n")
@@ -2103,29 +2140,41 @@ fn lift() {
         funcs = std::mem::take(&mut found.funcs);
         found32 = Some(found);
     } else {
-        // code addresses stored in data (function pointer tables, vtables)
-        for (va, d, _) in &img.sections {
-            if img.is_code(*va) {
-                continue;
-            }
-            for (k, w) in d.chunks_exact(8).enumerate() {
-                let t = u64::from_le_bytes(w.try_into().unwrap());
-                if img.is_code(t) && !img.imports.iter().any(|(s, _)| *s == va + 8 * k as u64) {
-                    entries.insert(t);
+        // code addresses stored in data (function pointer tables, vtables). A static Linux program's switches are
+        // tables of absolute addresses in data too: their slots, once a jump through them is found, are no
+        // function's entry, and the functions are found again without them (else every case would be a function
+        // of its own and the loop around the switch a recursion)
+        let roots = entries.clone();
+        let mut slots: BTreeSet<u64> = BTreeSet::new();
+        for _pass in 0..3 {
+            entries = roots.clone();
+            for (va, d, _) in &img.sections {
+                if img.is_code(*va) {
+                    continue;
+                }
+                for (k, w) in d.chunks_exact(8).enumerate() {
+                    let t = u64::from_le_bytes(w.try_into().unwrap());
+                    if img.is_code(t) && !slots.contains(&(va + 8 * k as u64)) && !img.imports.iter().any(|(s, _)| *s == va + 8 * k as u64) {
+                        entries.insert(t);
+                    }
                 }
             }
-        }
-        loop {
-            let before = entries.len();
-            funcs.clear();
-            for &e in &entries.clone() {
-                let (f, calls, _) = decode_func(&img, e, &entries);
-                entries.extend(calls.into_iter().filter(|t| img.is_code(*t)));
-                funcs.insert(e, f);
+            loop {
+                let before = entries.len();
+                funcs.clear();
+                for &e in &entries.clone() {
+                    let (f, calls, _) = decode_func(&img, e, &entries);
+                    entries.extend(calls.into_iter().filter(|t| img.is_code(*t)));
+                    funcs.insert(e, f);
+                }
+                if entries.len() == before {
+                    break;
+                }
             }
-            if entries.len() == before {
-                break;
-            }
+            if !img.elf { break; }
+            let found: BTreeSet<u64> = funcs.values().flat_map(|f| f.data.iter().flat_map(|&(a, b)| (a..b).step_by(8))).collect();
+            if found.is_subset(&slots) { break; }
+            slots.extend(found);
         }
     }
     // a fallthrough into another function's entry is emitted as a call to it: make sure it exists
@@ -2159,6 +2208,18 @@ fn lift() {
     writeln!(out, "const unsigned fn_count={};", entries.len()).unwrap();
     writeln!(out, "const u64 fn_addrs[]={{{}}};", entries.iter().map(|e| format!("0x{e:x}ull")).collect::<Vec<_>>().join(",")).unwrap();
     writeln!(out, "void(*const fn_ptrs[])(Cpu*)={{{}}};", entries.iter().map(|e| format!("f_{e:x}")).collect::<Vec<_>>().join(",")).unwrap();
+    if img.elf {
+        // a Linux title: every return address, and the function (its index above) that can be entered there
+        let index: BTreeMap<u64, usize> = entries.iter().enumerate().map(|(k, e)| (*e, k)).collect();
+        let mut sites: BTreeMap<u64, usize> = BTreeMap::new();
+        for (e, f) in &funcs {
+            if img.jumps.contains_key(e) { continue; }
+            for r in f.rets.iter().filter(|r| f.insns.contains_key(r) && f.leaders.contains(r)) { sites.entry(*r).or_insert(index[e]); }
+        }
+        writeln!(out, "const unsigned rt_resume_count={};", sites.len()).unwrap();
+        writeln!(out, "const u64 rt_resume_at[]={{{}0}};", sites.keys().map(|a| format!("0x{a:x}ull,")).collect::<String>()).unwrap();
+        writeln!(out, "const unsigned rt_resume_fn[]={{{}0}};", sites.values().map(|k| format!("{k},")).collect::<String>()).unwrap();
+    }
     // the modules: each image's bytes stay in the user's file; the runtime copies them in and applies relocations
     writeln!(out, "#include \"modules.h\"").unwrap();
     let mut defs = Vec::new();

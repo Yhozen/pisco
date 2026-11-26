@@ -8,11 +8,15 @@
 HOST("stat") s64 host_stat(const char *name, u32 len);                        // size, -1 missing, -2 directory
 HOST("list") u32 host_list(const char *name, u32 len, char *buf, u32 cap);   // "name\n" lines, directories end in '/'
 
-// The absolute, normal form of `path` ("." and ".." and doubled slashes gone). The working directory is always /.
+char linux_cwd[1024] = "/";
+// The absolute, normal form of `path` ("." and ".." and doubled slashes gone); a relative one is relative to the
+// working directory (an open directory's path is joined to it before: fd.c)
 int fs_path(s64 dirfd, const char *path, char *out, size_t cap) {
-  (void)dirfd;   // a relative path is relative to /: no title is given another directory, and none can change it
+  (void)dirfd;
   if (!path) return -L_EFAULT;
   if (!*path) return -L_ENOENT;
+  char joined[2048];
+  if (path[0] != '/') { if (snprintf(joined, sizeof joined, "%s/%s", linux_cwd, path) >= (int)sizeof joined) return -L_ENAMETOOLONG; path = joined; }
   size_t n = 0; out[n++] = '/';
   for (const char *p = path; *p;) {
     while (*p == '/') p++;
