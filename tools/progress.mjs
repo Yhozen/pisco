@@ -14,7 +14,7 @@ const dataPath = path.join(root, 'docs/progress-data.json');
 
 // ---- the runtimes: each base's files (bases/<runtime>/1/base.toml, the one list of them), their IMP(dll, name), and
 // whether each does something ----
-const RUNTIMES = { 'xbox-series': 'Xbox Series', 'windows-x64': 'Windows x64', 'windows-x86': 'Windows x86' };
+const RUNTIMES = { 'xbox-series': 'Xbox Series', 'windows-x64': 'Windows x64', 'windows-x86': 'Windows x86', 'linux-x64': 'Linux x64' };
 function baseFiles(rt) { // every `sources = [...]` of the base (its core and its libraries), each glob within one folder
   const toml = fs.readFileSync(path.join(root, `bases/${rt}/1/base.toml`), 'utf8');
   const globs = [...toml.matchAll(/^sources = \[([^\]]*)\]/gm)].flatMap((m) => [...m[1].matchAll(/"([^"]+)"/g)].map((g) => g[1]));
@@ -34,10 +34,21 @@ for (const rt of Object.keys(RUNTIMES)) {
   for (const [k, v] of m) if (typeof v === 'string') m.set(k, m.get(v) === true); // an alias does what its target does
   implsOf[rt] = m;
 }
+// A Linux title has no imports: what it asks of its runtime are system calls ("syscall!<name>"). One is answered when
+// rt/linux-x64/syscall.c has a case for its number that does more than say the call does not exist (ENOSYS) or that
+// there is no network (EAFNOSUPPORT).
+{
+  const src = fs.readFileSync(path.join(root, 'rt/linux-x64/syscall.c'), 'utf8'), names = new Map(), m = implsOf['linux-x64'];
+  for (const x of src.matchAll(/\{(\d+),"(\w+)"\}/g)) names.set(+x[1], x[2]);
+  for (const x of src.matchAll(/^  ((?:case \d+: )+)(.*)$/gm)) {
+    const answered = !/^r = -L_(ENOSYS|EAFNOSUPPORT); break;/.test(x[2]);
+    for (const n of x[1].matchAll(/case (\d+):/g)) if (names.has(+n[1])) m.set(`syscall!${names.get(+n[1])}`, answered);
+  }
+}
 const impls = new Map([...implsOf['windows-x64'], ...implsOf['xbox-series']]); // D3D12's methods: both 64-bit runtimes
 // the runtime each title is built for (its recipe's base)
 const TITLE_RUNTIME = { 'Doom (our console title)': 'xbox-series', "XCL's console test title": 'xbox-series', 'Stockfish 19 (official build)': 'windows-x64',
-  'SimpleTriangleDesktop (clang-cl)': 'windows-x64', 'SimpleTriangleDesktop (MSVC)': 'windows-x64', 'SimplePBR (clang-cl)': 'windows-x64', 'Narbacular Drop': 'windows-x86', 'Tag: The Power of Paint': 'windows-x86' };
+  'SimpleTriangleDesktop (clang-cl)': 'windows-x64', 'SimpleTriangleDesktop (MSVC)': 'windows-x64', 'SimplePBR (clang-cl)': 'windows-x64', 'Narbacular Drop': 'windows-x86', 'Tag: The Power of Paint': 'windows-x86', 'fastfetch 2.71.0': 'linux-x64' };
 const dataImports = new Set(['msvcrt.dll!__initenv', 'msvcrt.dll!_commode', 'msvcrt.dll!_fmode']);
 // rt/process.c's find_import, in JavaScript, against one runtime's functions
 function resolves(full, rt) {
@@ -95,6 +106,12 @@ if (argv.includes('--refresh')) {
     const names = JSON.parse('[' + c.match(/import_names\[\]=\{(.*?)0\};/)[1].replace(/,$/, '') + ']');
     const targets = c.match(/import_targets\[\]=\{(.*?)0\};/)[1].split(',').filter(Boolean).map((t) => BigInt(t.replace(/ull$/, '')));
     data.titles[name] = [...new Set(names.filter((n, i) => !targets[i]))].sort(); // imports between the title's own images are not the runtime's
+  }
+  // a Linux title: the system calls it made in its recorded run (tests/run.sh fastfetch writes the list)
+  for (const [name, file] of Object.entries({ 'fastfetch 2.71.0': 'out/fastfetch/syscalls.txt' })) {
+    const f = path.join(root, file);
+    if (!fs.existsSync(f)) { console.log(`progress: ${name}: ${file} not there, kept from before`); continue; }
+    data.titles[name] = fs.readFileSync(f, 'utf8').split('\n').filter(Boolean).map((n) => `syscall!${n}`).sort();
   }
   const xclSrc = path.join(process.env.XCL || path.join(root, '../xcl'), 'tests/testtitle/src'); // an XCL checkout
   // the Chrome run (tests/gfx/xcl.sh: the GPU checks read pixels back from WebGPU), else the Node one
@@ -222,7 +239,7 @@ function panel(y, title, groups, h, x = 10, w = W - 20) {
   return s;
 }
 let svg = '', y = 10;
-svg += label(10, y + 24, 'PISCO: Xbox Series · Windows x64 · Windows x86', 24, TEXT, 700);
+svg += label(10, y + 24, 'PISCO: Xbox Series · Windows x64 · Windows x86 · Linux x64', 24, TEXT, 700);
 svg += label(W - 10, y + 24, `updated ${data.updated}`, 13, DIM, 400, 'end');
 y += 40;
 // facts and the graphics ladder
@@ -248,10 +265,11 @@ y += 64;
 svg += panel(y, 'D3D12 / D3D12.X methods (vtable slots with a runtime function)', d3d, 300); y += 340;
 for (const r of perRuntime) {
   if (!r.bars.length) continue;
-  svg += panel(y, `${r.name} runtime: the imports its titles use (${r.bars.length} title${r.bars.length > 1 ? 's' : ''})`, r.dlls, r.rt === 'windows-x86' ? 200 : 260); y += r.rt === 'windows-x86' ? 240 : 300;
+  const small = r.rt === 'windows-x86' || r.rt === 'linux-x64';
+  svg += panel(y, `${r.name} runtime: the ${r.rt === 'linux-x64' ? 'system calls its titles make' : 'imports its titles use'} (${r.bars.length} title${r.bars.length > 1 ? 's' : ''})`, r.dlls, small ? 200 : 260); y += small ? 240 : 300;
 }
 // per title
-svg += label(10, y + 20, 'Imports of each title its runtime answers', 16); y += 30;
+svg += label(10, y + 20, 'Imports (a Linux title: system calls) of each title its runtime answers', 16); y += 30;
 for (const b of titleBars) {
   const bw = W - 20 - 560, f = b.total ? b.done / b.total : 0;
   svg += `<g><title>${esc(`${b.name} (${b.runtime}): ${b.done}/${b.total}`)}</title>` + label(10, y + 15, `${b.name}`, 13, TEXT, 500) + label(255, y + 15, b.runtime, 11, DIM, 400)
@@ -261,7 +279,7 @@ for (const b of titleBars) {
 }
 y += 10;
 svg += panel(y, "XCL's console test title (checks passing)", xcl, 200); y += 240;
-svg += label(10, y + 4, 'Green: done. Grey: not yet (no runtime function, or one that only returns E_NOTIMPL). Hover a tile or a square for its name.', 12, DIM, 400);
+svg += label(10, y + 4, 'Green: done. Grey: not yet (no runtime function, or one that only returns E_NOTIMPL or ENOSYS). Hover a tile or a square for its name.', 12, DIM, 400);
 svg += label(10, y + 22, "Amber: Microsoft's C++ runtime DLLs, which ship beside a title and are recompiled with it; not counted in the percentages.", 12, DIM, 400);
 y += 34;
 const doc = `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${y}" viewBox="0 0 ${W} ${y}" font-family="-apple-system,Segoe UI,Helvetica,Arial,sans-serif"><rect width="${W}" height="${y}" fill="${BG}"/>${svg}</svg>\n`;

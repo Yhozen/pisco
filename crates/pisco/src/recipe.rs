@@ -81,9 +81,10 @@ pub fn merge_registry(base: &[RegValue], over: &[RegValue]) -> Vec<RegValue> {
     m.into_values().collect()
 }
 
-/// 'C:\Program Files\X' -> "Program Files/X"
+/// 'C:\Program Files\X' -> "Program Files/X"; a Linux title's '/usr/bin/x' -> "usr/bin/x" (its root is the drive)
 pub fn drive_path(p: &str) -> R<String> {
-    let rest = p.strip_prefix("C:\\").or_else(|| p.strip_prefix("c:\\")).ok_or(format!("{p}: a path on C:\\ is expected"))?;
+    if p.starts_with('/') { return Ok(p.split('/').filter(|s| !s.is_empty() && *s != ".").collect::<Vec<_>>().join("/")); }
+    let rest = p.strip_prefix("C:\\").or_else(|| p.strip_prefix("c:\\")).ok_or(format!("{p}: a path on C:\\ (or, for a Linux title, from /) is expected"))?;
     Ok(rest.split('\\').filter(|s| !s.is_empty()).collect::<Vec<_>>().join("/"))
 }
 

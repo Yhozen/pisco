@@ -8,7 +8,7 @@
 set -euo pipefail
 root=$(cd "$(dirname "$0")/.." && pwd); bits=$1; lifted=$2; out=$3; shift 3
 list=$(dirname "$out")/imports.txt
-grep -ho 'IMP([a-z0-9_]*, *[A-Za-z0-9_]*)' "$@" | LC_ALL=C sort -u | sed -E 's/IMP\(([a-z0-9_]+), *([A-Za-z0-9_]+)\)/\1 \2/' > "$list"
+{ grep -ho 'IMP([a-z0-9_]*, *[A-Za-z0-9_]*)' "$@" || true; } | LC_ALL=C sort -u | sed -E 's/IMP\(([a-z0-9_]+), *([A-Za-z0-9_]+)\)/\1 \2/' > "$list"
 # ALIAS(dll, "imported name", fn, bytes): "dll.dll!imported dll.dll!fn bytes"
 aliases=$(grep -ho 'ALIAS([a-z0-9_]*, *"[^"]*", *[A-Za-z0-9_]*, *-\{0,1\}[0-9]*)' "$@" | LC_ALL=C sort -u | sed -E 's/ALIAS\(([a-z0-9_]+), *"([^"]*)", *([A-Za-z0-9_]+), *(-?[0-9]+)\)/\1.dll!\2 \1.dll!\3 \4/' || true)
 { echo '#include "rt.h"'

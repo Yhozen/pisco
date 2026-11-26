@@ -494,6 +494,34 @@ Wine found along the way was rarely where we looked first:
 The plan's save check, "AutoSave.xml survives a reload", rested on a census line that was wrong: `AutoSave.xml` is a
 level shipped with the game and never written. What Tag writes is `TAG.ini`.
 
+### 3.24 A fourth runtime: Linux, and fastfetch (2026-11-26)
+
+The question was how to run something like neofetch. Two ways were weighed. unkernel
+(https://github.com/pithings/unkernel) is the Linux kernel itself compiled to WebAssembly, with an aarch64
+emulator for user programs: depending on it would have shown neofetch within the day, and used nothing of PISCO
+(its lifter, its runtimes, its images). The other way is what a runtime is here: imitate the system at its
+boundary, which for Linux is the `syscall` instruction. That one was taken, with fastfetch as the title: neofetch
+is a bash script, and a title is one process ([fastfetch.md](fastfetch.md)).
+
+- **The core, split** (L0): the log, guest memory, CPUID, the search of the lifted functions, the end of the
+  process and the clock were inside `process.c`, `msvcrt.c` and `kernel32.c`. They moved, as written, to `rt/core.c`
+  and `rt/clock.c`; `base/linux-x64` lists those and `rt/builtins.c` by name and none of the Windows core.
+- **The lifter** reads a static ELF; `syscall` calls the runtime; FS is the thread pointer. A static musl `hello`
+  printed in Node at the first run. No relocations and no imports make a Linux title the simplest image there is.
+- **`longjmp`** jumps to a return address, which lifted code never does: the runtime's takes its place and resumes
+  at a landing pad of the function that called `setjmp`, the mechanism Windows exceptions already had.
+- **`printf("%f")` printed 1.414213 for the square root of two.** musl formats in `long double`, and rounds by
+  adding to `2/LDBL_EPSILON`: with the x87 registers kept as doubles nothing ever rounded up. A Linux title's
+  registers are now the module's `long double`, rounded to 64 bits after each operation; the fixture's output
+  became the native run's to the byte. Windows titles keep doubles, which is what a 53-bit x87 computes.
+- **fastfetch** is C23, which the machine's gcc does not compile: llvm-mingw's clang, already there for the Windows
+  fixtures, is a cross compiler and serves. Its `Release` build strips the symbols; built with them, 1,764
+  functions and 314,314 instructions lift with none left over (two were missing: `std` and `cvttpd2dq`), and it ran
+  in strict mode at the first try: 30 different system calls, a hundred files looked for, a handful found, all generated.
+- **What it prints is what there is**: "PISCO (Linux x86-64 imitated in WebAssembly)", the virtual CPU's name, the
+  module's memory. No shell is named, since none started it.
+- **The page** learnt a terminal's colours; a Linux title's image has the page as its terminal.
+
 ## 4. Roadblocks
 
 ### Resolved

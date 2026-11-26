@@ -8,7 +8,14 @@
 #   bench    the benchmark title's checksums against the same work built natively
 #   win32    the 32-bit titles in Node: hello, and the x87 and crt32 titles against what they printed under Wine
 #            (fixtures/*/expected.txt; tools/oracle-wine/oracle.sh run makes them again)
-#   chrome   hello, threads and cxx again in headless Chrome (WebGPU on SwiftShader), and the 32-bit titles
+#   linux    fixtures/linux-hello, a Linux x86-64 program statically linked with musl (tools/setup-toolchain.sh musl;
+#            skipped without it): what it prints of its C library must be what it prints when run here, on Linux,
+#            and what it prints of the machine must be the machine rt/linux-x64/ describes (expected.txt)
+#   fastfetch  fastfetch as a Linux title (docs/fastfetch.md), when tools/build-fastfetch.sh has built it into
+#            out/fastfetch: lifted, run in Node in strict mode on the virtual clock with its logo left out and its
+#            output as for a pipe; what it prints must be recipes/fastfetch/traces/pipe.txt (FASTFETCH_RECORD=1
+#            records it again). Then its image, built by `pisco build` and run by `pisco run`, must print the same
+#   chrome   hello, threads and cxx again in headless Chrome (WebGPU on SwiftShader), the 32-bit titles and linux-hello
 #   nd       Narbacular Drop, when the installed game is there (ND: its folder; default: the oracle's prefix):
 #            built with its recipe and run in strict mode. Its calls until it asks for Direct3D 9 must be the
 #            ones it makes under Wine (recipes/narbacular-drop/traces/start.txt). Then the menu-to-level session
@@ -52,11 +59,12 @@
 #            the SDKs in WINSDK by tools/build-gdk-sample-pbr.sh) or REDIST (minutes)
 #   xcl      tests/gfx/xcl.sh: XCL's console test title in Chrome, when it has been built into out/xcltitle-game
 #   audio    tests/audio/run.sh: the XMA2 / Opus decoders (builds FFmpeg's the first time)
-# Default: build layout node bench win32 ffp sm gdi. Needs tools/setup-toolchain.sh to have run. Exit status 1 if a step fails.
+# Default: build layout node bench win32 linux ffp sm gdi. Needs tools/setup-toolchain.sh to have run. Exit status 1 if a step fails.
 set -uo pipefail
 root=$(cd "$(dirname "$0")/.." && pwd); cd "$root"; mkdir -p out
 MINGW=${MINGW:-$HOME/tools/llvm-mingw-20261117-ucrt-ubuntu-22.04-x86_64}; CXX=$MINGW/bin/x86_64-w64-mingw32-clang++
 R=target/x86_64-pc-windows-msvc/release
+MUSL=${MUSL:-$HOME/tools/musl-1.2.5}
 fail=0
 step() { # name, command...: one line, the log's tail on failure
   local name=$1 log=out/test-$1.log; shift
@@ -102,6 +110,32 @@ win32() {
   else echo "crt32: differs from what it prints under Wine (< ours, > Wine):"; diff out/crt32/got.txt fixtures/crt32/expected.txt | head -12; ok=1; fi
   return $ok
 }
+linux() {
+  local d=out/linux-hello
+  MUSL=$MUSL fixtures/linux-hello/build.sh $d > /dev/null || { echo "linux-hello: does not compile"; return 1; }
+  tools/build-title.sh $d/hello $d/wasm > out/linux-hello.build.log 2>&1 || { echo "linux-hello: build failed (out/linux-hello.build.log)"; return 1; }
+  # the C library: the program run here is the oracle
+  $d/hello --pure one > $d/native.txt 2>&1; local want=$?
+  SW_STRICT=1 node web/run-node.mjs $d/wasm/title.wasm $d/hello --pure one > $d/pure.txt 2>&1; local got=$?
+  cmp -s $d/pure.txt $d/native.txt && [ $got = $want ] || { echo "linux-hello --pure differs from its run on this machine (< ours, > native; exit $got, $want):"; diff $d/pure.txt $d/native.txt | head -12; return 1; }
+  # the machine: on the virtual clock, so the date it prints is the clock's first day
+  SW_STRICT=1 SW_CLOCK=16667 node web/run-node.mjs $d/wasm/title.wasm $d/hello > $d/got.txt 2>&1
+  cmp -s $d/got.txt fixtures/linux-hello/expected.txt || { echo "linux-hello differs from expected.txt (< ours, > expected):"; diff $d/got.txt fixtures/linux-hello/expected.txt | head -12; return 1; }
+  echo "linux-hello: $(wc -l < $d/native.txt) lines equal its run on this machine, $(wc -l < fixtures/linux-hello/expected.txt) lines with the machine the runtime describes"
+}
+fastfetch() {
+  local d=out/fastfetch want=recipes/fastfetch/traces/pipe.txt
+  SPLIT=16 tools/build-title.sh $d/fastfetch $d/wasm > out/fastfetch.build.log 2>&1 || { echo "build failed (out/fastfetch.build.log)"; return 1; }
+  SW_STRICT=1 SW_CLOCK=16667 timeout 300 node web/run-node.mjs $d/wasm/title.wasm $d/fastfetch --pipe -l none > $d/got.txt 2>&1 || { echo "it ended with an error:"; tail -3 $d/got.txt; return 1; }
+  [ -z "${FASTFETCH_RECORD:-}" ] || cp $d/got.txt $want
+  # the system calls it makes, for the progress map (tools/progress.mjs --refresh)
+  SW_TRACE=1 SW_CLOCK=16667 timeout 300 node web/run-node.mjs $d/wasm/title.wasm $d/fastfetch --pipe -l none 2>&1 | sed -n 's/^pisco: \([a-z_0-9]*\)(.*/\1/p' | LC_ALL=C sort -u > $d/syscalls.txt
+  cmp -s $d/got.txt $want || { echo "what it prints is not $want (< this run, > recorded):"; diff $d/got.txt $want | head -12; return 1; }
+  target/release/pisco build recipes/fastfetch --out out/images/fastfetch > out/fastfetch.image.log 2>&1 || { echo "pisco build failed (out/fastfetch.image.log)"; return 1; }
+  SW_STRICT=1 SW_CLOCK=16667 timeout 300 target/release/pisco run out/images/fastfetch -- --pipe -l none > $d/got-image.txt 2>&1
+  cmp -s $d/got-image.txt $want || { echo "its image prints something else (< the image, > recorded):"; diff $d/got-image.txt $want | head -12; return 1; }
+  echo "fastfetch: $(wc -l < $want) lines as recorded, in strict mode, from the lifted program and from its image"
+}
 bench() {
   tools/build-title.sh fixtures/bench/$R/bench.exe out/bench > out/bench.build.log 2>&1 || { echo "build failed (out/bench.build.log)"; return 1; }
   local want got; want=$(fixtures/bench-native/target/release/bench-native | grep -o 'checksum [0-9a-f]*')
@@ -120,6 +154,11 @@ chrome() {
   if [ -f out/hello32/title.wasm ]; then
     out=$(TIMEOUT=300 node tools/run-chrome.mjs out/hello32/title.wasm fixtures/hello/target/i686-pc-windows-msvc/release/hello.exe 2>&1); pass=$(grep -c '^\[PASS\]' <<<"$out")
     echo "hello32: $pass passed, $(grep -c '^\[FAIL\]' <<<"$out") failed"; [ "$pass" = 7 ] || ok=1
+  fi
+  # the Linux title, when the linux step has built it: the same text as in Node
+  if [ -f out/linux-hello/wasm/title.wasm ]; then
+    SW_STRICT=1 SW_CLOCK=16667 TIMEOUT=300 node tools/run-chrome.mjs out/linux-hello/wasm/title.wasm out/linux-hello/hello 2>&1 | grep -v -e '^$' -e '^gpu: ' > out/linux-hello/got-chrome.txt
+    if cmp -s out/linux-hello/got-chrome.txt fixtures/linux-hello/expected.txt; then echo "linux-hello: equal to expected.txt"; else echo "linux-hello: differs from expected.txt"; ok=1; fi
   fi
   if [ -f out/x87/wasm/title.wasm ]; then
     TIMEOUT=300 node tools/run-chrome.mjs out/x87/wasm/title.wasm out/x87/x87.exe 2>&1 | grep -v -e '^$' -e '^gpu: ' > out/x87/got-chrome.txt   # the page's own first line names the GPU
@@ -171,13 +210,15 @@ ND=${ND:-$HOME/.pisco/oracle/prefix-narbacular-drop/drive_c/Program Files (x86)/
 D3DX_DLL=${D3DX_DLL:-$HOME/untrusted/tag/cab/d3dx9_35.dll}
 REDIST=${REDIST:-$HOME/untrusted/vcredist/x/Contents/VC/Redist/MSVC/14.44.35112/x64/Microsoft.VC143.CRT}; export REDIST
 WINSDK=${WINSDK:-$HOME/winsdk}
-for s in ${*:-build layout node bench win32 ffp sm gdi}; do case $s in
+for s in ${*:-build layout node bench win32 linux ffp sm gdi}; do case $s in
   build)  step build build ;;
   layout) step layout tests/layout.sh ;;
   node)   LINES_SHOWN=8 step node tests/regress.sh ;;
   bench)  step bench bench ;;
   win32)  LINES_SHOWN=4 step win32 win32 ;;
-  chrome) LINES_SHOWN=5 step chrome chrome ;;
+  linux)  if [ -x "$MUSL/bin/musl-gcc" ]; then step linux linux; else echo "skip  linux: no musl in MUSL=$MUSL (tools/setup-toolchain.sh musl)"; fi ;;
+  fastfetch) if [ -x out/fastfetch/fastfetch ]; then step fastfetch fastfetch; else echo "skip  fastfetch: out/fastfetch/fastfetch is not built (tools/build-fastfetch.sh)"; fi ;;
+  chrome) LINES_SHOWN=6 step chrome chrome ;;
   nd)     if [ -f "$ND/Narbacular Drop.exe" ]; then LINES_SHOWN=3 step nd nd; else echo "skip  nd: the game is not installed (ND=$ND)"; fi ;;
   ffp)    if command -v naga > /dev/null; then step ffp tests/gfx/d3d9-ffp.sh; else echo "skip  ffp: naga is not installed (tools/setup-toolchain.sh naga)"; fi ;;
   sm)     if command -v naga > /dev/null; then step sm tests/gfx/d3d9-sm.sh ${SM_CAPTURED:+$SM_CAPTURED/*}; else echo "skip  sm: naga is not installed (tools/setup-toolchain.sh naga)"; fi ;;

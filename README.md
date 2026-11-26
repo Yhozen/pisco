@@ -17,6 +17,7 @@ that each imitate one system; a title image names the one it is built FROM ([the
 | **Xbox Series** (`base/xbox-series`) | the GDK's console build: kernelx, XMem, XGameRuntime, D3D12.X, DirectStorage, XAudio2 | Doom as a console title; XCL's console test title, 50/50 | Minecraft (Bedrock), the Xbox Series build |
 | **Windows x64** (`base/windows-x64`) | 64-bit Windows desktop: DXGI, D3D12, the PC GDK, the MSVC runtimes | Stockfish 19 (official build), Microsoft's SimpleTriangleDesktop and SimplePBR | desktop D3D12 titles |
 | **Windows x86** (`base/windows-x86`) | 32-bit Windows desktop of the 2000s: Win32, GDI, Direct3D 9, DirectInput, FMOD | Narbacular Drop (2005), playable in a desktop browser; Tag: The Power of Paint (2008, shader model 2) to its second level, checked in headless Chrome | 32-bit Direct3D 9 games of the 2000s |
+| **Linux x64** (`base/linux-x64`) | Linux at its system calls, for one statically linked program: files, memory, the clock, a generated `/proc` | fastfetch 2.71.0, in Node and in the page | statically linked command-line programs |
 
 Running Minecraft through the Xbox Series runtime is where the project started; it is now that runtime's goal, one
 among several. Nothing of a title is in this repository: you bring your own copy.
@@ -31,13 +32,17 @@ installer lifted beside it: its 16 effects compile at run time to the same 46 sh
 WGSL, and in headless Chrome its first level is within 1.4 of 255 of Wine's screenshots on average; it plays into
 its second level, paints and erases, with FMOD Ex's calls as Wine's ([the game's page](docs/tag.md)).
 
+fastfetch, built from its source as a static Linux program, is the first title of the Linux x64 runtime: it prints
+the machine it finds, a Linux x86-64 system imitated in WebAssembly, with its logo and colours in the page
+([its page](docs/fastfetch.md)).
+
 Licence: GPL-2.0-or-later for our own code; code from other projects keeps its own licence (the shader tools
 from [XCL](https://github.com/ivall/xcl) are GPL-2.0-only). See [LICENSING.md](LICENSING.md).
 
 Docs: [the plan](docs/plan.md) (the structure, the runtimes, the rules a change follows) ·
 [the journey so far](docs/journey.md) (what was built, measured and learned, roadblocks) ·
 [status and next steps, by runtime](docs/status.md) · [first run of a console title](docs/first-run.md) · [wasm32 or wasm64](docs/memory.md) ·
-[Narbacular Drop, the first Windows PC title](docs/narbacular-drop.md) · [title images and `pisco`](docs/images.md) ·
+[Narbacular Drop, the first Windows PC title](docs/narbacular-drop.md) · [fastfetch, the first Linux title](docs/fastfetch.md) · [title images and `pisco`](docs/images.md) ·
 [hosts: the browser, its limits and a native host](docs/hosts.md)
 
 ## How it works

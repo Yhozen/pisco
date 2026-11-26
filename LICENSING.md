@@ -62,7 +62,9 @@ uses XCL only as a source of facts about the console (see `THIRD_PARTY.md`). To 
 licences checkable, a title links only the runtime files of its base (`bases/<runtime>/1/base.toml`, the one list of
 them; `pisco sources` prints it): `base/windows-x86` is the core (`rt/*.c`) plus `rt/windows-x86/`;
 `base/windows-x64` the core, `rt/gdk/` and `rt/windows-x64/`; `base/xbox-series` the core, `rt/gdk/` and
-`rt/xbox-series/`. A recipe's libraries add files of its base only.
+`rt/xbox-series/`; `base/linux-x64` three files of the core (`rt/core.c`, `rt/clock.c`, `rt/builtins.c`) and
+`rt/linux-x64/`, all our own. (A Linux title is linked statically with a C library, musl's being MIT; that is the
+title's code, built outside the repository, not the runtime's.) A recipe's libraries add files of its base only.
 
 ## Title images
 

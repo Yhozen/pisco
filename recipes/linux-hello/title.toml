@@ -1,0 +1,13 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# fixtures/linux-hello (tests/run.sh linux builds it into out/linux-hello), as an image FROM the Linux base: the one
+# title of base/linux-x64:1 that tests/run.sh images builds twice.
+name = "linux-hello"
+from = "base/linux-x64:1"
+
+[source]
+# built from source in this repository, so no sha256: whatever the compiler made
+file = "../../out/linux-hello/hello"
+extract = "file"
+
+[run]
+exe = "/usr/bin/hello"

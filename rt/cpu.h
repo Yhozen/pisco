@@ -16,6 +16,17 @@ typedef union { VEC(u8,16) b; VEC(u16,8) w; VEC(u32,4) d; VEC(u64,2) q;
                 VEC(s8,16) sb; VEC(s16,8) sw; VEC(s32,4) sd; VEC(s64,2) sq;
                 VEC(float,4) ps; VEC(double,2) pd; } V;
 
+// An x87 register. Windows code runs the x87 at 53 bits of precision, so a double is the register (what is lost is
+// the exponent's range). A Linux title (-DGUEST_LINUX) runs it at its full 64 bits and its C library counts on them
+// (long double: printf's digits, strtod): there a register is the module's long double (binary128, in software),
+// and each result is rounded to the precision the control word selects (64 bits unless the title changed it).
+#ifdef GUEST_LINUX
+typedef long double fpx;
+#define FXC(x) x##L
+#else
+typedef double fpx;
+#define FXC(x) x
+#endif
 typedef struct Cpu {
   u64 r[16];
   V x[16];
@@ -25,7 +36,7 @@ typedef struct Cpu {
   u16 fcw, fsw;   // x87 control and status
   u32 ftop;       // x87 stack top (0..7)
   u32 eflags;     // 32-bit guests: the EFLAGS bits pushfd / popfd carry beside the function's flags (AC, ID)
-  double st[8];   // x87 registers, kept as doubles (80-bit precision is not kept)
+  fpx st[8];      // x87 registers: doubles, or for a Linux title 64 bits of precision (fpx, below)
   struct Landing *landing; // the innermost frame an exception can resume in (rt/seh.c)
 } Cpu;
 // A lifted function with landing pads registers one while it runs. `jb` is a jmp_buf in its frame.
@@ -60,6 +71,8 @@ void rt_trap(u64 addr) __attribute__((noreturn));
 void rt_unimpl(u64 addr) __attribute__((noreturn));
 void rt_call(Cpu *c, u64 target);       // each runtime's: its imports, then rt_dispatch
 void rt_dispatch(Cpu *c, u64 target);   // core.c: the lifted function at that address
+void rt_syscall(Cpu *c);                // a Linux title's `syscall` instruction (rt/linux-x64/syscall.c)
+void rt_longjmp(Cpu *c);                // a Linux title's longjmp, in place of its C library's (rt/linux-x64/jump.c)
 void rt_cpuid(Cpu *c);
 u64 rt_rdtsc(void);
 
@@ -143,6 +156,8 @@ static inline V pmuludq_scalar(V a, V b) { V r; r.q = (typeof(r.q)){(u64)a.d[0] 
 static inline V packuswb_scalar(V a, V b) { V r; for (int i = 0; i < 8; i++) { s16 x = a.sw[i], y = b.sw[i]; r.b[i] = x < 0 ? 0 : x > 255 ? 255 : x; r.b[8 + i] = y < 0 ? 0 : y > 255 ? 255 : y; } return r; } // (replaced below)
 static inline void fcmp(Flags *f, double a, double b) { f->of = f->sf = f->af = 0;
   if (a != a || b != b) { f->zf = f->pf = f->cf = 1; } else { f->zf = a == b; f->pf = 0; f->cf = a < b; } }
+static inline void fcmpx(Flags *f, fpx a, fpx b) { f->of = f->sf = f->af = 0;   // the x87's own compare (fcomi), at its registers' precision
+  if (a != a || b != b) { f->zf = f->pf = f->cf = 1; } else { f->zf = a == b; f->pf = 0; f->cf = a < b; } }
 static inline u8 fpred(u8 p, double a, double b) { switch (p & 7) { case 0: return a == b; case 1: return a < b; case 2: return a <= b;
   case 3: return a != a || b != b; case 4: return !(a == b); case 5: return !(a < b); case 6: return !(a <= b); default: return a == a && b == b; } }
 
@@ -159,11 +174,71 @@ u64 rt_random64(void);
 BSF(16) BSF(32) BSF(64)
 static inline u64 popcnt(Flags *f, u64 v) { f->cf = f->of = f->sf = f->af = f->pf = 0; f->zf = v == 0; return (u64)__builtin_popcountll(v); }
 
-// ---- x87, with doubles ----
+// ---- x87 (fpx: a register's type, above) ----
+#ifdef GUEST_LINUX
+long double rintl(long double); long double floorl(long double); long double ceill(long double); long double truncl(long double);
+long double sqrtl(long double); long double fabsl(long double); long double scalbnl(long double, int); long double fmodl(long double, long double);
+long double remainderl(long double, long double); long double frexpl(long double, int *);
+#define FX_RINT rintl
+#define FX_FLOOR floorl
+#define FX_CEIL ceill
+#define FX_TRUNC truncl
+#define FX_SQRT sqrtl
+#define FX_ABS fabsl
+#define FX_SCALB scalbnl
+#define FX_FMOD fmodl
+#define FX_REMAINDER remainderl
+#define FX_FREXP frexpl
+// binary128 rounded to 64 bits of mantissa, to nearest even (the bits below the 63rd fraction bit go)
+static inline fpx fx64(fpx v) {
+  unsigned __int128 b; __builtin_memcpy(&b, &v, 16);
+  unsigned long long hi = (unsigned long long)(b >> 64), lo = (unsigned long long)b; unsigned e = (hi >> 48) & 0x7FFF;
+  if (e == 0x7FFF || e == 0) return v;   // infinity, NaN, zero (and binary128's own denormals, far below the x87's range)
+  unsigned long long drop = lo & ((1ull << 49) - 1), half = 1ull << 48;
+  lo &= ~((1ull << 49) - 1);
+  if (drop > half || (drop == half && (lo & (1ull << 49)))) { lo += 1ull << 49; if (!lo) hi++; }   // (a carry out of the fraction raises the exponent)
+  b = ((unsigned __int128)hi << 64) | lo; __builtin_memcpy(&v, &b, 16);
+  return v;
+}
+#define FXR(c, v) fxr(c, v)
+#else
+#define FX_RINT __builtin_rint
+#define FX_FLOOR __builtin_floor
+#define FX_CEIL __builtin_ceil
+#define FX_TRUNC __builtin_trunc
+#define FX_SQRT __builtin_sqrt
+#define FX_ABS __builtin_fabs
+#define FX_SCALB ldexp
+#define FX_FMOD fmod
+#define FX_REMAINDER remainder
+#define FX_FREXP frexp
+#define FXR(c, v) (v)
+#endif
 double log2(double); double exp2(double); double log1p(double); double expm1(double); double ldexp(double, int);
 #define ST(i) (c->st[(c->ftop + (i)) & 7])
-static inline void fpush(Cpu *c, double v) { c->ftop = (c->ftop - 1) & 7; c->st[c->ftop] = v; }
+static inline void fpush(Cpu *c, fpx v) { c->ftop = (c->ftop - 1) & 7; c->st[c->ftop] = v; }
 static inline void fpop(Cpu *c) { c->ftop = (c->ftop + 1) & 7; }
+#ifdef GUEST_LINUX
+// the 80-bit format and binary128 have the same exponent: the mantissa's bits move (its integer bit is explicit in 80 bits)
+static inline fpx f80_load(u64 a) {
+  unsigned long long m = M64(a); u16 se = M16(a + 8); unsigned e = se & 0x7FFF; fpx v;
+  if (e == 0) { v = scalbnl((fpx)m, -16382 - 63); return (se >> 15) ? -v : v; }   // zero, or a denormal
+  unsigned __int128 b = ((unsigned __int128)(((unsigned long long)se << 48) | ((m << 1) >> 16)) << 64) | (unsigned long long)((m << 1) << 48);
+  __builtin_memcpy(&v, &b, 16);
+  return v;
+}
+static inline void f80_store(u64 a, fpx v) {
+  v = fx64(v);
+  unsigned __int128 b; __builtin_memcpy(&b, &v, 16);
+  unsigned long long hi = (unsigned long long)(b >> 64), lo = (unsigned long long)b; unsigned e = (hi >> 48) & 0x7FFF;
+  unsigned long long m = ((hi & 0xFFFFFFFFFFFFull) << 15) | (lo >> 49);
+  if (e) m |= 1ull << 63;   // (binary128's denormals are below the 80-bit format's: they become zero)
+  else m = 0;
+  M64(a) = m; M16(a + 8) = (u16)(hi >> 48);
+}
+// precision control: a result rounded to 24, 53 or 64 bits
+static inline fpx fxr(struct Cpu *c, fpx v);
+#else
 static inline double f80_load(u64 a) {
   u64 m = M64(a); u16 se = M16(a + 8); int e = se & 0x7FFF; int neg = se >> 15; double v;
   if (e == 0 && m == 0) v = 0.0;
@@ -180,21 +255,25 @@ static inline void f80_store(u64 a, double v) {
   else { m = (1ull << 63) | (frac << 11); ee = e - 1023 + 16383; }
   M64(a) = m; M16(a + 8) = (u16)(ee | (neg << 15));
 }
-static inline void fcom_sw(Cpu *c, double a, double b) {
+#endif
+static inline void fcom_sw(Cpu *c, fpx a, fpx b) {
   c->fsw &= ~0x4500;
   if (a != a || b != b) c->fsw |= 0x4500; else if (a < b) c->fsw |= 0x100; else if (a == b) c->fsw |= 0x4000;
 }
 static inline u16 fstsw(Cpu *c) { return (u16)((c->fsw & ~0x3800) | ((c->ftop & 7) << 11)); }
-static inline double fround(Cpu *c, double v) {
-  switch ((c->fcw >> 10) & 3) { case 0: return __builtin_rint(v); case 1: return __builtin_floor(v); case 2: return __builtin_ceil(v); default: return __builtin_trunc(v); }
+static inline fpx fround(Cpu *c, fpx v) {
+  switch ((c->fcw >> 10) & 3) { case 0: return FX_RINT(v); case 1: return FX_FLOOR(v); case 2: return FX_CEIL(v); default: return FX_TRUNC(v); }
 }
+#ifdef GUEST_LINUX
+static inline fpx fxr(Cpu *c, fpx v) { switch ((c->fcw >> 8) & 3) { case 0: return (fpx)(float)v; case 2: return (fpx)(double)v; default: return fx64(v); } }
+#endif
 static inline void fxam(Cpu *c) {
-  double v = ST(0); c->fsw &= ~0x4700;
+  fpx v = ST(0); c->fsw &= ~0x4700;
   if (__builtin_signbit(v)) c->fsw |= 0x200;
   if (v != v) c->fsw |= 0x100; else if (__builtin_isinf(v)) c->fsw |= 0x500; else if (v == 0) c->fsw |= 0x4000; else c->fsw |= 0x400;
 }
-static inline s64 fist(Cpu *c, double v, int bits) {
-  double r = fround(c, v); double lim = bits == 64 ? 9223372036854775808.0 : bits == 32 ? 2147483648.0 : 32768.0;
+static inline s64 fist(Cpu *c, fpx v, int bits) {
+  fpx r = fround(c, v); fpx lim = bits == 64 ? 9223372036854775808.0 : bits == 32 ? 2147483648.0 : 32768.0;
   if (!(r >= -lim && r < lim)) return bits == 64 ? (s64)0x8000000000000000ull : bits == 32 ? (s64)(s32)0x80000000u : (s64)(s16)0x8000;
   return (s64)r;
 }
@@ -245,19 +324,19 @@ double sin(double); double cos(double); double tan(double); double atan2(double,
 double fmod(double, double); double remainder(double, double); double frexp(double, int *);
 // precision control: with PC = 00 (24 bits; Direct3D 9 selects it) add, sub, mul, div and sqrt round to float;
 // 53 and 64 bits both stay doubles
-static inline double fprec(Cpu *c, double v) { return (c->fcw & 0x300) ? v : (double)(float)v; }
+static inline fpx fprec(Cpu *c, fpx v) { return (c->fcw & 0x300) ? v : (fpx)(float)v; }
 // fprem / fprem1: the remainder is complete at once (C2 = 0); C0, C3, C1 are the quotient's low three bits
 static inline void fprem(Cpu *c, int nearest) {
-  double a = ST(0), b = ST(1), q = a / b; q = nearest ? __builtin_rint(q) : __builtin_trunc(q);
+  fpx a = ST(0), b = ST(1), q = a / b; q = nearest ? FX_RINT(q) : FX_TRUNC(q);
   u64 n = (q > -9.0e18 && q < 9.0e18) ? (u64)(q < 0 ? -q : q) : 0;
-  ST(0) = nearest ? remainder(a, b) : fmod(a, b);
+  ST(0) = nearest ? FX_REMAINDER(a, b) : FX_FMOD(a, b);
   c->fsw = (u16)((c->fsw & ~0x4700) | ((n & 4) ? 0x100 : 0) | ((n & 2) ? 0x4000 : 0) | ((n & 1) ? 0x200 : 0));
 }
 static inline void fxtract(Cpu *c) {
-  double v = ST(0); int e = 0;
+  fpx v = ST(0); int e = 0;
   if (v == 0) { ST(0) = -__builtin_inf(); fpush(c, v); }
   else if (v != v || __builtin_isinf(v)) { ST(0) = v != v ? v : __builtin_inf(); fpush(c, v); }
-  else { double m = frexp(v, &e); ST(0) = (double)(e - 1); fpush(c, m * 2); }
+  else { fpx m = FX_FREXP(v, &e); ST(0) = (fpx)(e - 1); fpush(c, m * 2); }
 }
 // the 28-byte environment and the 108-byte state of 32-bit protected mode. Which registers are empty is not
 // tracked: the tag word says none is. Instruction and operand pointers are zero.

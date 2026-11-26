@@ -16,6 +16,9 @@
 #                                                          static Linux build, checked by sha256)
 #   cabextract  cabextract 1.11 in ~/tools/cabextract       `pisco build`: a recipe's [[source.cab]] (built from its
 #                                                          source, checked by sha256; needs cc and make)
+#   musl   musl 1.2.5 in ~/tools/musl-1.2.5                 fixtures/linux-hello, tools/build-fastfetch.sh: Linux titles are
+#                                                          linked statically with it (built from its source, checked
+#                                                          by sha256; needs gcc and make)
 # Environment: TOOLS (default ~/tools), DEPS (default ~/scratch/deps)
 set -euo pipefail
 root=$(cd "$(dirname "$0")/.." && pwd); T=${TOOLS:-$HOME/tools}; D=${DEPS:-$HOME/scratch/deps}; mkdir -p "$T" "$D"
@@ -32,7 +35,14 @@ untar() { # url, the folder under $T it unpacks to
   mv "$tmp/$2" "$T/$2"; rmdir "$tmp"
 }
 UPX=upx-5.3.0-amd64_linux
-for step in ${*:-wasi mingw rust naga dxil wine dxc upx reuse innoextract cabextract}; do case $step in
+for step in ${*:-wasi mingw rust naga dxil wine dxc upx reuse innoextract cabextract musl}; do case $step in
+  musl)
+    if [ -x "$T/musl-1.2.5/bin/musl-gcc" ]; then echo "have $T/musl-1.2.5"; else
+      tmp=$(mktemp -d "$T/.fetch.XXXXXX"); curl -fsSL -o "$tmp/musl.tar.gz" https://musl.libc.org/releases/musl-1.2.5.tar.gz
+      echo "a9a118bbe84d8764da0ea0d28b3ab3fae8477fc7e4085d90102b8596fc7c75e4  $tmp/musl.tar.gz" | sha256sum -c --quiet
+      tar -xzf "$tmp/musl.tar.gz" -C "$tmp"
+      (cd "$tmp/musl-1.2.5" && ./configure --prefix="$T/musl-1.2.5" --disable-shared > /dev/null && make -s -j "$(nproc)" > /dev/null && make -s install > /dev/null); rm -rf "$tmp"
+    fi ;;
   innoextract)
     if [ -x "$T/innoextract/bin/amd64/innoextract" ]; then echo "have $T/innoextract"; else
       tmp=$(mktemp -d "$T/.fetch.XXXXXX"); curl -fsSL -o "$tmp/ie.tar.xz" https://github.com/dscharrer/innoextract/releases/download/1.9/innoextract-1.9-linux.tar.xz

@@ -1,0 +1,30 @@
+hello: 0 arguments
+numbers: -7 3000000000 beef 1234567890123  3.14 6.020000e+23 0.3
+maths: sqrt 1.414214 sin 0.841471 pow 1.414 strtod 2.7183
+sorted: fig date kiwi pear apple banana
+switch: zero three six nine
+thread-local: 42
+longjmp: 42
+malloc: 661cd0ca69e81505 b8a9a732a53d4465
+mmap: ok, zeroed 1
+snprintf: id-007, length 6
+gmtime: 2005-01-01 12:00:00
+missing file: No such file or directory
+/dev/null: wrote 4
+cmdline: the program's name ends in hello
+this line goes to standard error
+uname: Linux pisco 6.1.0-pisco #1 SMP PREEMPT_DYNAMIC pisco x86_64
+/etc/os-release: PRETTY_NAME="PISCO (Linux x86-64 imitated in WebAssembly)"
+/proc/cpuinfo: model name	: pisco virtual CPU (lifted x86-64)
+/proc/meminfo: MemTotal:        4194304 kB
+/proc/version: Linux version 6.1.0-pisco (pisco@pisco) (the lifter) #1 SMP PREEMPT_DYNAMIC pisco
+/etc/hostname: pisco
+exe: /hello
+user: player (1000), home /home/player, shell (none named)
+environment: HOME=/home/player LANG=C.UTF-8
+sysinfo: 4096 MiB of memory, 1 process, 1 processor
+stat /proc/cpuinfo: a file
+stat /proc: a directory
+/proc/sys/kernel: 7 entries, ostype among them
+terminal: no
+date: 2005-01-01
