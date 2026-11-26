@@ -24,7 +24,7 @@ packages  Doom as a console title, XCL's   Stockfish, SimpleTriangleDesktop,    
 |---|---|---|---|---|---|
 | Xbox Series | `base/xbox-series:1` | `rt/gdk/`, `rt/xbox-series/` | Doom (D3D12.X on WebGPU, XAudio2, GameInput, saves), XCL's console test title 50/50 | the rungs in [status.md](status.md#xbox-series) | Minecraft (Bedrock), the Xbox Series build |
 | Windows x64 | `base/windows-x64:1` | `rt/gdk/`, `rt/windows-x64/` | Stockfish 19, Microsoft's SimpleTriangleDesktop and SimplePBR | more desktop D3D12 titles | desktop D3D12 titles |
-| Windows x86 | `base/windows-x86:1` | `rt/windows-x86/` | Narbacular Drop, playable | Tag: The Power of Paint: Direct3D 9 shaders (vs/ps 1.1 to 2.x as WGSL), D3DX's effects, FMOD Ex | 32-bit Direct3D 9 games of the 2000s |
+| Windows x86 | `base/windows-x86:1` | `rt/windows-x86/` | Narbacular Drop, playable; Tag: The Power of Paint into its second level (Direct3D 9 shaders as WGSL, D3DX's effects, FMOD Ex) | Tag played by hand on a real GPU (T6's check), then its later levels | 32-bit Direct3D 9 games of the 2000s |
 
 A new runtime is a new folder and a new base; a new title of an existing runtime is a recipe.
 
@@ -45,7 +45,7 @@ A new runtime is a new folder and a new base; a new title of an existing runtime
 6. **One pull request per milestone, none straight to `main`;** the docs (this file, `status.md`, `journey.md`, the
    title's page, the progress map) change in the same pull request as the code.
 
-## Now (2026-11-25)
+## Now (2026-11-26)
 
 | # | Milestone | State |
 |---|---|---|
@@ -53,5 +53,6 @@ A new runtime is a new folder and a new base; a new title of an existing runtime
 | A2 | a folder per runtime | done |
 | A3 | a base per runtime, one list of the runtime's files, recipes for every base, `[quirks]` | done |
 | A4 | these docs; the progress map by runtime | done |
-| A5 | CI for the tests that need no game files, and `reuse lint` | next |
-| T0 to T6 | Tag: The Power of Paint on the Windows x86 runtime: census and oracle, lift and start, the main loop, the shader translator, pixels, sound and input, playable | T0 under way |
+| A5 | CI for the tests that need no game files, and `reuse lint` | done |
+| T0 to T5 | Tag: The Power of Paint on the Windows x86 runtime: census and oracle, lift and start, the main loop, the shader translator, pixels, sound and input | done ([tag.md](tag.md#progress)) |
+| T6 | Tag playable: the docs and how to play it are done; playing it by hand on a real GPU is still to do | under way |
