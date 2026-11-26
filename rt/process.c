@@ -292,7 +292,7 @@ void rt_handle_close(u64 h) {
   if (h < 0x1000) return;
   pthread_mutex_lock(&rt_wait_lock);
   u64 i = (h - 0x1000) / 4;
-  if (i < 65536 && handles[i]) { Object *o = handles[i]; handles[i] = 0; if (--o->refs == 0 && o->type != OBJ_THREAD) { if (o->type == OBJ_FILE) { extern void rt_file_closed(Object *); rt_file_closed(o); } free(o); } }
+  if (i < 65536 && handles[i]) { Object *o = handles[i]; handles[i] = 0; if (--o->refs == 0 && o->type != OBJ_THREAD) { if (o->type == OBJ_FILE) { extern void rt_file_closed(Object *); rt_file_closed(o); } if (o->type == OBJ_MAPPING) rt_mapping_free(o); else free(o); } }
   pthread_mutex_unlock(&rt_wait_lock);
 }
 void rt_signal(void) { pthread_cond_broadcast(&rt_wait_cond); }
