@@ -739,6 +739,8 @@ void d3d9_gpu_present(Device9 *d) {
   u32 mip, id = target(d->back_buffer, &mip);
   if (id) rt_gpu_present(id, d->frames, 1);
 }
+// a session's `shot` step (rt/input.c): the checkpoint line with the Direct3D calls since the last, and the frame
+void rt_session_shot(const char *name, u32 frame) { char title[80]; snprintf(title, sizeof title, "checkpoint %s frame %u", name, frame); d3d9_stats_print(title, 1); d3d9_gpu_shot(name); }
 void d3d9_gpu_shot(const char *name) {
   if (!rt_gpu_ring) return;
   char text[64]; int n = snprintf(text, sizeof text, "shot %s", name);

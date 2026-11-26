@@ -6,7 +6,7 @@ titles, its own next steps and its own goal:
 | Runtime | Runs | Next | Goal |
 |---|---|---|---|
 | [Xbox Series](#xbox-series) | Doom as a console title, XCL's console test title (50/50) | D3D12.X shaders from RDNA2 code | Minecraft, the Xbox Series build |
-| [Windows x64](#windows-x64) | Stockfish 19, SimpleTriangleDesktop, SimplePBR; Desire runs in Node | Desire: the keyboard, the virtual clock, pixels | desktop D3D12 titles |
+| [Windows x64](#windows-x64) | Stockfish 19, SimpleTriangleDesktop, SimplePBR; Desire played in Node | Desire: pixels in Chrome, then by hand | desktop D3D12 titles |
 | [Windows x86](#windows-x86) | Narbacular Drop, playable; Tag: The Power of Paint into its second level | Tag played by hand on a real GPU, then its later levels | 32-bit Direct3D 9 games of the 2000s |
 | [Linux x64](#linux-x64) | fastfetch 2.71.0; neofetch 7.1.0 (bash, busybox) | threads, signals, writes | statically linked command-line programs |
 
@@ -69,7 +69,8 @@ gamepad, from the page), saves kept in OPFS in the browser and in a folder in No
   maze. In Node, strict, it now runs from its logo to the maze and its end pictures, with Wine's start-up calls
   and, from Wine's seeds, Wine's maze (D1: a window with a message queue, WIC on stb_image, D3D12 Memory
   Allocator's methods, shaders compiled by `pisco build`); its C++ exceptions, MSVC's FH4, are caught (D2).
-  Next: the keyboard and the virtual clock.
+  Played in Node on the virtual clock with the keyboard (D3): logo, GAME OVER, the goal, with Wine's titles and
+  Direct3D 12 methods. Next: its pixels in Chrome.
 
 ## Windows x86
 
@@ -116,7 +117,7 @@ by `pisco` into a title image whose layers make the C: drive and whose config gi
 What they had after M5: FMOD 3 (`rt/windows-x86/fmod3.c`: samples, streams, channels as FMOD numbers them,
 3D with several listeners) on the runtime's one sound output (`rt/mixer.c`, shared with XAudio2; mixed on the title's
 thread under a virtual clock), sound files decoded by `rt/windows-x86/audio_decode.c`; input from the page (keyboard,
-Pointer Lock mouse) through a ring `rt/windows-x86/input.c` drains when DirectInput reads; a writable top layer over the
+Pointer Lock mouse) through a ring `rt/input.c` drains when DirectInput reads; a writable top layer over the
 title's own folder that the host keeps (`SW_SAVES/@game` in Node, OPFS in the browser). Not yet: ADPCM WAVs, Doppler,
 reverb, the other FSOUND functions (none of the 33 imports is missing, but FMOD has hundreds), deleting a title's own
 files across runs.

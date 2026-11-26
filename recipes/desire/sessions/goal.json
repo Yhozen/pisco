@@ -1,0 +1,145 @@
+{
+ "title": "desire",
+ "about": "The maze of the Wine run whose std::random_device gave aee69d51 and b9466b87 (recipes/desire/traces/mazes.txt; `random` makes ours the same), walked from the start to the goal: W held 800 ms a cell (2.5 units a second, cells of 2), the arrows held 1000 ms a quarter turn (90 degrees a second; Right turns toward the map's north when facing east). Then the CLEAR title and the ending picture, and Enter. Written for our runtime's virtual clock: under Wine the game's frame rate is too low for held keys to mean the same distance.",
+ "random": [
+  "aee69d51",
+  "b9466b87"
+ ],
+ "steps": [
+  {
+   "wait": 1500
+  },
+  {
+   "focus": true
+  },
+  {
+   "key": "Return"
+  },
+  {
+   "wait": 2000
+  },
+  {
+   "shot": "stage"
+  },
+  {
+   "key": "w",
+   "ms": 4800
+  },
+  {
+   "key": "Left",
+   "ms": 1000
+  },
+  {
+   "key": "w",
+   "ms": 3200
+  },
+  {
+   "key": "Right",
+   "ms": 1000
+  },
+  {
+   "key": "w",
+   "ms": 1600
+  },
+  {
+   "key": "Left",
+   "ms": 1000
+  },
+  {
+   "key": "w",
+   "ms": 4800
+  },
+  {
+   "key": "Left",
+   "ms": 1000
+  },
+  {
+   "key": "w",
+   "ms": 1600
+  },
+  {
+   "key": "Left",
+   "ms": 1000
+  },
+  {
+   "key": "w",
+   "ms": 2400
+  },
+  {
+   "key": "Right",
+   "ms": 1000
+  },
+  {
+   "key": "w",
+   "ms": 1600
+  },
+  {
+   "key": "Right",
+   "ms": 1000
+  },
+  {
+   "key": "w",
+   "ms": 800
+  },
+  {
+   "key": "Left",
+   "ms": 1000
+  },
+  {
+   "key": "w",
+   "ms": 1600
+  },
+  {
+   "key": "Right",
+   "ms": 1000
+  },
+  {
+   "key": "w",
+   "ms": 1600
+  },
+  {
+   "key": "Right",
+   "ms": 1000
+  },
+  {
+   "key": "w",
+   "ms": 1600
+  },
+  {
+   "key": "Left",
+   "ms": 1000
+  },
+  {
+   "key": "w",
+   "ms": 1600
+  },
+  {
+   "key": "Left",
+   "ms": 1000
+  },
+  {
+   "key": "w",
+   "ms": 1600
+  },
+  {
+   "key": "Right",
+   "ms": 1000
+  },
+  {
+   "key": "w",
+   "ms": 800
+  },
+  {
+   "wait": 1000
+  },
+  {
+   "shot": "ending"
+  },
+  {
+   "key": "Return"
+  },
+  {
+   "wait": 1000
+  }
+ ]
+}

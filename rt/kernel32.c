@@ -52,9 +52,7 @@ IMP(kernel32, GetLargePageMinimum) { RET(0); }
 IMP(kernel32, SwitchToThread) { sched_yield(); RET(1); }
 IMP(kernel32, Sleep) {
   u32 ms = (u32)ARG(0);
-#if GUEST_BITS == 32
   if (rt_clock_virtual()) { rt_clock_advance(1000ull * ms); return; } // a virtual clock (SW_CLOCK): the time passes at once
-#endif
   if (!ms) { sched_yield(); return; }
   struct timespec ts = {ms / 1000, (long)(ms % 1000) * 1000000};
   nanosleep(&ts, 0);
@@ -403,11 +401,12 @@ IMP(kernel32, GetTickCount) { rt_clock_polled(); RET((u32)(rt_uptime_us() / 1000
 IMP(kernel32, GetTickCount64) { RET64(rt_uptime_us() / 1000); }
 static u64 filetime_now(void) { return rt_now_us() * 10 + 116444736000000000ull; }
 #else
-static u64 filetime_now(void) { struct timespec t; clock_gettime(CLOCK_REALTIME, &t); return (u64)t.tv_sec * 10000000 + (u64)t.tv_nsec / 100 + 116444736000000000ull; }
-IMP(kernel32, QueryPerformanceCounter) { M64(ARG(0)) = (u64)host_now_us(); RET(1); }
+// 64-bit titles: the host's clocks, or with SW_CLOCK the title's (a Windows x64 desktop title's sessions)
+static u64 filetime_now(void) { if (rt_clock_virtual()) return rt_now_us() * 10 + 116444736000000000ull; struct timespec t; clock_gettime(CLOCK_REALTIME, &t); return (u64)t.tv_sec * 10000000 + (u64)t.tv_nsec / 100 + 116444736000000000ull; }
+IMP(kernel32, QueryPerformanceCounter) { if (rt_clock_virtual()) { rt_clock_polled(); M64(ARG(0)) = rt_uptime_us(); } else M64(ARG(0)) = (u64)host_now_us(); RET(1); }
 IMP(kernel32, QueryPerformanceFrequency) { M64(ARG(0)) = 1000000; RET(1); }
-IMP(kernel32, GetTickCount) { RET((u32)(host_now_us() / 1000)); }
-IMP(kernel32, GetTickCount64) { RET((u64)(host_now_us() / 1000)); }
+IMP(kernel32, GetTickCount) { if (rt_clock_virtual()) { rt_clock_polled(); RET((u32)(rt_uptime_us() / 1000)); } else RET((u32)(host_now_us() / 1000)); }
+IMP(kernel32, GetTickCount64) { RET(rt_clock_virtual() ? rt_uptime_us() / 1000 : (u64)(host_now_us() / 1000)); }
 #endif
 IMP(kernel32, GetSystemTimeAsFileTime) { M64(ARG(0)) = filetime_now(); }
 IMP(kernel32, GetSystemTimePreciseAsFileTime) { M64(ARG(0)) = filetime_now(); }

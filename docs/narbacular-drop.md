@@ -432,7 +432,7 @@ correlate at 0.84, and the first level, where the music at volume 128 is most of
 -21.8 dB under Wine.
 
 **Input from the page.** In the browser a Windows desktop title's keyboard and mouse go into a ring of events the
-runtime drains whenever DirectInput reads (`rt/windows-x86/input.c`, `web/browser/main.js`): keys as DirectInput scan
+runtime drains whenever DirectInput reads (`rt/input.c`, `web/browser/main.js`): keys as DirectInput scan
 codes (the full table), the mouse as relative motion under Pointer Lock (a click on the canvas takes the pointer;
 Escape gives it back, as browsers do, and reaches the title as its Escape key), buttons and the wheel. The session
 player feeds the same state; the console's GameInput path (Doom) is untouched.

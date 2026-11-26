@@ -52,11 +52,15 @@ session describes what a player does, not how a host does it.
 | `{"key": "w", "ms": n}` or `{"key": "w", "down": true\|false}` | a key by X keysym name, or `space`, `enter`, `esc`, `up`, ... |
 | `{"shot": "name"}` | save `<name>.png` (the title's client area) and `<name>.full.png` (the screen) |
 
+Beside `steps`, `"random": ["aee69d51", ...]` gives the values our runtime's random source (`rand_s`) answers first
+(`SW_RANDOM`): those a Wine run of the title got, so that a random world (Desire's maze) is that run's. Wine's
+side ignores it.
+
 `play.py` turns X's pointer acceleration off first: X would otherwise scale every motion event of more than 4
 pixels, and the title under Wine would see other deltas than the session gives (our runtime passes them on unchanged).
 
 In our own runtime the same file drives the title through `SW_SESSION=<session.json>` (the Node host and
-`tools/run-chrome.mjs`; the steps reach the runtime's session player, `rt/windows-x86/input.c`). Time there is the
+`tools/run-chrome.mjs`; the steps reach the runtime's session player, `rt/input.c`, for 32-bit and 64-bit desktop titles). Time there is the
 title's clock: with `SW_CLOCK=16667` it is virtual and moves by that many microseconds a presented frame, so
 `wait` counts frames and a run is the same every time. `focus` does nothing (the title's window always has the
 focus), and `shot` writes a line `checkpoint <name> frame <n>` with the Direct3D 9 calls made since the checkpoint

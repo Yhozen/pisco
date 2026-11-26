@@ -3,6 +3,7 @@
 // and Windows x64 runtimes: on the console it is the screen, on the desktop the window DXGI presents to.
 #include <strings.h>
 #include "gdk.h"
+#include "input.h"
 
 // ---- the title's window: on the console the screen, a hidden 1920x1080 frameless tool window; on the desktop the
 // window DXGI presents to, the size it was created with (its client area: there is no frame, AdjustWindowRect leaves
@@ -106,5 +107,8 @@ IMP(user32, SetWindowTextW) {
   RET(1);
 }
 IMP(dwmapi, DwmGetWindowAttribute) { if ((u32)ARG(1) == 14 && ARG(3) >= 4) { M32(ARG(2)) = 1; RET(S_OK); return; } RET(E_INVALIDARG); } // DWMWA_CLOAKED
-// The keyboard as GetAsyncKeyState sees it: nothing is held (keys reach 64-bit desktop titles in milestone D3)
-IMP(user32, GetAsyncKeyState) { RET(0); }
+// The keyboard: the desktop titles' one input state (rt/input.c: the page's keys, a session's), by virtual key.
+// The high bit says the key is down; the low bit (pressed since the last call) is not kept, as on current Windows
+// where it is not reliable either.
+IMP(user32, GetAsyncKeyState) { input_poll(); int s = input_scan_of_vk((u32)ARG(0) & 0xff); RET(s >= 0 && input_keys()[s] ? 0x8000 : 0); }
+IMP(user32, GetKeyState) { input_poll(); int s = input_scan_of_vk((u32)ARG(0) & 0xff); RET(s >= 0 && input_keys()[s] ? 0xFF80 : 0); }

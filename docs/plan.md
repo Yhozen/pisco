@@ -66,6 +66,6 @@ A new runtime is a new folder and a new base; a new title of an existing runtime
 | D0 | Desire (DESI:Re v0.1) on the Windows x64 runtime: census, recipe (`pisco build` reads a zip and adds the user's C++ runtime DLLs), and the oracle (Direct3D 12 under Wine on lavapipe) | done ([desire.md](desire.md#progress)) |
 | D1 | Desire lifted and started: the first frame in Node, strict, with Wine's seeds drawing Wine's maze | done ([desire.md](desire.md#progress)) |
 | D2 | MSVC's FH4 exception tables in the lifter | done ([desire.md](desire.md#progress)) |
-| D3 | Desire's main loop in Node on the virtual clock: keyboard and window messages for 64-bit titles | next |
-| D4 | Desire's pixels in Chrome against Wine's | |
+| D3 | Desire's main loop in Node on the virtual clock: keyboard and window messages for 64-bit titles | done ([desire.md](desire.md#progress)) |
+| D4 | Desire's pixels in Chrome against Wine's | next |
 | D5 | Desire playable by hand | |

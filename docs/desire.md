@@ -186,3 +186,22 @@ implemented**. In Node, strict, it stops at the first of them (`_dclass`).
   - **`RtlUnwindEx` sets `ScopeIndex` to 0 for each frame**: the dispatcher context was reused across frames, so
     the count `__C_specific_handler` leaves there reached FH4's handler, which aborts on a state it did not set.
   - FH3 is unchanged (`fixtures/msvc/eh.exe` with the real DLLs: 6 of 6).
+- **D3** (played in Node): the sessions `start`, `caught` and `goal` run strict on the virtual clock, each ended by
+  the game itself (Esc, or Enter on a final picture); a second run of `goal` gives the same checkpoints and titles.
+  At each checkpoint of `start` and `caught` the window's title is Wine's, the Japanese title of the GAME OVER
+  picture included (`tools/oracle-wine/title-compare.py`: frame rate, memory figures and the enemy's
+  walking-or-thinking left out). Every Direct3D 12 method the game calls is one vkd3d saw it call (51 of them;
+  `tools/oracle-wine/d3d12-compare.py` on `VKD3D_DEBUG=trace`; Wine's DXGI also calls `GetDesc`, `GetDevice` and a
+  fence's `Signal` itself). What it took:
+  - **One input state for both desktop runtimes**: `rt/windows-x86/input.c` is now `rt/input.c`, with a table of
+    virtual keys; user32's `GetAsyncKeyState` / `GetKeyState` read it, the page's events reach it as they reach
+    DirectInput, and DXGI's `Present` plays the session. A `shot` step is each runtime's own (`rt_session_shot`):
+    Direct3D 9's statistics and frame, or DXGI's, with the methods called since the last checkpoint
+    (`SW_CALL_STATS=1`: every import's calls counted).
+  - **The virtual clock for 64-bit titles**: with `SW_CLOCK`, `QueryPerformanceCounter`, `GetTickCount`, the file
+    time and `Sleep` are the title's clock, and `Present` moves it a frame instead of waiting for the wall.
+  - **`goal`** walks the maze of the Wine run with seeds `aee69d51` / `b9466b87` (the session's `"random"` gives our
+    run the same seeds): W held 0.8 s a cell (2.5 units a second, cells of 2 units), the arrows 1 s a quarter turn.
+    It is written for our virtual clock: under Wine on lavapipe the game runs at 2 to 6 frames a second, its
+    time slows (a frame counts at most 0.1 s), and a held key does not mean the same distance, so Wine's run does
+    not reach the goal and the ending is not compared with it.
