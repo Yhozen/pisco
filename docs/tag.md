@@ -246,3 +246,12 @@ look, the left button to paint and the right button to erase once a gun is taken
   stands a step elsewhere; the scene, the gun and the paint are the same). Saves: `AutoSave.xml` turned out to be level
   data the installer ships, never written (Wine's copy keeps its 2008 date after every session); what Tag writes is
   `TAG.ini`, which the saves folder keeps and a second run reads back (edited to 800x600, its targets are).
+- **Played by hand** (2026-11-26), in Chrome on an M1 MacBook Pro, after three fixes found with a Chrome trace
+  ([hosts.md](hosts.md)): file checks answered once in the browser's worker, only the changed bytes of a buffer
+  locked whole sent to the GPU, and file mappings freed (Tag grew by about 100 KB a frame and failed at 2 GiB).
+  It ran at the game's own cap (`fMaxFPS = 60`) through level 3 with nothing noticeably wrong. Tag has no jump key:
+  green paint makes the player jump.
+  Known gap: in level 3 the console says `Direct3D 9: a vertex shader reads v1 (usage 5, index 0), which the
+  declaration does not have: not drawn`. A shader reads TEXCOORD0 that the draw's declaration lacks; Direct3D 9
+  drivers and Wine give such an input (0, 0, 0, 1) and draw. The draw is left out here, with nothing visibly
+  missing; the fix (that constant in the translated shader, `d3d9_sm.c`) waits for a level 3 checkpoint against Wine.
