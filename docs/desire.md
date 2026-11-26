@@ -175,3 +175,14 @@ implemented**. In Node, strict, it stops at the first of them (`_dclass`).
     bound was taken from the wrong compare: 78 tables recovered in the four images instead of 43.
   - **No FH4 yet**: nothing throws on the way. A shader that failed to compile did (the game throws on a failed
     HRESULT), and the catch stopped at a frame with no landing: D2's case.
+- **D2** (FH4): under Wine, with `Assets/Textures/WallBrick.png` taken away, the game throws two C++ exceptions,
+  catches them, prints to the debugger and shows `Scene error (Visual Studio Output) | Esc: Quit`; ours now does
+  the same and runs on (`tests/run.sh desireplay` builds an image from a copy of the zip without that file).
+  - **The lifter reads FH4's FuncInfo4** (compressed numbers, image-relative tables): the unwind map's destructor
+    funclets, each catch's funclet and the continuations its handler map lists (from the function's start, or
+    image-relative), plus the `lea rax,[continuation]` each funclet returns, as for FH3. Most of Desire's functions
+    name not the import but a local `__GSHandlerCheck_EH4` (the security cookie's check, then
+    `__CxxFrameHandler4`): a handler that calls or jumps to the import within its first instructions counts.
+  - **`RtlUnwindEx` sets `ScopeIndex` to 0 for each frame**: the dispatcher context was reused across frames, so
+    the count `__C_specific_handler` leaves there reached FH4's handler, which aborts on a state it did not set.
+  - FH3 is unchanged (`fixtures/msvc/eh.exe` with the real DLLs: 6 of 6).

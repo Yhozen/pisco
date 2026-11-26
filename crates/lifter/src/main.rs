@@ -2742,6 +2742,15 @@ fn landing_pads(img: &Image, entry: u64) -> Vec<u64> {
     if ["__CxxFrameHandler3", "__GSHandlerCheck_EH"].iter().any(|n| is_import_thunk(img, handler, n)) {
         return msvc_continuations(img, ib, img.u32(data).map(|r| ib + u64::from(r)).unwrap_or(0), entry, end);
     }
+    // FH4 (__CxxFrameHandler4, the default of current MSVC for x64): the compressed FuncInfo4 names each catch's
+    // continuations itself; the funclets' own `lea rax,[continuation]` are read as for FH3 too
+    if handler_is(img, handler, "__CxxFrameHandler4") {
+        let Some(fi) = img.u32(data).map(|r| ib + u64::from(r)) else { return vec![] };
+        let Some(f) = fh4(img, ib, fi, entry) else { return vec![] };
+        let mut out: Vec<u64> = f.continuations.into_iter().filter(|&x| x >= entry && x < end).collect();
+        for x in funclet_continuations(img, &f.handlers, entry, end) { if !out.contains(&x) { out.push(x); } }
+        return out;
+    }
     // __C_specific_handler (through its import thunk): a scope table; jump targets are the __except blocks
     if is_import_thunk(img, handler, "__C_specific_handler") {
         let n = img.u32(data).unwrap_or(0).min(4096) as u64;
@@ -2773,11 +2782,15 @@ fn throw_info_functions(img: &Image, insns: &BTreeMap<u64, Instruction>, call: &
 fn msvc_funclets(img: &Image, entry: u64) -> Vec<u64> {
     let mut out = Vec::new();
     let (Some(&info), Some(h)) = (img.unwind.get(&entry), unwind_handler(img, entry)) else { return out };
-    if !["__CxxFrameHandler3", "__GSHandlerCheck_EH"].iter().any(|n| is_import_thunk(img, h, n)) { return out; }
     let Some(b) = img.bytes(info) else { return out };
     let ib = img.base_of(entry);
     let data = info + 4 + 2 * ((b[2] as u64 + 1) & !1) + 4;
     let Some(fi) = img.u32(data).map(|r| ib + u64::from(r)) else { return out };
+    if handler_is(img, h, "__CxxFrameHandler4") {
+        if let Some(f) = fh4(img, ib, fi, entry) { out.extend(f.actions.into_iter().chain(f.handlers).filter(|&a| img.is_code(a))); }
+        return out;
+    }
+    if !["__CxxFrameHandler3", "__GSHandlerCheck_EH"].iter().any(|n| is_import_thunk(img, h, n)) { return out; }
     if !(0x19930520..=0x19930522).contains(&img.u32(fi).unwrap_or(0)) { return out; }
     // the unwind map's cleanup actions (destructors run while unwinding): {to state, action}
     let (n_state, umap) = (img.u32(fi + 4).unwrap_or(0).min(4096) as u64, ib + u64::from(img.u32(fi + 8).unwrap_or(0)));
@@ -2787,6 +2800,77 @@ fn msvc_funclets(img: &Image, entry: u64) -> Vec<u64> {
         let e = tries + 20 * t;
         let (n_catch, handlers) = (img.u32(e + 12).unwrap_or(0).min(64) as u64, ib + u64::from(img.u32(e + 16).unwrap_or(0)));
         for k in 0..n_catch { if let Some(r) = img.u32(handlers + 20 * k + 12) { let a = ib + u64::from(r); if img.is_code(a) { out.push(a); } } }
+    }
+    out
+}
+/// MSVC FH4's FuncInfo4 (vcruntime's ehdata4.h), for the function at `entry`: the unwind map's actions (destructor
+/// funclets), each catch's funclet and the continuations it lists. Numbers are compressed (the low bits of the first
+/// byte say how many bytes: xxxxxxx0 one, xxxxxx01 two, xxxxx011 three, xxxx0111 four, 1111 a 32-bit value after
+/// it); displacements of tables and funclets are 32-bit image-relative addresses.
+struct Fh4 { actions: Vec<u64>, handlers: Vec<u64>, continuations: Vec<u64> }
+fn fh4_unsigned(img: &Image, at: &mut u64) -> Option<u64> {
+    let b = img.bytes(*at)?;
+    let (len, shift) = match b.first()? & 0x0f { x if x & 1 == 0 => (1, 1), x if x & 3 == 1 => (2, 2), x if x & 7 == 3 => (3, 3), 7 => (4, 4), _ => (5, 0) };
+    if b.len() < len { return None; }
+    let v = if len == 5 { u64::from(u32::from_le_bytes([b[1], b[2], b[3], b[4]])) } else { (0..len).fold(0u64, |v, k| v | u64::from(b[k]) << (8 * k)) >> shift };
+    *at += len as u64;
+    Some(v)
+}
+fn fh4_int(img: &Image, at: &mut u64) -> Option<u32> { let v = img.u32(*at)?; *at += 4; Some(v) }
+fn fh4(img: &Image, ib: u64, fi: u64, entry: u64) -> Option<Fh4> {
+    let mut at = fi;
+    let head = *img.bytes(at)?.first()?; at += 1;
+    let (is_catch, separated, bbt, unwind, tries) = (head & 1 != 0, head & 2 != 0, head & 4 != 0, head & 8 != 0, head & 16 != 0);
+    let _ = (is_catch, separated);
+    if bbt { fh4_unsigned(img, &mut at)?; }
+    let umap = if unwind { Some(ib + u64::from(fh4_int(img, &mut at)?)) } else { None };
+    let tmap = if tries { Some(ib + u64::from(fh4_int(img, &mut at)?)) } else { None };
+    let mut f = Fh4 { actions: vec![], handlers: vec![], continuations: vec![] };
+    if let Some(mut u) = umap {
+        // {next offset << 2 | type (0 none, 1 destructor of an object, 2 of an object through a pointer, 3 a funclet)}, action, object
+        for _ in 0..fh4_unsigned(img, &mut u)?.min(4096) {
+            let ty = fh4_unsigned(img, &mut u)? & 3;
+            if ty != 0 { f.actions.push(ib + u64::from(fh4_int(img, &mut u)?)); }
+            if ty == 1 || ty == 2 { fh4_unsigned(img, &mut u)?; }
+        }
+    }
+    if let Some(mut t) = tmap {
+        // {try low, try high, catch high, handler map}; the handler map: {header, adjectives, type, catch object, funclet, continuations}
+        for _ in 0..fh4_unsigned(img, &mut t)?.min(1024) {
+            for _ in 0..3 { fh4_unsigned(img, &mut t)?; }
+            let mut h = ib + u64::from(fh4_int(img, &mut t)?);
+            for _ in 0..fh4_unsigned(img, &mut h)?.min(64) {
+                let hh = *img.bytes(h)?.first()?; h += 1;
+                if hh & 1 != 0 { fh4_unsigned(img, &mut h)?; }       // adjectives
+                if hh & 2 != 0 { fh4_int(img, &mut h)?; }            // type descriptor
+                if hh & 4 != 0 { fh4_unsigned(img, &mut h)?; }       // catch object's frame offset
+                f.handlers.push(ib + u64::from(fh4_int(img, &mut h)?));
+                for _ in 0..(hh >> 4 & 3).min(2) {                   // continuations: image-relative, or from the function's start
+                    let c = if hh & 8 != 0 { ib + u64::from(fh4_int(img, &mut h)?) } else { entry + fh4_unsigned(img, &mut h)? };
+                    f.continuations.push(c);
+                }
+            }
+        }
+    }
+    Some(f)
+}
+/// Where catch funclets return to: the `lea rax,[continuation]` before each one's `ret`, inside [entry, end)
+fn funclet_continuations(img: &Image, funclets: &[u64], entry: u64, end: u64) -> Vec<u64> {
+    let mut out = Vec::new();
+    for &start in funclets {
+        let mut ip = start;
+        for _ in 0..4096 {
+            let Some(b) = img.bytes(ip) else { break };
+            let mut d = Decoder::with_ip(64, &b[..b.len().min(16)], ip, DecoderOptions::NONE);
+            let i = d.decode();
+            if i.is_invalid() { break; }
+            if i.mnemonic() == Mnemonic::Lea && i.op0_register() == Register::RAX && i.is_ip_rel_memory_operand() {
+                let x = i.ip_rel_memory_address();
+                if x >= entry && x < end && !out.contains(&x) { out.push(x); }
+            }
+            if matches!(i.mnemonic(), Mnemonic::Ret | Mnemonic::Int3) { break; }
+            ip = i.next_ip();
+        }
     }
     out
 }
@@ -2825,6 +2909,23 @@ fn unwind_handler(img: &Image, entry: u64) -> Option<u64> {
     if b.len() < 4 || b[0] >> 3 & 3 == 0 || b[0] >> 3 & 4 != 0 { return None; }
     let h = info + 4 + 2 * ((b[2] as u64 + 1) & !1);
     img.u32(h).map(|r| img.base_of(entry) + u64::from(r)).filter(|&a| img.is_code(a))
+}
+/// A frame handler that is `name` or reaches it: the import (thunk or export), or a local function that calls or jumps
+/// to it within its first instructions (MSVC's __GSHandlerCheck_EH4, linked into the image, checks the frame's
+/// security cookie and then calls __CxxFrameHandler4)
+fn handler_is(img: &Image, at: u64, name: &str) -> bool {
+    if is_import_thunk(img, at, name) { return true; }
+    let mut ip = at;
+    for _ in 0..64 {
+        let Some(b) = img.bytes(ip) else { return false };
+        let mut d = Decoder::with_ip(64, &b[..b.len().min(16)], ip, DecoderOptions::NONE);
+        let i = d.decode();
+        if i.is_invalid() { return false; }
+        if matches!(i.mnemonic(), Mnemonic::Call | Mnemonic::Jmp) && is_near(&i) && is_import_thunk(img, i.near_branch_target(), name) { return true; }
+        if matches!(i.mnemonic(), Mnemonic::Ret | Mnemonic::Int3) { return false; }
+        ip = i.next_ip();
+    }
+    false
 }
 /// `at` is the function `name`: a thunk to its import, or (inside the DLL that has it, as vcruntime has
 /// __C_specific_handler) its export
