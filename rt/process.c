@@ -10,38 +10,6 @@ int rt_trace;
 u64 rt_peb;
 Thread *rt_main_thread;
 
-void rt_log(const char *fmt, ...) {
-  char buf[1024]; va_list ap; va_start(ap, fmt); int n = vsnprintf(buf, sizeof buf, fmt, ap); va_end(ap);
-  if (n > (int)sizeof buf - 1) n = sizeof buf - 1;
-  host_log(buf, (u32)n);
-}
-void rt_fatal(const char *fmt, ...) {
-  char buf[1024]; va_list ap; va_start(ap, fmt); int n = vsnprintf(buf, sizeof buf, fmt, ap); va_end(ap);
-  if (n > (int)sizeof buf - 1) n = sizeof buf - 1;
-  host_log(buf, (u32)n);
-  host_fault(5, 0);
-}
-void rt_trap(u64 a) { rt_fatal("guest trap (int3 / ud2 / divide error) at 0x%llx", a); }
-void rt_unimpl(u64 a) { rt_fatal("instruction at 0x%llx is not lifted yet", a); }
-
-// ---- memory: guest regions come from the top of linear memory; malloc shares it through sbrk ----
-static pthread_mutex_t mem_lock = PTHREAD_MUTEX_INITIALIZER;
-u64 rt_valloc(u64 size, u64 align) {
-  if (align < 4096) align = 4096;
-  size = (size + 4095) & ~4095ull;
-  pthread_mutex_lock(&mem_lock);
-  void *p = aligned_alloc(align, size); // dlmalloc takes big blocks straight from sbrk
-  pthread_mutex_unlock(&mem_lock);
-  if (!p) return 0;
-#if GUEST_BITS == 32
-  // a 32-bit program that is not large-address-aware expects every pointer below 2 GiB
-  if ((u64)(uptr)p + size > 0x80000000ull) { free(p); return 0; }
-#endif
-  memset(p, 0, size);
-  return (u64)(uptr)p;
-}
-void rt_vfree(u64 a) { free((void *)GP(a)); }
-
 // ---- guest calls ----
 u64 rt_guest_call(Cpu *c, u64 fn, u64 a0, u64 a1, u64 a2, u64 a3) {
 #if GUEST_BITS == 32
@@ -61,23 +29,6 @@ u64 rt_guest_call(Cpu *c, u64 fn, u64 a0, u64 a1, u64 a2, u64 a3) {
   R[RSP] = sp;
   return R[RAX];
 #endif
-}
-
-volatile u32 rt_last_pc;
-// --trace-pc: the last 256 blocks entered, and SW_BREAK=<hex address>: when that block is entered, the registers,
-// the top of the stack and the blocks before it are logged (the run goes on)
-static u32 pc_ring[256], pc_at; static s64 break_at = -2;
-void rt_pc(Cpu *c, u32 pc) {
-  rt_last_pc = pc; pc_ring[pc_at++ & 255] = pc;
-  if (break_at == -2) { const char *e = getenv("SW_BREAK"); break_at = e ? (s64)strtoull(e, 0, 16) : -1; }
-  if ((s64)pc != break_at) return;
-  rt_log("break at 0x%x: eax %08x ecx %08x edx %08x ebx %08x esp %08x ebp %08x esi %08x edi %08x", pc, (u32)R[0], (u32)R[1], (u32)R[2], (u32)R[3], (u32)R[4], (u32)R[5], (u32)R[6], (u32)R[7]);
-  char line[200]; int n = 0;
-  for (int i = 0; i < 8; i++) n += snprintf(line + n, sizeof line - n, " %08x", M32(R[4] + 4 * i));
-  rt_log("  stack:%s", line);
-  if (R[5] >= 0x1000) { n = 0; for (int i = 0; i < 8; i++) n += snprintf(line + n, sizeof line - n, " %08x", M32(R[5] + 4 * i)); rt_log("  [ebp]:%s", line); }
-  n = 0; for (int i = 32; i >= 1; i--) n += snprintf(line + n, sizeof line - n, " %x", pc_ring[(pc_at - 1 - i) & 255]);
-  rt_log("  blocks before:%s", line);
 }
 
 // ---- imports ----
@@ -171,25 +122,26 @@ static void canon(char *out, const char *dll, const char *name) {
   strcat(out, "!"); strncat(out, name, 120);
 }
 static int dynamic_quiet;
+static pthread_mutex_t import_lock = PTHREAD_MUTEX_INITIALIZER;   // the table grows when a title asks for a function by name
 u64 rt_dynamic_import(const char *dll, const char *name) {
   char full[200]; canon(full, dll, name);
   ImportFn fn = find_import(full);
   if (!fn) { if (rt_trace && !dynamic_quiet) rt_log("GetProcAddress: %s not implemented", full); return 0; }
-  pthread_mutex_lock(&mem_lock);
-  for (unsigned i = 0; i < import_total; i++) if (import_fn[i] == fn) { pthread_mutex_unlock(&mem_lock); return import_base + 8ull * i; }
+  pthread_mutex_lock(&import_lock);
+  for (unsigned i = 0; i < import_total; i++) if (import_fn[i] == fn) { pthread_mutex_unlock(&import_lock); return import_base + 8ull * i; }
   unsigned i = import_total++;
   import_fn[i] = fn; import_name_of[i] = strdup(full); import_pop[i] = (short)stdcall_bytes(full);
-  pthread_mutex_unlock(&mem_lock);
+  pthread_mutex_unlock(&import_lock);
   return import_base + 8ull * i;
 }
 // An address that calls nothing: a call through it is reported under `full` (a vtable slot no one
 // implements, "d3d12.dll!ID3D12Device16::CreateStateObject") and returns stub_value's answer.
 u64 rt_stub_import(const char *full) {
-  pthread_mutex_lock(&mem_lock);
-  for (unsigned i = 0; i < import_total; i++) if (!import_fn[i] && import_name_of[i] && !strcmp(import_name_of[i], full)) { pthread_mutex_unlock(&mem_lock); return import_base + 8ull * i; }
+  pthread_mutex_lock(&import_lock);
+  for (unsigned i = 0; i < import_total; i++) if (!import_fn[i] && import_name_of[i] && !strcmp(import_name_of[i], full)) { pthread_mutex_unlock(&import_lock); return import_base + 8ull * i; }
   unsigned i = import_total++;
   import_fn[i] = 0; import_name_of[i] = strdup(full); import_pop[i] = (short)stdcall_bytes(full);
-  pthread_mutex_unlock(&mem_lock);
+  pthread_mutex_unlock(&import_lock);
   return import_base + 8ull * i;
 }
 // The same for whoever builds a vtable and gives a missing method a named stub: nothing to report (rt/windows-x86/com.c)
@@ -266,10 +218,7 @@ void rt_call(Cpu *c, u64 t) {
     R[RSP] += pop;
     return;
   }
-  unsigned lo = 0, hi = fn_count;
-  while (lo < hi) { unsigned m = (lo + hi) / 2; if (fn_addrs[m] < t) lo = m + 1; else hi = m; }
-  if (lo < fn_count && fn_addrs[lo] == t) { fn_ptrs[lo](c); return; }
-  rt_fatal("indirect call or jump to 0x%llx, which is no lifted function (return address 0x%llx)", t, (u64)MP(R[RSP]));
+  rt_dispatch(c, t);
 }
 
 // ---- handles and waits ----

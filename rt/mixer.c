@@ -14,7 +14,7 @@
 HOST("audio_open") void host_audio_open(u32 ring);
 HOST("audio_dump") void host_audio_dump(const float *frames, u32 n);
 u64 rt_spawn_native(void (*fn)(Cpu *, void *), void *arg);
-u64 rt_clock_virtual_us(void);   // kernel32.c
+u64 rt_clock_virtual_us(void);   // clock.c
 #define RING_FRAMES 16384
 #define LEAD 2400 // frames mixed ahead of the wall clock (50 ms)
 #define BLOCK 1024

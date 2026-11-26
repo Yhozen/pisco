@@ -17,5 +17,5 @@ void mixer_add_source(MixerSource fn, void *ctx);
 void mixer_start(void);
 // What sources change: the mixer reads it with this lock held
 extern pthread_mutex_t mixer_lock;
-// kernel32.c calls it when the virtual clock moves (a frame presented, a Sleep): mixes up to the clock
+// clock.c calls it when the virtual clock moves (a frame presented, a Sleep): mixes up to the clock
 void mixer_clock_moved(void);

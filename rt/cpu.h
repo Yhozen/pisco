@@ -58,7 +58,8 @@ typedef __UINTPTR_TYPE__ uptr;
 
 void rt_trap(u64 addr) __attribute__((noreturn));
 void rt_unimpl(u64 addr) __attribute__((noreturn));
-void rt_call(Cpu *c, u64 target);
+void rt_call(Cpu *c, u64 target);       // each runtime's: its imports, then rt_dispatch
+void rt_dispatch(Cpu *c, u64 target);   // core.c: the lifted function at that address
 void rt_cpuid(Cpu *c);
 u64 rt_rdtsc(void);
 
