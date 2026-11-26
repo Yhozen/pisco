@@ -3,7 +3,8 @@
 # tests/images.sh: title images (milestone M6, docs/images.md), built by `pisco build` and run by `pisco run`.
 #   1. hello32 (recipes/hello32) built twice, each time with an empty cache: the same manifest digest; its image run in
 #      Node passes its 7 checks
-#   1b. hello64 (Windows x64) and Doom (Xbox Series, from out/doom/game) the same way: one title of every base
+#   1b. hello64 (Windows x64), Doom (Xbox Series, from out/doom/game) and linux-hello (Linux x86-64, with musl in MUSL)
+#      the same way: one title of every base
 #   2. Narbacular Drop from the user's installer (ND_SETUP; skipped when it is not found), the same: two builds with
 #      empty caches give the same manifest digest. With the Wine-installed game there (ND) the extracted files are
 #      compared with it (the differences are printed)
@@ -64,6 +65,17 @@ if [ -f out/doom/game/doom.exe ]; then
   [ "$frames" = "$want" ] || { echo "doom: its image drew $frames frames of the timedemo, natively $want"; exit 1; }
   echo "doom (base/xbox-series:1): two builds with empty caches give manifest $a; the image plays the timedemo's $frames frames"
 else echo "doom: out/doom/game is not built (tests/run.sh doom): its image is not built"; fi
+MUSL=${MUSL:-$HOME/tools/musl-1.2.5}
+if [ -x "$MUSL/bin/musl-gcc" ]; then
+  MUSL=$MUSL fixtures/linux-hello/build.sh out/linux-hello > /dev/null || { echo "linux-hello: does not compile"; exit 1; }
+  a=$(build linux-hello-a recipes/linux-hello $T/linux-hello-a $T/cache-a) || exit 1
+  b=$(build linux-hello-b recipes/linux-hello $T/linux-hello-b $T/cache-b) || exit 1
+  [ "$a" = "$b" ] || { echo "linux-hello: two builds with empty caches differ ($a, $b)"; exit 1; }
+  # the image's drive is the root: the program finds itself where the recipe put it
+  SW_STRICT=1 SW_CLOCK=16667 $SW run $T/linux-hello-a > $T/linux-hello.run.log 2>&1
+  diff <(sed 's|^exe: /hello$|exe: /usr/bin/hello|' fixtures/linux-hello/expected.txt) $T/linux-hello.run.log > $T/linux-hello.diff || { echo "linux-hello: its image does not print expected.txt (< expected, > the image):"; head -6 $T/linux-hello.diff; exit 1; }
+  echo "linux-hello (base/linux-x64:1): two builds with empty caches give manifest $a; the image prints what fixtures/linux-hello/expected.txt says"
+else echo "linux-hello: no musl in MUSL=$MUSL (tools/setup-toolchain.sh musl): its image is not built"; fi
 
 if [ -z "${ND_SETUP:-}" ] || [ ! -f "$ND_SETUP" ]; then echo "Narbacular Drop: no installer found (ND_SETUP): its image is not built"; exit 0; fi
 # 2. Narbacular Drop, twice from nothing

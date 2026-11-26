@@ -190,12 +190,13 @@ fn compare(ex: &Extracted, other: &Path) -> R<()> {
 }
 
 // ---- 2. lifting ----
-pub struct Lifted { pub dir: PathBuf, pub bits: u32, pub low: u64, pub high: u64, pub imports: Vec<String>, pub key: String, pub objects: Vec<PathBuf> }
-fn cflags(t: &Tools, cache: &Path, opt: &str, bits: u32) -> Vec<String> {
+pub struct Lifted { pub dir: PathBuf, pub bits: u32, pub low: u64, pub high: u64, pub linux: bool, pub imports: Vec<String>, pub key: String, pub objects: Vec<PathBuf> }
+fn cflags(t: &Tools, cache: &Path, opt: &str, bits: u32, linux: bool) -> Vec<String> {
     let mut f: Vec<String> = TARGET.iter().map(|s| s.to_string()).collect();
     f.extend(["-mllvm", "-wasm-enable-sjlj", opt, "-fno-strict-aliasing", "-Wno-everything"].map(String::from));
     f.push(format!("-I{}", t.root.join("rt").display()));
     f.push(format!("-DGUEST_BITS={bits}"));
+    if linux { f.push("-DGUEST_LINUX=1".into()); }   // the x87 at its full precision (rt/cpu.h fpx), in the lifted code and the runtime alike
     // no path of this machine in what is built: two checkouts give the same bytes
     f.push(format!("-ffile-prefix-map={}=/pisco-cache", cache.display()));
     f.push(format!("-ffile-prefix-map={}=/pisco", t.root.display()));
@@ -247,8 +248,8 @@ fn lift(t: &Tools, r: &Recipe, exe: &Path, ex: &Extracted, cache: &Path) -> R<Li
         io(std::fs::write(tmp.join("lifter.log"), [&o.stdout[..], &o.stderr[..]].concat()), &tmp)?;
         if !o.status.success() { return Err(format!("the lifter failed: see {}", tmp.join("lifter.log").display())); }
         let lifted_at = time.elapsed().as_secs_f64();
-        let bits = env_of(&tmp)?.0;
-        let flags = cflags(t, cache, &r.opt, bits);
+        let (bits, _, _, linux) = env_of(&tmp)?;
+        let flags = cflags(t, cache, &r.opt, bits, linux);
         let mut jobs = Vec::new();
         for c in c_files(&tmp)? {
             let mut cmd = Command::new(&t.clang);
@@ -261,19 +262,19 @@ fn lift(t: &Tools, r: &Recipe, exe: &Path, ex: &Extracted, cache: &Path) -> R<Li
         publish(&tmp, &out)?;
         say(&format!("lift: lifted in {lifted_at:.1} s, {n} files of C compiled in {:.1} s (lift key {})", time.elapsed().as_secs_f64() - lifted_at, &key[..16]));
     }
-    let (bits, low, high) = env_of(&out)?;
+    let (bits, low, high, linux) = env_of(&out)?;
     let objects = c_files(&out)?.into_iter().map(|c| out.join(format!("{c}.o"))).collect();
-    Ok(Lifted { imports: lifted_imports(&out.join("title.c"))?, dir: out, bits, low, high, key, objects })
+    Ok(Lifted { imports: lifted_imports(&out.join("title.c"))?, dir: out, bits, low, high, linux, key, objects })
 }
 fn c_files(dir: &Path) -> R<Vec<String>> {
     let mut v: Vec<String> = io(std::fs::read_dir(dir), dir)?.filter_map(|e| e.ok()).map(|e| e.file_name().to_string_lossy().into_owned()).filter(|n| n.starts_with("title") && n.ends_with(".c")).collect();
     v.sort(); Ok(v)
 }
-fn env_of(dir: &Path) -> R<(u32, u64, u64)> {
+fn env_of(dir: &Path) -> R<(u32, u64, u64, bool)> {
     let text = io(std::fs::read_to_string(dir.join("title.env")), &dir.join("title.env"))?;
     let get = |k: &str| text.lines().find_map(|l| l.strip_prefix(&format!("{k}="))).map(|v| v.to_string()).unwrap_or_default();
     let hexv = |v: String| u64::from_str_radix(v.trim_start_matches("0x"), 16).unwrap_or(0);
-    Ok((get("GUEST_BITS").parse().unwrap_or(64), hexv(get("IMAGE_LOW")), hexv(get("IMAGE_HIGH"))))
+    Ok((get("GUEST_BITS").parse().unwrap_or(64), hexv(get("IMAGE_LOW")), hexv(get("IMAGE_HIGH")), get("OS") == "linux"))
 }
 
 // ---- 3. the runtime ----
@@ -359,7 +360,8 @@ pub fn build(root: &Path, o: &Opts) -> R<()> {
     for l in &r.libraries { sources.extend(base.libraries[l].sources.iter().cloned()); }
     sources.sort(); sources.dedup();   // (two libraries may share a file: the decoders of FMOD 3 and FMOD Ex)
     let deps = rt_deps(root)?;
-    let rt_flags = cflags(&t, &cache, &base.opt, lifted.bits);
+    if lifted.linux != (base.os == "linux") { return Err(format!("{}: {} program, but {} is for {}", r.exe, if lifted.linux { "a Linux" } else { "a Windows" }, base.reference(), base.os)); }
+    let rt_flags = cflags(&t, &cache, &base.opt, lifted.bits, lifted.linux);
     let items = sources.iter().map(|s| { let p = root.join(s); let c = std::fs::read(&p).map(|d| oci::sha256(&d)).unwrap_or_default(); (s.clone(), p, format!("source {s} {c}\ndeps {deps}")) }).collect();
     let (rt_objs, rt_new) = compile_cached(&t, &cache, "rt", items, &rt_flags)?;
     // the import table and the recipe's CPU (registry values are not built in: they reach the runtime from the config)
@@ -388,8 +390,9 @@ pub fn build(root: &Path, o: &Opts) -> R<()> {
 
     // 4. the module
     let mut layout_flags = String::from("--stack-first,-z,stack-size=8388608");
-    if lifted.bits == 32 {
-        if lifted.low < 0x100000 { return Err(format!("a 32-bit image at 0x{:x} leaves no room for the runtime's stack below it", lifted.low)); }
+    // (a Linux program that is not position-independent loads low too: 0x400000 unless its link said otherwise)
+    if lifted.bits == 32 || (lifted.linux && lifted.low < 0x1000_0000) {
+        if lifted.low < 0x100000 { return Err(format!("an image at 0x{:x} leaves no room for the runtime's stack below it", lifted.low)); }
         let stack = lifted.low.min(0x800000) & !0xFFFF;
         layout_flags = format!("--stack-first,-z,stack-size={stack},--global-base={}", (lifted.high + 0xFFFFF) & !0xFFFFF);
     }

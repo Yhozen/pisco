@@ -116,7 +116,7 @@ files = ["d3dx9_35.dll"]                  # or CABEXTRACT=<path>), taken out int
 to = 'C:\WINDOWS\system32'
 
 [run]
-exe = 'C:\Program Files\Narbacular Drop\Narbacular Drop.exe'
+exe = 'C:\Program Files\Narbacular Drop\Narbacular Drop.exe'   # a Linux title: a path from the root, "/usr/bin/fastfetch"
 display = "640x480"
 # args = ["-windowed"]
 

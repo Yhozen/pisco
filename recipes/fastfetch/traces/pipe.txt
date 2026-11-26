@@ -1,0 +1,13 @@
+player@pisco
+------------
+OS: PISCO (Linux x86-64 imitated in WebAssembly) x86_64
+Host: WebAssembly
+Kernel: Linux 6.1.0-pisco
+Uptime: 1 min
+CPU: pisco virtual (lifted x86-64) @ 3.00 GHz
+Memory: 64.00 MiB / 4.00 GiB (2%)
+Swap: Unused
+Locale: C.UTF-8
+
+[40m   [41m   [42m   [43m   [44m   [45m   [46m   [47m   [m
+[100m   [101m   [102m   [103m   [104m   [105m   [106m   [107m   [m

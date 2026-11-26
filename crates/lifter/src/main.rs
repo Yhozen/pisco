@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-//! Static recompiler: an x86-64 (PE32+) or 32-bit x86 (PE32) image -> C (one function per guest function),
+//! Static recompiler: an x86-64 (PE32+) or 32-bit x86 (PE32) image, or a statically linked x86-64 ELF -> C (one
+//! function per guest function),
 //! to be compiled to WebAssembly. Also the census: what an image uses that the lifter does not handle yet.
 
 use iced_x86::{CodeSize, ConditionCode, Decoder, DecoderOptions, FlowControl, Formatter, Instruction, InstructionInfoFactory, IntelFormatter, Mnemonic, OpAccess, OpKind, Register};
@@ -32,10 +33,19 @@ struct Image {
     exports: Vec<(String, u32, u64)>,   // name ("" if by ordinal only), ordinal, VA (forwarders left out)
     /// in a merged view of several images: each image's (base, end)
     ranges: Vec<(u64, u64)>,
+    /// an ELF (a Linux title): it has no imports and no exception table
+    elf: bool,
+    /// an ELF: the function starts its symbols and its unwind tables (.eh_frame) name
+    seeds: Vec<u64>,
+    /// an ELF: the C library's setjmp (1), sigsetjmp (2) and longjmp (3), by their symbols
+    jumps: BTreeMap<u64, u8>,
 }
 
 impl Image {
     fn load(data: &[u8]) -> Result<Image, String> {
+        if data.starts_with(b"\x7fELF") {
+            return Image::from_elf(data);
+        }
         match PeFile64::parse(data) {
             Ok(pe) => Image::from_pe(&pe, 64),
             Err(e) => match PeFile32::parse(data) {
@@ -87,7 +97,7 @@ impl Image {
         let size = u64::from(object::read::pe::ImageOptionalHeader::size_of_image(opt));
         let characteristics = pe.nt_headers().file_header().characteristics.get(LE);
         let mut img = Image { bits, base, entry, sections, text, pdata: BTreeMap::new(), unwind: BTreeMap::new(), imports: Vec::new(), relocs, raw, orig_base: base, dirs, stack_reserve,
-            fixed: characteristics & 1 != 0, size, is_dll: characteristics & 0x2000 != 0, exports: Vec::new(), ranges: vec![(base, base + size)] };
+            fixed: characteristics & 1 != 0, size, is_dll: characteristics & 0x2000 != 0, exports: Vec::new(), ranges: vec![(base, base + size)], elf: false, seeds: Vec::new(), jumps: BTreeMap::new() };
         if let Some(Some(table)) = pe.export_table().ok() {
             if let Ok(list) = table.exports() {
                 for e in list {
@@ -128,6 +138,91 @@ impl Image {
                 }
             }
         }
+        Ok(img)
+    }
+    /// A Linux title: a statically linked x86-64 ELF that is not position-independent. Its loadable segments are the
+    /// "sections"; the functions are found from its symbols and its unwind tables, then as in a PE (call targets,
+    /// code addresses in data).
+    fn from_elf(data: &[u8]) -> Result<Image, String> {
+        use object::elf;
+        use object::read::elf::{ElfFile64, FileHeader, ProgramHeader};
+        use object::{ObjectSymbol, SymbolKind};
+        let file = ElfFile64::<object::Endianness>::parse(data).map_err(|e| e.to_string())?;
+        let (h, en) = (file.elf_header(), file.endian());
+        if h.e_machine(en) != elf::EM_X86_64 { return Err("an ELF for another machine than x86-64".into()); }
+        let phdrs = h.program_headers(en, data).map_err(|e| e.to_string())?;
+        if phdrs.iter().any(|p| matches!(p.p_type(en), elf::PT_INTERP | elf::PT_DYNAMIC)) || h.e_type(en) != elf::ET_EXEC {
+            return Err("a dynamically linked or position-independent ELF: a Linux title is linked with -static -no-pie".into());
+        }
+        let (mut sections, mut raw, mut text) = (Vec::new(), Vec::new(), Vec::new());
+        for p in phdrs.iter().filter(|p| p.p_type(en) == elf::PT_LOAD) {
+            let (va, off, filesz, memsz) = (p.p_vaddr(en), p.p_offset(en), p.p_filesz(en), p.p_memsz(en));
+            let bytes = data.get(off as usize..(off + filesz) as usize).ok_or("a segment reaches past the end of the file")?;
+            sections.push((va, bytes.to_vec(), memsz));
+            raw.push(off);
+            if p.p_flags(en) & elf::PF_X != 0 { text.push((va, va + memsz)); }
+        }
+        let base = sections.iter().map(|s| s.0).min().ok_or("no loadable segment")? & !0xFFF;
+        let size = ((sections.iter().map(|s| s.0 + s.2).max().unwrap() + 0xFFF) & !0xFFF) - base;
+        let mut img = Image { bits: 64, base, entry: h.e_entry(en), sections, text, pdata: BTreeMap::new(), unwind: BTreeMap::new(), imports: Vec::new(), relocs: Vec::new(), raw, orig_base: base,
+            dirs: Vec::new(), stack_reserve: 8 << 20, fixed: true, size, is_dll: false, exports: Vec::new(), ranges: vec![(base, base + size)], elf: true, seeds: Vec::new(), jumps: BTreeMap::new() };
+        // symbols: functions, and the labels of hand-written assembly (no type)
+        for sym in file.symbols() {
+            let a = sym.address();
+            if !img.is_code(a) || !matches!(sym.kind(), SymbolKind::Text | SymbolKind::Unknown | SymbolKind::Label) { continue; }
+            img.seeds.push(a);
+            match sym.name().unwrap_or("") {
+                "setjmp" | "_setjmp" | "__setjmp" | "___setjmp" => { img.jumps.insert(a, 1); }
+                "sigsetjmp" | "__sigsetjmp" => { img.jumps.insert(a, 2); }
+                "longjmp" | "_longjmp" | "__longjmp" => { img.jumps.insert(a, 3); }
+                _ => {}
+            }
+        }
+        // .eh_frame: each FDE begins a function (what is left of the functions when the symbols are stripped)
+        if let Some(sec) = file.section_by_name(".eh_frame") {
+            let (va, d) = (sec.address(), sec.data().map_err(|e| e.to_string())?);
+            let mut cies: BTreeMap<usize, u8> = BTreeMap::new(); // a CIE's offset -> how its FDEs encode addresses
+            let mut at = 0usize;
+            while at + 8 <= d.len() {
+                let len = u32::from_le_bytes(d[at..at + 4].try_into().unwrap()) as usize;
+                if len == 0 || len == 0xFFFF_FFFF || at + 4 + len > d.len() { break; }
+                let id = u32::from_le_bytes(d[at + 4..at + 8].try_into().unwrap()) as usize;
+                let mut p = at + 8;
+                if id == 0 {
+                    let mut enc = 0u8; // absolute 8-byte addresses unless the augmentation says otherwise
+                    let version = d[p];
+                    p += 1;
+                    let aug: Vec<u8> = d[p..].iter().copied().take_while(|&b| b != 0).collect();
+                    p += aug.len() + 1;
+                    let ok = (|| {
+                        uleb(d, &mut p)?; uleb(d, &mut p)?; // the alignment factors
+                        if version == 1 { p += 1 } else { uleb(d, &mut p)?; }
+                        if aug.first() == Some(&b'z') {
+                            uleb(d, &mut p)?;
+                            for c in &aug[1..] {
+                                match c {
+                                    b'R' => { enc = *d.get(p)?; p += 1; }
+                                    b'L' => p += 1,
+                                    b'P' => { let e = *d.get(p)?; p += 1; encoded(d, &mut p, e)?; }
+                                    _ => {}
+                                }
+                            }
+                        }
+                        Some(())
+                    })();
+                    if ok.is_some() { cies.insert(at, enc); }
+                } else if let Some(&enc) = (at + 4).checked_sub(id).and_then(|c| cies.get(&c)) {
+                    let field = va + p as u64;
+                    if let Some(v) = encoded(d, &mut p, enc) {
+                        let a = if enc & 0x70 == 0x10 { field.wrapping_add(v) } else { v };
+                        if img.is_code(a) { img.seeds.push(a); }
+                    }
+                }
+                at += 4 + len;
+            }
+        }
+        img.seeds.sort();
+        img.seeds.dedup();
         Ok(img)
     }
     /// Moves the image to `to`: every address it holds and every address we keep.
@@ -757,9 +852,12 @@ fn decode_func(img: &Image, entry: u64, entries: &BTreeSet<u64>) -> (Func, BTree
                 let next = ins.next_ip();
                 match ins.flow_control() {
                     FlowControl::Next => {}
+                    FlowControl::Call if ins.mnemonic() == Mnemonic::Syscall => {} // the runtime's (rt_syscall): it returns here
                     FlowControl::Call => {
                         if !m32 {
                             calls.insert(ins.near_branch_target());
+                            // a Linux title's setjmp: a longjmp resumes after the call, in this frame (rt/linux-x64/jump.c)
+                            if matches!(img.jumps.get(&ins.near_branch_target()), Some(1 | 2)) { f.pads.insert(next); work.push(next); }
                         } else if is_near(&ins) && ins.near_branch_target() != next {
                             calls.insert(ins.near_branch_target()); // (`call $+5` only pushes its return address)
                             if is_setjmp_thunk(img, ins.near_branch_target()) { f.pads.insert(next); work.push(next); }   // (a longjmp resumes there)
@@ -963,6 +1061,9 @@ fn ea(i: &Instruction) -> String {
     if i.segment_prefix() == Register::GS {
         s.push_str("+c->gs_base");
     }
+    if i.segment_prefix() == Register::FS {
+        s.push_str("+c->fs_base"); // a Linux thread's pointer (thread-local storage, the stack protector's canary)
+    }
     format!("({s})")
 }
 fn is_imm(k: OpKind) -> bool {
@@ -1050,7 +1151,7 @@ impl Emit<'_> {
                 format!("M{}({})", if t == "f64" { "F64" } else { "F32" }, ea(i))
             }
         };
-        if let Some(s) = extra(i) {
+        if let Some(s) = extra(i, self.img.elf) {
             return s;
         }
         let simple_v: Option<(&str, &str)> = match m {
@@ -1225,6 +1326,7 @@ impl Emit<'_> {
                 format!("{{u{bits} t={}?{}:{};{}}}", cond(i.condition_code()), rd(i, 1), rd(i, 0), wr(i, 0, "t"))
             }
             M::Int3 | M::Ud2 | M::Hlt => format!("rt_trap(0x{:x}ull);", i.ip()),
+            M::Syscall => "rt_syscall(c);".into(), // a Linux title's way to the system (rt/linux-x64/syscall.c)
             // SSE moves
             M::Movaps | M::Movups | M::Movapd | M::Movupd | M::Movdqa | M::Movdqu => format!("{}={};", xmm(i, 0), xmm(i, 1)),
             M::Movd | M::Movq => {
@@ -1988,6 +2090,7 @@ fn lift() {
     for (_, m) in &mods {
         entries.insert(m.entry);
         entries.extend(m.exports.iter().map(|e| e.2).filter(|&a| img.is_code(a)));
+        entries.extend(m.seeds.iter().copied());
     }
     let mut funcs: BTreeMap<u64, Func> = BTreeMap::new();
     let mut found32: Option<Found> = None;
@@ -2040,7 +2143,13 @@ fn lift() {
     let mut sizes = vec![0usize; parts];
     for (e, f) in &funcs {
         total += f.insns.len();
-        let body = em.func(*e, f, &entries);
+        // a Linux title's sigsetjmp is its setjmp (no signal is ever delivered, so there is no mask to keep) and its
+        // longjmp is the runtime's: it resumes in the lifted function that called setjmp (rt/linux-x64/jump.c)
+        let body = match img.jumps.get(e) {
+            Some(2) if img.jumps.values().any(|k| *k == 1) => format!("void f_{e:x}(Cpu*__restrict c){{f_{:x}(c);}}\n", img.jumps.iter().find(|(_, k)| **k == 1).unwrap().0),
+            Some(3) => format!("void f_{e:x}(Cpu*__restrict c){{rt_longjmp(c);}}\n"),
+            _ => em.func(*e, f, &entries),
+        };
         let k = (0..parts).min_by_key(|&k| sizes[k]).unwrap();
         sizes[k] += body.len();
         bodies[k].push_str(&body);
@@ -2091,14 +2200,18 @@ fn lift() {
         write(&format!("{stem}_{k}.c"), b);
     }
     // what a build needs to know about the title, for the shell: the guest's width and where its images are
-    write(&format!("{stem}.env"), &format!("GUEST_BITS={bits}\nIMAGE_LOW=0x{image_low:x}\nIMAGE_HIGH=0x{image_high:x}\nFIXED_BASE={}\n", u32::from(mods.iter().any(|(_, m)| m.fixed))));
+    write(&format!("{stem}.env"), &format!("GUEST_BITS={bits}\nIMAGE_LOW=0x{image_low:x}\nIMAGE_HIGH=0x{image_high:x}\nFIXED_BASE={}\nOS={}\n", u32::from(mods.iter().any(|(_, m)| m.fixed)), if img.elf { "linux" } else { "windows" }));
 
     if let Some(found) = &found32 {
         census32(&img, &mods, found, &funcs, &em, resolved.len());
         return;
     }
     let missing: u32 = em.unimpl.values().sum();
-    eprintln!("lifted {} functions ({} from the exception tables) in {} images, {} instructions, {} imports ({} between the images)", entries.len(), img.pdata.len(), mods.len(), total, img.imports.len(), resolved.len());
+    if img.elf {
+        eprintln!("lifted {} functions ({} named by the symbols and the unwind tables) in a Linux program, {} instructions", entries.len(), img.seeds.len(), total);
+    } else {
+        eprintln!("lifted {} functions ({} from the exception tables) in {} images, {} instructions, {} imports ({} between the images)", entries.len(), img.pdata.len(), mods.len(), total, img.imports.len(), resolved.len());
+    }
     eprintln!("{} jump tables recovered; {} `jmp reg` left as indirect calls (tail calls through pointers, or switches not recognised)", funcs.values().map(|f| f.tables.len()).sum::<usize>(), em.unresolved);
     eprintln!("{} AVX-or-later instructions become traps (the virtual CPU does not report AVX: code that checks CPUID takes its SSE paths)", em.avx);
     eprintln!("not lifted yet, in the other functions: {missing} instructions ({:.2} %)", 100.0 * f64::from(missing) / total.max(1) as f64);
@@ -2184,17 +2297,17 @@ fn sti(r: Register) -> u32 {
 fn is_st(i: &Instruction, n: u32) -> bool {
     i.op_kind(n) == OpKind::Register && (Register::ST0 as u32..=Register::ST7 as u32).contains(&(i.op_register(n) as u32))
 }
-/// An x87 memory operand as a double.
+/// An x87 memory operand as a register's value (rt/cpu.h fpx: a double, or for a Linux title 64 bits of precision).
 fn fmem(i: &Instruction) -> String {
     use iced_x86::MemorySize as S;
     match i.memory_size() {
-        S::Float32 => format!("(double)MF32({})", ea(i)),
-        S::Float64 => format!("MF64({})", ea(i)),
+        S::Float32 => format!("(fpx)MF32({})", ea(i)),
+        S::Float64 => format!("(fpx)MF64({})", ea(i)),
         S::Float80 => format!("f80_load({})", ea(i)),
-        S::Int16 => format!("(double)(s16)M16({})", ea(i)),
-        S::Int32 => format!("(double)(s32)M32({})", ea(i)),
-        S::Int64 => format!("(double)(s64)M64({})", ea(i)),
-        _ => format!("MF64({})", ea(i)),
+        S::Int16 => format!("(fpx)(s16)M16({})", ea(i)),
+        S::Int32 => format!("(fpx)(s32)M32({})", ea(i)),
+        S::Int64 => format!("(fpx)(s64)M64({})", ea(i)),
+        _ => format!("(fpx)MF64({})", ea(i)),
     }
 }
 
@@ -2214,14 +2327,14 @@ fn farith(i: &Instruction, prec: bool) -> String {
     let e = match base { "add" => format!("{dst}+{src}"), "sub" => format!("{dst}-{src}"), "subr" => format!("{src}-{dst}"), "mul" => format!("{dst}*{src}"), "div" => format!("{dst}/{src}"), _ => format!("{src}/{dst}") };
     let pop = if name.ends_with('p') { "fpop(c);" } else { "" };
     if prec {
-        format!("{{double r=fprec(c,{e});{dst}=r;{pop}}}")
+        format!("{{fpx r=fprec(c,{e});{dst}=r;{pop}}}")
     } else {
-        format!("{{double r={e};{dst}=r;{pop}}}")
+        format!("{{fpx r=FXR(c,{e});{dst}=r;{pop}}}") // (FXR: a Linux title's precision control; nothing otherwise)
     }
 }
 
 /// Instructions beyond the first slice: atomics, string operations, bit operations, x87, CPUID and more SSE.
-fn extra(i: &Instruction) -> Option<String> {
+fn extra(i: &Instruction, elf: bool) -> Option<String> {
     use Mnemonic as M;
     let m = i.mnemonic();
     let mem0 = i.op_count() > 0 && i.op_kind(0) == OpKind::Memory;
@@ -2230,21 +2343,25 @@ fn extra(i: &Instruction) -> Option<String> {
     // ---- string operations (rep: count in RCX; the direction flag is assumed clear) ----
     let string = |kind: &str, size: usize| -> String {
         let (n, u) = (size, size * 8);
+        // the direction flag lives in the function's flags: clear unless this function set it (`std`; the calling
+        // conventions keep it clear across calls), so the compiler drops the backward case everywhere else
+        let d = format!("(f.df?-{n}ull:{n}ull)");
         let one = match kind {
-            "stos" => format!("M{u}(R[RDI])=(u{u})R[0];R[RDI]+={n};"),
-            "movs" => format!("M{u}(R[RDI])=M{u}(R[RSI]);R[RDI]+={n};R[RSI]+={n};"),
-            "lods" => format!("{}R[RSI]+={n};", wreg(reg_of(size), &format!("M{u}(R[RSI])"))),
-            "cmps" => format!("(void)sub{u}(&f,M{u}(R[RSI]),M{u}(R[RDI]),0);R[RDI]+={n};R[RSI]+={n};"),
-            _ => format!("(void)sub{u}(&f,(u{u})R[0],M{u}(R[RDI]),0);R[RDI]+={n};"), // scas
+            "stos" => format!("M{u}(R[RDI])=(u{u})R[0];R[RDI]+={d};"),
+            "movs" => format!("M{u}(R[RDI])=M{u}(R[RSI]);R[RDI]+={d};R[RSI]+={d};"),
+            "lods" => format!("{}R[RSI]+={d};", wreg(reg_of(size), &format!("M{u}(R[RSI])"))),
+            "cmps" => format!("(void)sub{u}(&f,M{u}(R[RSI]),M{u}(R[RDI]),0);R[RDI]+={d};R[RSI]+={d};"),
+            _ => format!("(void)sub{u}(&f,(u{u})R[0],M{u}(R[RDI]),0);R[RDI]+={d};"), // scas
         };
         if i.has_rep_prefix() && (kind == "stos" || kind == "movs" || kind == "lods") {
+            let slow = format!("while(R[RCX]){{{one}R[RCX]--;}}");
             if kind == "stos" && size == 1 {
-                return "__builtin_memset((void*)GP(R[RDI]),(u8)R[0],R[RCX]);R[RDI]+=R[RCX];R[RCX]=0;".into();
+                return format!("if(!f.df){{__builtin_memset((void*)GP(R[RDI]),(u8)R[0],R[RCX]);R[RDI]+=R[RCX];R[RCX]=0;}}else{{{slow}}}");
             }
             if kind == "movs" && size == 1 {
-                return "{u64 n=R[RCX];if(R[RDI]-R[RSI]>=n){__builtin_memcpy((void*)GP(R[RDI]),(void*)GP(R[RSI]),n);R[RDI]+=n;R[RSI]+=n;R[RCX]=0;}else{while(R[RCX]){M8(R[RDI])=M8(R[RSI]);R[RDI]++;R[RSI]++;R[RCX]--;}}}".into();
+                return format!("{{u64 n=R[RCX];if(!f.df&&R[RDI]-R[RSI]>=n){{__builtin_memcpy((void*)GP(R[RDI]),(void*)GP(R[RSI]),n);R[RDI]+=n;R[RSI]+=n;R[RCX]=0;}}else{{{slow}}}}}");
             }
-            return format!("while(R[RCX]){{{one}R[RCX]--;}}");
+            return slow;
         }
         if i.has_repe_prefix() {
             return format!("while(R[RCX]){{{one}R[RCX]--;if(!f.zf)break;}}");
@@ -2262,7 +2379,8 @@ fn extra(i: &Instruction) -> Option<String> {
         M::Scasb => string("scas", 1), M::Scasw => string("scas", 2), M::Scasd => string("scas", 4), M::Scasq => string("scas", 8),
         M::Movsd if i.op_kind(0) == OpKind::MemoryESRDI => string("movs", 4),
         M::Cmpsd if i.op_kind(0) == OpKind::MemorySegRSI => string("cmps", 4),
-        M::Cld => String::new(),
+        M::Cld => "f.df=0;".into(),
+        M::Std => "f.df=1;".into(),
         // ---- atomics ----
         M::Xchg if mem0 || i.op_kind(1) == OpKind::Memory => {
             let (mn, rn) = if mem0 { (0, 1) } else { (1, 0) };
@@ -2360,15 +2478,15 @@ fn extra(i: &Instruction) -> Option<String> {
         M::Stmxcsr => format!("M32({})=c->mxcsr;", ea(i)),
         M::Ldmxcsr => format!("c->mxcsr=M32({});", ea(i)),
         // ---- x87 ----
-        M::Fld if is_st(i, 0) => format!("{{double v=ST({});fpush(c,v);}}", sti(i.op_register(0))),
+        M::Fld if is_st(i, 0) => format!("{{fpx v=ST({});fpush(c,v);}}", sti(i.op_register(0))),
         M::Fld | M::Fild => format!("fpush(c,{});", fmem(i)),
         M::Fld1 => "fpush(c,1.0);".into(),
         M::Fldz => "fpush(c,0.0);".into(),
-        M::Fldl2e => "fpush(c,1.4426950408889634);".into(),
-        M::Fldln2 => "fpush(c,0.6931471805599453);".into(),
-        M::Fldl2t => "fpush(c,3.321928094887362);".into(),
-        M::Fldlg2 => "fpush(c,0.3010299956639812);".into(),
-        M::Fldpi => "fpush(c,3.141592653589793);".into(),
+        M::Fldl2e => "fpush(c,FXC(1.44269504088896340735992468100189214));".into(),
+        M::Fldln2 => "fpush(c,FXC(0.693147180559945309417232121458176568));".into(),
+        M::Fldl2t => "fpush(c,FXC(3.32192809488736234787031942948939018));".into(),
+        M::Fldlg2 => "fpush(c,FXC(0.301029995663981195213738894724493027));".into(),
+        M::Fldpi => "fpush(c,FXC(3.14159265358979323846264338327950288));".into(),
         M::Fst | M::Fstp => {
             use iced_x86::MemorySize as S;
             let store = if is_st(i, 0) {
@@ -2377,38 +2495,39 @@ fn extra(i: &Instruction) -> Option<String> {
                 match i.memory_size() {
                     S::Float32 => format!("MF32({})=(float)ST(0);", ea(i)),
                     S::Float80 => format!("f80_store({},ST(0));", ea(i)),
-                    _ => format!("MF64({})=ST(0);", ea(i)),
+                    _ => format!("MF64({})=(double)ST(0);", ea(i)),
                 }
             };
             format!("{store}{}", if m == M::Fstp { "fpop(c);" } else { "" })
         }
         M::Fist | M::Fistp | M::Fisttp => {
             let b = i.memory_size().size() * 8;
-            let v = if m == M::Fisttp { format!("(s64)__builtin_trunc(ST(0))") } else { format!("fist(c,ST(0),{b})") };
+            let v = if m == M::Fisttp { format!("(s64)FX_TRUNC(ST(0))") } else { format!("fist(c,ST(0),{b})") };
             format!("M{b}({})=(u{b}){v};{}", ea(i), if m == M::Fist { "" } else { "fpop(c);" })
         }
-        M::Fxch => format!("{{double t=ST(0);ST(0)=ST({n});ST({n})=t;}}", n = if i.op_count() > 0 { sti(i.op_register(i.op_count() - 1)) } else { 1 }), // `fxch st(i)` is (st0, sti)
+        M::Fxch => format!("{{fpx t=ST(0);ST(0)=ST({n});ST({n})=t;}}", n = if i.op_count() > 0 { sti(i.op_register(i.op_count() - 1)) } else { 1 }), // `fxch st(i)` is (st0, sti)
         M::Fadd | M::Faddp | M::Fiadd | M::Fsub | M::Fsubp | M::Fisub | M::Fsubr | M::Fsubrp | M::Fisubr | M::Fmul | M::Fmulp | M::Fimul | M::Fdiv | M::Fdivp | M::Fidiv | M::Fdivr | M::Fdivrp | M::Fidivr => farith(i, false),
         M::Fcom | M::Fcomp | M::Fcompp | M::Fucom | M::Fucomp | M::Fucompp | M::Ficom | M::Ficomp | M::Ftst => {
-            let src = if m == M::Ftst { "0.0".to_string() } else if i.op_count() > 0 && i.op_kind(0) == OpKind::Memory { fmem(i) } else if i.op_count() > 0 && is_st(i, i.op_count() - 1) { format!("ST({})", sti(i.op_register(i.op_count() - 1))) } else { "ST(1)".into() };
+            let src = if m == M::Ftst { "(fpx)0.0".to_string() } else if i.op_count() > 0 && i.op_kind(0) == OpKind::Memory { fmem(i) } else if i.op_count() > 0 && is_st(i, i.op_count() - 1) { format!("ST({})", sti(i.op_register(i.op_count() - 1))) } else { "ST(1)".into() };
             let pops = match m { M::Fcompp | M::Fucompp => "fpop(c);fpop(c);", M::Fcomp | M::Fucomp | M::Ficomp => "fpop(c);", _ => "" };
             format!("fcom_sw(c,ST(0),{src});{pops}")
         }
-        M::Fcomi | M::Fcomip | M::Fucomi | M::Fucomip => format!("fcmp(&f,ST(0),ST({}));{}", sti(i.op_register(i.op_count() - 1)), if matches!(m, M::Fcomip | M::Fucomip) { "fpop(c);" } else { "" }),
+        M::Fcomi | M::Fcomip | M::Fucomi | M::Fucomip => format!("fcmpx(&f,ST(0),ST({}));{}", sti(i.op_register(i.op_count() - 1)), if matches!(m, M::Fcomip | M::Fucomip) { "fpop(c);" } else { "" }),
         M::Fnstsw | M::Fstsw => if i.op_kind(0) == OpKind::Register { "R[0]=(R[0]&~0xFFFFull)|fstsw(c);".into() } else { format!("M16({})=fstsw(c);", ea(i)) },
         M::Fnstcw | M::Fstcw => format!("M16({})=c->fcw;", ea(i)),
         M::Fldcw => format!("c->fcw=M16({});", ea(i)),
         M::Fninit | M::Finit => "c->ftop=0;c->fcw=0x37F;c->fsw=0;".into(),
         M::Fnclex | M::Fclex => "c->fsw&=0x7F00;".into(),
         M::Fchs => "ST(0)=-ST(0);".into(),
-        M::Fabs => "ST(0)=__builtin_fabs(ST(0));".into(),
-        M::Fsqrt => "ST(0)=__builtin_sqrt(ST(0));".into(),
+        M::Fabs => "ST(0)=FX_ABS(ST(0));".into(),
+        M::Fsqrt => "ST(0)=FXR(c,FX_SQRT(ST(0)));".into(),
         M::Frndint => "ST(0)=fround(c,ST(0));".into(),
-        M::Fscale => "ST(0)=ldexp(ST(0),(int)__builtin_trunc(ST(1)));".into(),
+        M::Fscale => "ST(0)=FXR(c,FX_SCALB(ST(0),(int)FX_TRUNC(ST(1))));".into(),
         M::F2xm1 => "ST(0)=expm1(ST(0)*0.6931471805599453);".into(),
-        M::Fyl2x => "{double r=ST(1)*log2(ST(0));fpop(c);ST(0)=r;}".into(),
-        M::Fyl2xp1 => "{double r=ST(1)*log1p(ST(0))*1.4426950408889634;fpop(c);ST(0)=r;}".into(),
+        M::Fyl2x => "{double r=(double)ST(1)*log2((double)ST(0));fpop(c);ST(0)=r;}".into(),
+        M::Fyl2xp1 => "{double r=(double)ST(1)*log1p((double)ST(0))*1.4426950408889634;fpop(c);ST(0)=r;}".into(),
         M::Fxam => "fxam(c);".into(),
+        M::Fprem | M::Fprem1 if elf => format!("fprem(c,{});", u8::from(m == M::Fprem1)), // (exact, as a C library's fmodl needs)
         M::Fprem | M::Fprem1 => "{double q=ST(0)/ST(1);ST(0)=ST(0)-ST(1)*(m_is_prem1?__builtin_rint(q):__builtin_trunc(q));c->fsw&=~0x400;}".replace("m_is_prem1", if m == M::Fprem1 { "1" } else { "0" }),
         M::Ffree => String::new(),
         // ---- more SSE ----
@@ -2473,6 +2592,7 @@ fn extra(i: &Instruction) -> Option<String> {
             wreg(i.op_register(0), &format!("cvt_f2i{b}({v})"))
         }
         M::Cvtdq2ps => format!("{{V s={};for(int k=0;k<4;k++)X[{d}].ps[k]=(float)s.sd[k];}}", xsrc(i), d = xd()),
+        M::Cvttpd2dq | M::Cvtpd2dq => format!("{{V s={};X[{d}].sd[0]=cvt_f2i32({r}s.pd[0]{e});X[{d}].sd[1]=cvt_f2i32({r}s.pd[1]{e});X[{d}].q[1]=0;}}", xsrc(i), d = xd(), r = if m == M::Cvtpd2dq { "__builtin_rint(" } else { "" }, e = if m == M::Cvtpd2dq { ")" } else { "" }),
         M::Cvttps2dq | M::Cvtps2dq => format!("{{V s={};for(int k=0;k<4;k++)X[{d}].sd[k]=cvt_f2i32({}s.ps[k]{});}}", xsrc(i), if m == M::Cvtps2dq { "__builtin_rintf(" } else { "" }, if m == M::Cvtps2dq { ")" } else { "" }, d = xd()),
         M::Cvtdq2pd => format!("{{V s={};X[{d}].pd[0]=(double)s.sd[0];X[{d}].pd[1]=(double)s.sd[1];}}", if i.op_kind(1) == OpKind::Memory { format!("vlow64(M64({}))", ea(i)) } else { format!("X[{}]", i.op_register(1).number()) }, d = xd()),
         M::Cvtps2pd => format!("{{V s={};X[{d}].pd[0]=(double)s.ps[0];X[{d}].pd[1]=(double)s.ps[1];}}", if i.op_kind(1) == OpKind::Memory { format!("vlow64(M64({}))", ea(i)) } else { format!("X[{}]", i.op_register(1).number()) }, d = xd()),

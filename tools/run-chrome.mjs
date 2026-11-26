@@ -11,7 +11,8 @@
 //   recorded until then); KEYS=<json> key presses for the page, [[ms, code, keyCode, down, label?], ...] (a label
 //   marks the recording); RELOAD_AT=<s> load the page again then (a new title process, the same browser profile:
 //   what the title stored survives), with KEYS2 for the new page; CHROME_PROFILE=<folder> keep the browser's profile
-//   there (OPFS: what titles stored) and use it again next time, with PORT=<n> for the same origin (OPFS is per origin)
+//   there (OPFS: what titles stored) and use it again next time, with PORT=<n> for the same origin (OPFS is per origin);
+//   SCREENSHOT=<out.png> the page as it is when the title ends (a title that prints: its text, in the page's colours)
 import { spawn } from 'node:child_process'; import path from 'node:path'; import fs from 'node:fs'; import os from 'node:os';
 import { sessionSteps } from '../web/session.mjs';
 import { isImageDir } from '../web/image.mjs';
@@ -31,7 +32,7 @@ const keepProfile = !!process.env.CHROME_PROFILE;
 const profile = keepProfile ? path.resolve(process.env.CHROME_PROFILE) : fs.mkdtempSync(path.join(os.tmpdir(), 'pisco-chrome-'));
 fs.mkdirSync(profile, { recursive: true });
 const gpuFlags = ['--enable-unsafe-webgpu', '--enable-features=Vulkan', '--use-webgpu-adapter=swiftshader', '--enable-unsafe-swiftshader', '--use-angle=swiftshader', '--use-gl=angle', '--autoplay-policy=no-user-gesture-required'];
-const chrome = spawn('google-chrome', ['--headless=new', `--remote-debugging-port=${dbg}`, `--user-data-dir=${profile}`, '--no-first-run', '--no-sandbox', ...gpuFlags, 'about:blank'], { stdio: 'ignore' });
+const chrome = spawn('google-chrome', ['--headless=new', `--remote-debugging-port=${dbg}`, `--user-data-dir=${profile}`, '--no-first-run', '--no-sandbox', '--window-size=1100,720', ...gpuFlags, 'about:blank'], { stdio: 'ignore' });
 let ending = false;
 const done = async (code) => {
   if (ending) return; ending = true;
@@ -47,14 +48,16 @@ let targets;
 for (let i = 0; i < 100 && !targets; i++) { await new Promise((r) => setTimeout(r, 200)); try { targets = await (await fetch(`http://127.0.0.1:${dbg}/json`)).json(); } catch {} }
 const page = targets.find((t) => t.type === 'page');
 const ws = new WebSocket(page.webSocketDebuggerUrl);
-let id = 0, url = ''; const send = (method, params = {}) => ws.send(JSON.stringify({ id: ++id, method, params }));
+let id = 0, url = '', shotId = 0, exitCode = 0; const send = (method, params = {}) => ws.send(JSON.stringify({ id: ++id, method, params }));
 ws.onmessage = (e) => {
   const m = JSON.parse(e.data);
   if (m.method === 'Runtime.consoleAPICalled') {
     const s = m.params.args.map((a) => a.value ?? a.description ?? '').join(' ');
     const x = s.match(/^pisco exit (-?\d+)$/);
-    if (x) done(+x[1]); else console.log(s);
+    if (x && process.env.SCREENSHOT) { shotId = ++id; exitCode = +x[1]; ws.send(JSON.stringify({ id: shotId, method: 'Page.captureScreenshot', params: { format: 'png', captureBeyondViewport: true } })); }
+    else if (x) done(+x[1]); else console.log(s);
   }
+  if (shotId && m.id === shotId) { if (m.result?.data) fs.writeFileSync(process.env.SCREENSHOT, Buffer.from(m.result.data, 'base64')); done(exitCode); }
   if (m.method === 'Runtime.exceptionThrown') console.error('page exception:', m.params.exceptionDetails.exception?.description || m.params.exceptionDetails.text);
 };
 ws.onopen = () => {

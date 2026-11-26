@@ -33,15 +33,20 @@ export function checkManifest(manifest) {
 export const blobPath = (digest) => `blobs/sha256/${digest.replace(/^sha256:/, '')}`;
 
 // What a host needs to start the title: the exe and its folder on the drive ('C:\Program Files\X\x.exe' ->
-// 'Program Files/X/x.exe', 'Program Files/X'), its arguments, and the runtime's settings the image makes:
-// SW_REGISTRY, the registry values rt/windows-x86/advapi32.c reads ("<key>\t<name>\tdword|sz\t<value>" a line)
+// 'Program Files/X/x.exe', 'Program Files/X'; a Linux title's '/usr/bin/x' -> 'usr/bin/x', 'usr/bin'), its arguments,
+// and the runtime's settings the image makes: SW_REGISTRY, the registry values rt/windows-x86/advapi32.c reads
+// ("<key>\t<name>\tdword|sz\t<value>" a line); for a Linux title SW_EXE, its path from the root, which tells the
+// runtime that its root is the image's drive (rt/linux-x64/fs.c)
 export function settings(config) {
-  const exe = config.run.exe.replace(/^[cC]:\\/, '').split('\\').filter(Boolean).join('/');
+  const linux = config.os === 'linux';
+  const exe = linux ? config.run.exe.split('/').filter(Boolean).join('/') : config.run.exe.replace(/^[cC]:\\/, '').split('\\').filter(Boolean).join('/');
   const folder = exe.includes('/') ? exe.slice(0, exe.lastIndexOf('/')) : '';
   const env = {};
   const reg = (config.registry || []).map((v) => `${v.key}\t${v.name}\t${v.type}\t${v.value}`);
   if (reg.length) env.SW_REGISTRY = reg.join('\n');
-  return { title: config.title, exe, folder, exeName: exe.slice(folder.length ? folder.length + 1 : 0), args: config.run.args || [], display: config.run.display || null, env };
+  if (linux) env.SW_EXE = `/${exe}`;
+  // (text: a Linux title has no screen of its own, what it shows is what it prints)
+  return { title: config.title, text: linux, exe, folder, exeName: exe.slice(folder.length ? folder.length + 1 : 0), args: config.run.args || [], display: config.run.display || null, env };
 }
 // A name the runtime asks its host for (rt/vfs.c): "c:/<path>" is on the drive, anything else is in the title's folder
 export function driveName(name, folder) {

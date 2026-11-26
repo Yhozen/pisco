@@ -1,5 +1,5 @@
 {
- "updated": "2026-11-25",
+ "updated": "2026-11-26",
  "titles": {
   "Doom (our console title)": [
    "api-ms-win-crt-convert-l1-1-0.dll!atof",
@@ -1774,6 +1774,38 @@
    "ws2_32.dll!#52",
    "ws2_32.dll!#57",
    "ws2_32.dll!#9"
+  ],
+  "fastfetch 2.71.0": [
+   "syscall!access",
+   "syscall!arch_prctl",
+   "syscall!brk",
+   "syscall!clock_gettime",
+   "syscall!close",
+   "syscall!fcntl",
+   "syscall!fstat",
+   "syscall!getcwd",
+   "syscall!getdents64",
+   "syscall!getpid",
+   "syscall!getppid",
+   "syscall!getuid",
+   "syscall!ioctl",
+   "syscall!mmap",
+   "syscall!mprotect",
+   "syscall!munmap",
+   "syscall!open",
+   "syscall!openat",
+   "syscall!read",
+   "syscall!readlink",
+   "syscall!rt_sigaction",
+   "syscall!rt_sigprocmask",
+   "syscall!sched_getaffinity",
+   "syscall!set_tid_address",
+   "syscall!socket",
+   "syscall!stat",
+   "syscall!statfs",
+   "syscall!statx",
+   "syscall!uname",
+   "syscall!writev"
   ]
  },
  "xcl": [

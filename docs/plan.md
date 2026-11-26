@@ -1,6 +1,7 @@
-# The plan (2026-11-25)
+# The plan (2026-11-26)
 
-PISCO (PISCO Imitates Systems, Compiles Originals) runs x86 titles in WebAssembly. It is four kinds of parts:
+PISCO (PISCO Imitates Systems, Compiles Originals) runs x86 titles in WebAssembly. It is four kinds of parts (a
+fourth runtime, Linux x64, with fastfetch as its first title, does not fit the drawing):
 
 ```
 PISCO     recompiler (crates/lifter)  ·  packages (pisco: recipe FROM a base -> title image)  ·  hosts (browser, Node)
@@ -9,12 +10,14 @@ packages  Doom as a console title, XCL's   Stockfish, SimpleTriangleDesktop,    
           test title; goal: Minecraft      SimplePBR
 ```
 
-- **The recompiler** turns a title's x86 or x86-64 code into C, once per build (`crates/lifter`, both widths).
+- **The recompiler** turns a title's x86 or x86-64 code into C, once per build (`crates/lifter`, both widths; a
+  Windows PE or a static Linux ELF).
 - **Packages**: `pisco build` reads a recipe (`recipes/<title>/title.toml`) and the user's own copy of the title, and
   writes a title image (an OCI image layout, [images.md](images.md)) `FROM` one base.
 - **Runtimes** are peers. Each imitates one system and is one base (`bases/<runtime>/1/base.toml`), which lists its
-  files: the core (`rt/*.c`) every title links, plus its own folder (and `rt/gdk/`, which the two 64-bit runtimes
-  share). None of them is "the" runtime: what started as the goal, Minecraft on the Xbox Series runtime, is now that
+  files: the core (`rt/*.c`) every Windows and console title links, plus its own folder (and `rt/gdk/`, which the two
+  64-bit Windows-family runtimes share). The Linux runtime links only the core's files that imitate no system
+  (`rt/core.c`, `rt/clock.c`, `rt/builtins.c`) and its own folder. None of them is "the" runtime: what started as the goal, Minecraft on the Xbox Series runtime, is now that
   runtime's goal, one among several.
 - **Hosts** run an image: the browser page (`web/browser/`, WebGPU) and Node (`web/run-node.mjs`, a null GPU).
 
@@ -25,6 +28,7 @@ packages  Doom as a console title, XCL's   Stockfish, SimpleTriangleDesktop,    
 | Xbox Series | `base/xbox-series:1` | `rt/gdk/`, `rt/xbox-series/` | Doom (D3D12.X on WebGPU, XAudio2, GameInput, saves), XCL's console test title 50/50 | the rungs in [status.md](status.md#xbox-series) | Minecraft (Bedrock), the Xbox Series build |
 | Windows x64 | `base/windows-x64:1` | `rt/gdk/`, `rt/windows-x64/` | Stockfish 19, Microsoft's SimpleTriangleDesktop and SimplePBR | more desktop D3D12 titles | desktop D3D12 titles |
 | Windows x86 | `base/windows-x86:1` | `rt/windows-x86/` | Narbacular Drop, playable; Tag: The Power of Paint into its second level (Direct3D 9 shaders as WGSL, D3DX's effects, FMOD Ex) | Tag played by hand on a real GPU (T6's check), then its later levels | 32-bit Direct3D 9 games of the 2000s |
+| Linux x64 | `base/linux-x64:1` | `rt/linux-x64/` | fastfetch 2.71.0, in Node and in the page ([fastfetch.md](fastfetch.md)) | threads and a second process (`clone`, `fork`, pipes), which a shell and most larger programs need | statically linked command-line programs |
 
 A new runtime is a new folder and a new base; a new title of an existing runtime is a recipe.
 
@@ -37,7 +41,8 @@ A new runtime is a new folder and a new base; a new title of an existing runtime
    recipe options (`[quirks]`, `[cpu]`, `[registry]`, `[dll]`), not changes everyone gets.
 3. **Checked by `tests/run.sh`.** Every check has a step there; a step whose inputs (a game, an SDK) are not on the
    machine says so in one line and is skipped. Windows titles are compared with Wine running the same files (the
-   oracle, `tools/oracle-wine/`); console behaviour follows XCL's findings.
+   oracle, `tools/oracle-wine/`); console behaviour follows XCL's findings; a Linux title is compared with itself,
+   run on the Linux that builds it, for everything that does not depend on the machine.
 4. **Nothing of a title in the repository.** No game files, installers, Microsoft DLLs, lifted output, shader dumps
    or screenshots: `out/` is ignored, and a recipe names a file by its sha256.
 5. **Licences checked.** Our own code is GPL-2.0-or-later with SPDX headers; `reuse lint` passes; code from others
@@ -56,3 +61,4 @@ A new runtime is a new folder and a new base; a new title of an existing runtime
 | A5 | CI for the tests that need no game files, and `reuse lint` | done |
 | T0 to T5 | Tag: The Power of Paint on the Windows x86 runtime: census and oracle, lift and start, the main loop, the shader translator, pixels, sound and input | done ([tag.md](tag.md#progress)) |
 | T6 | Tag playable: the docs and how to play it are done; playing it by hand on a real GPU is still to do | under way |
+| L0 to L4 | a fourth runtime, Linux x64: the core's neutral parts apart, the lifter reads an ELF, a C library starts and finds a machine, fastfetch in Node and in the page | done ([fastfetch.md](fastfetch.md#progress)) |

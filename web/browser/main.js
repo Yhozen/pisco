@@ -23,7 +23,45 @@ const workers = [];
 let line = '';
 const POOL = 32; // guest threads come from workers the page starts ahead of time (see worker.js)
 let ctl, boot, memory, device, dir, drive = null, folder = null;
-const log = (s) => { console.log(s); out.textContent += s + '\n'; };
+// ---- the title's text. Of a terminal the page knows the colours (the SGR sequences: 16, 256 and 24-bit colours,
+// bold, dim, italic, underline, reverse); any other control sequence is left out. ----
+const ANSI = ['#000', '#c33', '#3a3', '#c90', '#48c', '#a4a', '#3aa', '#ccc', '#666', '#f55', '#5d5', '#fd5', '#6af', '#f6f', '#5ff', '#fff'];
+const colour256 = (n) => n < 16 ? ANSI[n] : n < 232 ? `rgb(${[Math.floor((n - 16) / 36), Math.floor((n - 16) / 6) % 6, (n - 16) % 6].map((v) => v ? 55 + 40 * v : 0)})` : `rgb(${Array(3).fill(8 + 10 * (n - 232))})`;
+let pen = {}, held = '';   // the style in force, and the start of a sequence whose end has not come yet
+function sgr(codes) {
+  for (let i = 0; i < codes.length; i++) {
+    const c = codes[i];
+    const far = (key) => { if (codes[i + 1] === 5) { pen[key] = colour256(codes[i + 2] | 0); i += 2; } else if (codes[i + 1] === 2) { pen[key] = `rgb(${codes.slice(i + 2, i + 5).map((v) => v | 0)})`; i += 4; } };
+    if (c === 0) pen = {}; else if (c === 1) pen.bold = true; else if (c === 2) pen.dim = true; else if (c === 3) pen.italic = true; else if (c === 4) pen.underline = true;
+    else if (c === 7) pen.reverse = true; else if (c === 22) { delete pen.bold; delete pen.dim; } else if (c === 23) delete pen.italic; else if (c === 24) delete pen.underline; else if (c === 27) delete pen.reverse;
+    else if (c >= 30 && c <= 37) pen.fg = ANSI[c - 30]; else if (c === 38) far('fg'); else if (c === 39) delete pen.fg;
+    else if (c >= 40 && c <= 47) pen.bg = ANSI[c - 40]; else if (c === 48) far('bg'); else if (c === 49) delete pen.bg;
+    else if (c >= 90 && c <= 97) pen.fg = ANSI[c - 82]; else if (c >= 100 && c <= 107) pen.bg = ANSI[c - 92];
+  }
+}
+function put(text) {
+  if (!text) return;
+  if (!Object.keys(pen).length) { out.append(text); return; }
+  const span = document.createElement('span'), fg = pen.reverse ? pen.bg || '#111' : pen.fg, bg = pen.reverse ? pen.fg || '#ddd' : pen.bg;
+  if (fg) span.style.color = fg; if (bg) span.style.background = bg;
+  if (pen.bold) span.style.fontWeight = 'bold'; if (pen.dim) span.style.opacity = '0.6'; if (pen.italic) span.style.fontStyle = 'italic'; if (pen.underline) span.style.textDecoration = 'underline';
+  span.textContent = text; out.append(span);
+}
+function print(s) {
+  s = held + s; held = '';
+  for (let at = 0; at < s.length;) {
+    const esc = s.indexOf('\x1b', at);
+    if (esc < 0) { put(s.slice(at)); break; }
+    put(s.slice(at, esc));
+    const m = /^\x1b(?:\[([0-9;:?<=>]*)([ -\/]*[@-~])|\][^\x07\x1b]*(?:\x07|\x1b\\)|[@-Z\\^_])/.exec(s.slice(esc, esc + 256));
+    if (!m) { if (s.length - esc < 256) { held = s.slice(esc); break; } at = esc + 1; continue; }   // (not complete yet: kept for the next write)
+    if (m[2] === 'm') sgr(m[1] === '' ? [0] : m[1].split(/[;:]/).map(Number));
+    at = esc + m[0].length;
+  }
+  while (out.childNodes.length > 20000) out.firstChild.remove();
+  if (document.body.classList.contains('text')) scrollTo(0, document.body.scrollHeight);
+}
+const log = (s) => { console.log(s); print(s + '\n'); };
 const startPooled = (slot) => { const w = new Worker('worker.js', { type: 'module' }); workers.push(w); w.postMessage({ ...boot, pool: { ctl, slot } }); };
 const capture = q.get('capture') === '1', hashFrames = q.get('hash') === '1', clockStep = +(q.get('SW_CLOCK') || 0), probe = q.get('probe');
 const post = (path, body, headers = {}) => fetch(path, { method: 'POST', body, headers }).catch(() => {});
@@ -168,8 +206,7 @@ function persist(m) {
 bus.onmessage = (e) => {
   const m = e.data;
   if (m.out !== undefined) {
-    out.textContent += m.out; line += m.out;
-    if (out.textContent.length > 200000) out.textContent = out.textContent.slice(-100000);
+    print(m.out); line += m.out;
     const parts = line.split('\n'); line = parts.pop(); for (const l of parts) console.log(l);
   }
   if (m.refill !== undefined) startPooled(m.refill);
@@ -218,6 +255,12 @@ else {
   ctl = new Int32Array(new SharedArrayBuffer(16 * POOL));
   const env = { ...(image ? image.settings.env : {}) }; for (const [k, v] of q) if (k.startsWith('SW_')) env[k] = k === 'SW_REGISTRY' && env[k] ? `${env[k]}\n${v}` : v;
   if (q.get('trace')) env.SW_TRACE = q.get('trace');
+  // a Linux title: the page is its terminal, as wide as the text area (&SW_TTY=0: its output is a pipe instead)
+  if (image?.settings.text) {
+    document.body.classList.add('text');
+    const probe1 = document.createElement('span'); probe1.textContent = 'M'.repeat(50); out.append(probe1); const w = probe1.getBoundingClientRect().width / 50; probe1.remove();
+    if (env.SW_TTY === undefined) env.SW_TTY = `${Math.max(40, Math.min(240, Math.floor(out.clientWidth / (w || 8.4))))}x40`;
+  }
   if (q.get('pace') === 'off') env.SW_PACE = 'off';
   let store = [];
   try { store = await openStore(image ? `image:${image.settings.title}` : new URL(q.get('exe'), location.href).pathname); if (store.length) console.log(`storage: ${store.length} file(s) from earlier sessions`); } catch (e) { log(`storage: ${e.message} (saves will not survive a reload)`); }

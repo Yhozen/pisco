@@ -14,12 +14,13 @@ HOST("fault") __attribute__((noreturn)) void host_fault(u32 kind, u64 addr);
 HOST("now_us") double host_now_us(void);
 // The title's clock, in microseconds since 1970: the host's, or with SW_CLOCK=<microseconds a frame> a virtual one
 // that starts at a fixed date and moves by that step when a frame is presented and by the time asked for on Sleep
-// (kernel32.c). The Win32 time functions of a 32-bit title read it; rt_uptime_us is the same clock since "boot".
+// (clock.c). The Win32 time functions of a 32-bit title read it; rt_uptime_us is the same clock since "boot".
 u64 rt_now_us(void);
 u64 rt_uptime_us(void);
 int rt_clock_virtual(void);
 void rt_clock_advance(u64 us);       // nothing unless the clock is virtual
 void rt_clock_advance_frame(void);   // a frame was presented
+void rt_clock_polled(void);          // the title read the clock: a virtual one moves on after many reads in a row
 HOST("read_file") u32 host_read_file(const char *name, u32 name_len, u64 offset, u64 len, u64 dst); // from the title's folder
 HOST("log") void host_log(const char *text, u32 len);
 HOST("gpu_open") void host_gpu_open(u32 ring);            // the GPU back end starts reading this ring (rt/d3d12_cmd.h)
@@ -85,6 +86,7 @@ void rt_log(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 __attribute__((noreturn)) void rt_fatal(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 extern int rt_trace;
 extern void (*rt_exit_hook)(void);   // called once when the process ends, before the host is told (statistics)
+void rt_exit_process(u32 code);       // core.c: the hook, then the host ends the process
 
 // ---- memory ----
 u64 rt_valloc(u64 size, u64 align); // zeroed guest memory, never freed (VirtualAlloc, stacks, TEBs)

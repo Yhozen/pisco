@@ -1,0 +1,17 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# fastfetch 2.71.0 (https://github.com/fastfetch-cli/fastfetch, MIT): the first Linux title (docs/fastfetch.md).
+# tools/build-fastfetch.sh builds it from its source into out/fastfetch: one x86-64 program, statically linked with
+# musl, with its symbols. Nothing of it is in the repository.
+name = "fastfetch"
+from = "base/linux-x64:1"
+
+[source]
+# built on this machine from a checked source: its bytes depend on the compiler's, so no sha256 here
+file = "../../out/fastfetch/fastfetch"
+extract = "file"
+
+[run]
+exe = "/usr/bin/fastfetch"
+
+[lifter]
+split = 16
