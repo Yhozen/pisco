@@ -6,7 +6,7 @@ titles, its own next steps and its own goal:
 | Runtime | Runs | Next | Goal |
 |---|---|---|---|
 | [Xbox Series](#xbox-series) | Doom as a console title, XCL's console test title (50/50) | D3D12.X shaders from RDNA2 code | Minecraft, the Xbox Series build |
-| [Windows x64](#windows-x64) | Stockfish 19, SimpleTriangleDesktop, SimplePBR; Desire played in Node | Desire: pixels in Chrome, then by hand | desktop D3D12 titles |
+| [Windows x64](#windows-x64) | Stockfish 19, SimpleTriangleDesktop, SimplePBR; Desire, logo to ending, in Node and headless Chrome | Desire played by hand on a real GPU | desktop D3D12 titles |
 | [Windows x86](#windows-x86) | Narbacular Drop, playable; Tag: The Power of Paint into its second level | Tag played by hand on a real GPU, then its later levels | 32-bit Direct3D 9 games of the 2000s |
 | [Linux x64](#linux-x64) | fastfetch 2.71.0; neofetch 7.1.0 (bash, busybox) | threads, signals, writes | statically linked command-line programs |
 
@@ -70,7 +70,8 @@ gamepad, from the page), saves kept in OPFS in the browser and in a folder in No
   and, from Wine's seeds, Wine's maze (D1: a window with a message queue, WIC on stb_image, D3D12 Memory
   Allocator's methods, shaders compiled by `pisco build`); its C++ exceptions, MSVC's FH4, are caught (D2).
   Played in Node on the virtual clock with the keyboard (D3): logo, GAME OVER, the goal, with Wine's titles and
-  Direct3D 12 methods. Next: its pixels in Chrome.
+  Direct3D 12 methods; in headless Chrome its still screens are within 0.3 of 255 of Wine's (D4). Next: played
+  by hand in a desktop browser on a real GPU.
 
 ## Windows x86
 

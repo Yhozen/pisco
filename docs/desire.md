@@ -140,6 +140,23 @@ implemented**. In Node, strict, it stops at the first of them (`_dclass`).
   without their figures; the virtual clock and the keyboard for 64-bit titles.
 - **D4**: pixels against Wine on lavapipe: the logo and the maze before input are still screens.
 
+## Play it
+
+```sh
+target/release/pisco build recipes/desire --source ~/Downloads/DESI-Re-v0.1-Windows-x64.zip \
+    --with REDIST=<a folder with msvcp140.dll, vcruntime140.dll, vcruntime140_1.dll (x64, 14.38 or later)>   # -> out/images/desire
+node tools/serve.mjs 8000 web out/images/desire    # then http://127.0.0.1:8000/browser/index.html?image=/files/0/
+```
+
+The build needs dxc (`tools/setup-toolchain.sh dxc`: Microsoft's, run under the oracle's Wine; or `DXC=`),
+`target/dxil2spv` (`tools/setup-toolchain.sh dxil`) and naga, for the shaders. The redistributable's DLLs can be
+taken from `vc_redist.x64.exe` (its `vcRuntimeMinimum` cabinet) or from any Windows machine's `System32`.
+
+In a desktop browser with WebGPU: the keyboard only, no click needed. Enter or Space skips the logo; W A S D move,
+the arrows turn; F2 starts the round again in the same maze; Esc quits. (A click gives the page the mouse, which
+Desire does not use; leaving Pointer Lock sends Esc, which quits.) The maze the game writes is kept in the
+browser's storage, as on a PC it stays in `Assets/Maps`.
+
 ## Progress
 
 - **D0** (census, recipe and oracle): `pisco build` takes a zip and added files; the oracle runs the game on
@@ -205,3 +222,11 @@ implemented**. In Node, strict, it stops at the first of them (`_dclass`).
     It is written for our virtual clock: under Wine on lavapipe the game runs at 2 to 6 frames a second, its
     time slows (a frame counts at most 0.1 s), and a held key does not mean the same distance, so Wine's run does
     not reach the goal and the ending is not compared with it.
+- **D4** (pixels in Chrome): `tests/run.sh desire` plays the three sessions in headless Chrome (WebGPU on
+  SwiftShader, 10 to 17 frames a second), strict, on the virtual clock: no WebGPU error, no shader without a
+  translation, a PNG at each checkpoint. Against Wine's screenshots (mean difference per channel, of 255): the
+  logo 0.01, the maze before input 0.27 / 0.24 / 0.14 (0.22 % of the pixels over 16), the GAME OVER picture 0.01;
+  the threshold is Tag's, 3. Nothing in the WebGPU back end had to change: the 320x180 target, the CRT pass with
+  its two static samplers, root constants, the 128-bone skinning with `uint4` indices, `DiscardResource` all went
+  through as SimplePBR's work left them. Not judged: `start`'s maze (Wine's shot, 2.6 s after Enter, is still the
+  fade from black) and `goal`'s shots (Wine does not reach the goal); ours ends on the "To be continued?" picture.
