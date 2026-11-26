@@ -90,6 +90,18 @@ IMP(kernel32, FormatMessageA) { SET_LAST_ERROR(317); RET(0); }
 IMP(kernel32, FormatMessageW) { SET_LAST_ERROR(317); RET(0); }
 IMP(kernel32, SetUnhandledExceptionFilter) { RET(0); }
 IMP(kernel32, OutputDebugStringA) { rt_log("debug: %s", GSTR(ARG(0))); }
+IMP(kernel32, OutputDebugStringW) { char *s = rt_narrow(GWSTR(ARG(0))); rt_log("debug: %s", s); free(s); }
+IMP(kernel32, IsDebuggerPresent) { RET(0); }
+// The last of an exception's handlers: on Windows the process ends (or a debugger is asked); here the run stops
+// with what was raised, where.
+IMP(kernel32, UnhandledExceptionFilter) { // (EXCEPTION_POINTERS*)
+  u64 ep = ARG(0), rec = ep ? MP(ep) : 0;
+  rt_fatal("unhandled exception 0x%08x at 0x%llx", rec ? M32(rec) : 0, rec ? (u64)MP(rec + (GUEST_BITS == 32 ? 12 : 16)) : 0);
+}
+IMP(kernel32, AreFileApisANSI) { RET(1); }
+IMP(kernel32, GetNativeSystemInfo) { imp_kernel32_GetSystemInfo(c); }
+IMP(kernel32, GetCurrentProcessorNumber) { RET(0); }
+IMP(kernel32, FlushProcessWriteBuffers) { __atomic_thread_fence(__ATOMIC_SEQ_CST); }
 
 // ---- TLS ----
 static u32 tls_used[64];

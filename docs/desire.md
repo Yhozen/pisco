@@ -132,8 +132,9 @@ implemented**. In Node, strict, it stops at the first of them (`_dclass`).
 
 ## What this means for D1 to D5
 
-- **D1**: the 64 missing imports (the CRT functions Microsoft's `msvcp140` and the game reach, `rand_s`, ole32 and
-  WIC, seven user32 functions), a window with a message queue, D3D12 Memory Allocator's `...1` methods.
+- **D1**: the missing imports the run reaches (the CRT functions Microsoft's `msvcp140` and the game reach,
+  `rand_s`, ole32 and WIC, seven user32 functions), a window with a message queue, D3D12 Memory Allocator's `...1`
+  methods; and the shaders, which `D3DCompile` only finds if they were compiled before the run.
 - **D2**: FH4 is not on the path to playing; it is checked with an asset taken away.
 - **D3**: the seeds come from Wine's log, so our run draws the same maze; the titles at each checkpoint are compared
   without their figures; the virtual clock and the keyboard for 64-bit titles.
@@ -143,3 +144,34 @@ implemented**. In Node, strict, it stops at the first of them (`_dclass`).
 
 - **D0** (census, recipe and oracle): `pisco build` takes a zip and added files; the oracle runs the game on
   lavapipe, records the seeds and titles; this page.
+- **D1** (lift and start): in Node, strict, Desire runs from its logo into the maze, the enemy's chase, GAME OVER
+  and the end picture (its window title says each in turn). Its calls until its main loop's first `PeekMessageW`
+  are Wine's (77 steps, `recipes/desire/traces/start.txt`), and given the seeds a Wine run's `std::random_device`
+  returned (`SW_RANDOM`) it writes that run's maze byte for byte, for all three runs recorded
+  (`recipes/desire/traces/mazes.txt`). `tests/run.sh desireplay` checks both. What it took:
+  - **The CRT and kernel32**: `_dclass` / `_fdclass` / `_ldclass`, `rand_s` (never from the host: `SW_RANDOM`'s
+    values first, then a generator seeded by `SW_SEED`), the start-up functions Microsoft's `msvcp140` reaches,
+    `OutputDebugStringW`, `AreFileApisANSI`, `IsDebuggerPresent` and `UnhandledExceptionFilter` (now shared by both
+    desktop runtimes), `GetNativeSystemInfo`.
+  - **The window** (`rt/gdk/window.c`): classes keep their procedure, a window keeps the size it was made with
+    (`GetClientRect` answers 1280x720), a queue of posted messages (`PostQuitMessage` is the game's way out),
+    `DispatchMessageW` calls the procedure, `SetWindowTextW` logs each new title (`window title: ...`),
+    `GetForegroundWindow`, `IsIconic`, `GetCursorPos`. `GetAsyncKeyState` answers that nothing is held (the
+    keyboard comes in D3).
+  - **WIC** (`rt/windows-x64/wic.c`): ole32's `CoInitializeEx` / `CoCreateInstance` and the imaging factory, a
+    stream made from memory, a decoder from the stream, its frame, a converter to 32bppRGBA; PNG decoded by
+    stb_image.
+  - **D3D12 Memory Allocator**: `CreateCommittedResource1/2/3`, `CreateHeap1`, `CreatePlacedResource1/2`,
+    `GetResourceAllocationInfo1/2/3` over the existing methods; `CheckFeatureSupport`'s OPTIONS and ARCHITECTURE
+    fields at their offsets (heap tier 1, binding tier 3; UMA on the console only); the adapter answers
+    `IDXGIAdapter2` to `4`.
+  - **Shaders, compiled by `pisco build`** (`[shaders] frames = 30`): the image is run once with
+    `SW_HLSL_CAPTURE=1` (`D3DCompile` logs each source and answers with a placeholder) until its 30th frame
+    (`SW_EXIT_FRAMES`); `tools/hlsl-prep.mjs` compiles the seven sources with dxc and translates them; they become
+    the image's `shaders` layer. Two fixes on the way: `rt_log` cut lines at 1 KiB, so long sources reached dxc
+    cut short; and the mesh shader's `clip()` came out of dxil-spirv as SPIR-V's demote-to-helper, which naga
+    does not read: `dxil2spv` now makes it `OpKill` (naga's `discard`).
+  - **The lifter**: MSVC's two-level `switch` (a byte index table, then a table of image-relative offsets), whose
+    bound was taken from the wrong compare: 78 tables recovered in the four images instead of 43.
+  - **No FH4 yet**: nothing throws on the way. A shader that failed to compile did (the game throws on a failed
+    HRESULT), and the catch stopped at a frame with no landing: D2's case.

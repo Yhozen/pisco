@@ -261,6 +261,9 @@ impl Image {
     fn bytes(&self, va: u64) -> Option<&[u8]> {
         self.sections.iter().find(|(a, d, _)| va >= *a && va < *a + d.len() as u64).map(|(a, d, _)| &d[(va - a) as usize..])
     }
+    fn u8(&self, va: u64) -> Option<u8> {
+        self.bytes(va).and_then(|b| b.first().copied())
+    }
     fn u32(&self, va: u64) -> Option<u32> {
         self.bytes(va).filter(|b| b.len() >= 4).map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]))
     }
@@ -398,38 +401,51 @@ fn jump_table(img: &Image, insns: &BTreeMap<u64, Instruction>, jmp: &Instruction
     // `cmp R8,0x80; jae loop; lea R9,[R8+0xF]; and R9,-16; mov R11,R9; shr R11,4; mov R11D,[R10+R11*4+rva]`):
     // the compared maximum carried forward to the load. Tried first: it follows the value live at the load,
     // where the backward search below can pick a compare of an older value of the same register.
-    let mut sim = None;
-    {
-        let fwd: Vec<&Instruction> = prev.iter().rev().copied().collect(); // in program order, up to the load
-        let at_load = fwd.iter().position(|i| i.ip() == load.ip());
-        if let Some(at_load) = at_load {
-            for c in (0..at_load).rev() {
-                let i = fwd[c];
-                if i.mnemonic() != Mnemonic::Cmp || i.op_kind(0) != OpKind::Register || !is_imm(i.op_kind(1)) || c + 1 >= at_load { continue; }
-                let max = match fwd[c + 1].mnemonic() { Mnemonic::Jae | Mnemonic::Jb => i.immediate(1).wrapping_sub(1), Mnemonic::Ja | Mnemonic::Jbe => i.immediate(1), _ => continue };
-                let mut vals: std::collections::HashMap<Register, u64> = std::collections::HashMap::new();
-                vals.insert(i.op0_register().full_register(), max);
-                for j in &fwd[c + 2..at_load] {
-                    if j.op_count() == 0 || j.op_kind(0) != OpKind::Register { continue; }
-                    let d = j.op0_register().full_register();
-                    let src = |n: u32| if j.op_kind(n) == OpKind::Register { vals.get(&j.op_register(n).full_register()).copied() } else { None };
-                    let v = match j.mnemonic() {
-                        Mnemonic::Mov | Mnemonic::Movzx | Mnemonic::Movsxd => src(1),
-                        Mnemonic::Lea if j.memory_index() == Register::None => vals.get(&j.memory_base().full_register()).map(|b| b.wrapping_add(j.memory_displacement64())),
-                        Mnemonic::And if is_imm(j.op_kind(1)) => vals.get(&d).map(|x| x & j.immediate(1)),
-                        Mnemonic::Shr if is_imm(j.op_kind(1)) => vals.get(&d).map(|x| x >> (j.immediate(1) & 63)),
-                        Mnemonic::Add if is_imm(j.op_kind(1)) => vals.get(&d).map(|x| x.wrapping_add(j.immediate(1))),
-                        _ => None,
-                    };
-                    match v { Some(v) => { vals.insert(d, v); } None => { vals.remove(&d); } }
-                }
-                if let Some(&v) = vals.get(&index) { if v < 4096 { sim = Some(v + 1); } }
-                break;
+    let sim_at = |at: u64, index: Register| -> Option<u64> {
+        let fwd: Vec<&Instruction> = prev.iter().rev().copied().collect(); // in program order, up to the jump
+        let at_load = fwd.iter().position(|i| i.ip() == at)?;
+        for c in (0..at_load).rev() {
+            let i = fwd[c];
+            if i.mnemonic() != Mnemonic::Cmp || i.op_kind(0) != OpKind::Register || !is_imm(i.op_kind(1)) || c + 1 >= at_load { continue; }
+            let max = match fwd[c + 1].mnemonic() { Mnemonic::Jae | Mnemonic::Jb => i.immediate(1).wrapping_sub(1), Mnemonic::Ja | Mnemonic::Jbe => i.immediate(1), _ => continue };
+            let mut vals: std::collections::HashMap<Register, u64> = std::collections::HashMap::new();
+            vals.insert(i.op0_register().full_register(), max);
+            for j in &fwd[c + 2..at_load] {
+                if j.op_count() == 0 || j.op_kind(0) != OpKind::Register { continue; }
+                let d = j.op0_register().full_register();
+                let src = |n: u32| if j.op_kind(n) == OpKind::Register { vals.get(&j.op_register(n).full_register()).copied() } else { None };
+                let v = match j.mnemonic() {
+                    Mnemonic::Mov | Mnemonic::Movzx | Mnemonic::Movsxd => src(1),
+                    Mnemonic::Lea if j.memory_index() == Register::None => vals.get(&j.memory_base().full_register()).map(|b| b.wrapping_add(j.memory_displacement64())),
+                    Mnemonic::And if is_imm(j.op_kind(1)) => vals.get(&d).map(|x| x & j.immediate(1)),
+                    Mnemonic::Shr if is_imm(j.op_kind(1)) => vals.get(&d).map(|x| x >> (j.immediate(1) & 63)),
+                    Mnemonic::Add if is_imm(j.op_kind(1)) => vals.get(&d).map(|x| x.wrapping_add(j.immediate(1))),
+                    _ => None,
+                };
+                match v { Some(v) => { vals.insert(d, v); } None => { vals.remove(&d); } }
+            }
+            return vals.get(&index).copied().filter(|&v| v < 4096).map(|v| v + 1);
+        }
+        None
+    };
+    // MSVC's two-level switch: the index is a byte of an index table, `movzx I,byte [B+J+rva]` with the same image
+    // base (`cmp J,N; ja default; movsxd J; movzx eax,[rdx+rax+itab]; mov ecx,[rdx+rax*4+tab]; add rcx,rdx; jmp rcx`):
+    // the table has as many entries as the largest byte among the index table's J+1 says. Tried first: a compare
+    // found for I itself would be J's, the index table's length
+    let mut bound = None;
+    if img.is_base(base) {
+        let def = prev.iter().filter(|i| i.ip() < load.ip()).find(|i| i.op_count() >= 1 && i.op_kind(0) == OpKind::Register && i.op0_register().full_register() == index);
+        if let Some(m) = def.filter(|m| m.mnemonic() == Mnemonic::Movzx && m.op_kind(1) == OpKind::Memory && m.memory_size() == iced_x86::MemorySize::UInt8
+            && m.memory_base().full_register() == base_reg && m.memory_index() != Register::None && m.memory_index_scale() == 1) {
+            let j = m.memory_index().full_register();
+            if let Some(nj) = sim_at(m.ip(), j).or_else(|| table_bound(&prev, m.ip(), j)) {
+                let itab = base + m.memory_displacement64();
+                let max = (0..nj).filter_map(|k| img.u8(itab + k)).max();
+                if let Some(mx) = max { bound = Some(u64::from(mx) + 1); }
             }
         }
     }
-    let bound = sim.or_else(|| table_bound(&prev, load.ip(), index));
-    if bound.is_none() && std::env::var_os("LIFTER_DEBUG").is_some() { eprintln!("table without bound: jmp at 0x{:x}, load at 0x{:x}", jmp.ip(), load.ip()); }
+    let bound = bound.or_else(|| sim_at(load.ip(), index)).or_else(|| table_bound(&prev, load.ip(), index));
     let bound = Some(bound?); // a table with no bound is not trusted: its end is unknown
     // a target may be in another part of the function (GCC's .cold): any code will do
     let _ = range;

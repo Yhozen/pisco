@@ -500,7 +500,8 @@ pub fn build(root: &Path, o: &Opts) -> R<()> {
     let wasms: Vec<PathBuf> = lifts.iter().map(|l| link_module(l)).collect::<R<_>>()?;
     let wasm = wasms[main_lift].clone();
 
-    // 5. the image
+    // 5. the image; with [shaders], written twice: once to run it and collect the shaders it compiles, then with them
+    let write = |extra: Option<&Tree>| -> R<String> {
     let tmp_out = tmp_name(&out);
     let lay = Layout::create(&tmp_out)?;
     let mut layers = Vec::new();
@@ -515,6 +516,7 @@ pub fn build(root: &Path, o: &Opts) -> R<()> {
     for d in &ex.dirs { if !d.is_empty() { game.dir(d); } }
     for (g, h) in &ex.files { game.file(g, io(std::fs::read(h), h)?); }
     layers.push(lay.put(LAYER, &game.tar(), &[(ROLE, "game"), (TITLE, &r.name), (LOCAL, "true")])?);
+    if let Some(t) = extra { layers.push(lay.put(LAYER, &t.tar(), &[(ROLE, "shaders"), (TITLE, &format!("{} shaders", r.name)), (LOCAL, "true")])?); }
     let module = lay.put(MODULE, &io(std::fs::read(&wasm), &wasm)?, &[(ROLE, "module"), (TITLE, "title.wasm"), (LOCAL, "true")])?;
     // a Linux title's other programs: a module each (the first module above is the one its first process starts in)
     let mut program_layers = Vec::new(); let mut digest_of: BTreeMap<usize, String> = BTreeMap::new();
@@ -555,9 +557,59 @@ pub fn build(root: &Path, o: &Opts) -> R<()> {
     for (b, what) in layers.iter().zip(std::iter::repeat("layer")).chain([(&module, "module")]).chain(program_layers.iter().zip(std::iter::repeat("module"))).chain([(&cfg, "config")]) {
         say(&format!("  {what:6} {:8} sha256:{} {:>10} bytes  {}", b.annotations.get(ROLE).map(|s| s.as_str()).unwrap_or(""), b.digest, b.size, b.annotations.get(TITLE).map(|s| s.as_str()).unwrap_or("")));
     }
-    say(&format!("image {}: manifest sha256:{} ({:.1} s)", out.display(), man.digest, start.elapsed().as_secs_f64()));
-    println!("sha256:{}", man.digest);
+    Ok(man.digest.clone())
+    };
+    let digest = match &r.shaders {
+        None => write(None)?,
+        Some(sh) => {
+            let first = write(None)?;
+            let tree = shaders_layer(root, &r, sh, &out, &first, &ex.app_guest, &cache)?;
+            write(Some(&tree))?
+        }
+    };
+    say(&format!("image {}: manifest sha256:{} ({:.1} s)", out.display(), digest, start.elapsed().as_secs_f64()));
+    println!("sha256:{digest}");
     Ok(())
+}
+
+/// [shaders]: the image run once in Node (SW_HLSL_CAPTURE: D3DCompile logs each source it has no shader for and
+/// answers with a placeholder; SW_EXIT_FRAMES: the run ends after that many presents), the logged sources compiled
+/// by tools/hlsl-prep.mjs (dxc, then tools/shader-prep.mjs: dxil2spv and naga) into <cache>/shaders/<key>, once per
+/// image and session; returned as a layer: the files under the title's folder, `shaders/`
+fn shaders_layer(root: &Path, r: &Recipe, sh: &recipe::Shaders, image: &Path, image_digest: &str, app_guest: &str, cache: &Path) -> R<Tree> {
+    let session = sh.session.as_ref().map(|s| r.dir.join(s));
+    let mut key = format!("image {image_digest}\nframes {}\n", sh.frames);
+    if let Some(s) = &session { key.push_str(&format!("session {}\n", oci::sha256(&io(std::fs::read(s), s)?))); }
+    for f in ["tools/hlsl-prep.mjs", "tools/shader-prep.mjs", "target/dxil2spv"] { let p = root.join(f); if let Ok(d) = std::fs::read(&p) { key.push_str(&format!("{f} {}\n", oci::sha256(&d))); } }
+    let key = oci::sha256(key.as_bytes());
+    let dir = cache.join("shaders").join(&key[..32]);
+    let t = Instant::now();
+    if dir.is_dir() { say(&format!("shaders: cached ({})", &key[..16])); } else {
+        let tmp = tmp_name(&dir); let _ = std::fs::remove_dir_all(&tmp); io(std::fs::create_dir_all(&tmp), &tmp)?;
+        let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+        let mut cmd = Command::new(exe);
+        cmd.arg("run").arg(image).env("SW_HLSL_CAPTURE", "1").env("SW_EXIT_FRAMES", sh.frames.to_string()).env("SW_PACE", "off").env_remove("SW_STRICT");
+        if let Some(s) = &session { cmd.arg("--session").arg(s); }
+        let o = cmd.output().map_err(|e| format!("pisco run: {e}"))?;
+        let log = tmp.join("capture.log");
+        io(std::fs::write(&log, [&o.stdout[..], &o.stderr[..]].concat()), &log)?;
+        let sources = String::from_utf8_lossy(&std::fs::read(&log).unwrap_or_default()).matches("d3dcompile-source ").count();
+        if !o.status.success() && sources == 0 { return Err(format!("[shaders]: the run ended with {} and compiled nothing: see {}", o.status, log.display())); }
+        let title = tmp.join("title");
+        let o = Command::new("node").arg(root.join("tools/hlsl-prep.mjs")).arg(&log).arg("--title").arg(&title).output().map_err(|e| format!("node: {e}"))?;
+        io(std::fs::write(tmp.join("prep.log"), [&o.stdout[..], &o.stderr[..]].concat()), &tmp)?;
+        if !o.status.success() { return Err(format!("[shaders]: tools/hlsl-prep.mjs failed: see {}", tmp.join("prep.log").display())); }
+        publish(&tmp, &dir)?;
+        say(&format!("shaders: {sources} sources compiled and translated ({:.1} s)", t.elapsed().as_secs_f64()));
+    }
+    let (mut fs, mut ds) = (Vec::new(), Vec::new());
+    let src = dir.join("title");
+    if src.is_dir() { walk(&src, "", &mut fs, &mut ds)?; }
+    let mut tree = Tree::default();
+    let join = |rel: &str| if app_guest.is_empty() { rel.to_string() } else { format!("{app_guest}/{rel}") };
+    for d in ds { tree.dir(&join(&d)); }
+    for (rel, h) in fs { tree.file(&join(&rel), io(std::fs::read(&h), &h)?); }
+    Ok(tree)
 }
 
 /// The base's layer: its folder, the folders it names, its fonts, a placeholder for each DLL of the core

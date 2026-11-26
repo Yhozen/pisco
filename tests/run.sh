@@ -63,6 +63,8 @@
 #            tools/build-gdk-sample.sh) or the MSVC runtime DLLs (REDIST)
 #   pbr      tests/gfx/pbr.sh: Microsoft's SimplePBR (Windows x64) in Chrome; skipped without the sample (built from
 #            the SDKs in WINSDK by tools/build-gdk-sample-pbr.sh) or REDIST (minutes)
+#   desireplay  tests/gfx/desireplay.sh: Desire (Windows x64, Direct3D 12) from the user's zip (DESIRE_ZIP) and REDIST, in
+#            Node, strict: its calls until its main loop are Wine's, and its maze from Wine's seeds is Wine's (minutes)
 #   xcl      tests/gfx/xcl.sh: XCL's console test title in Chrome, when it has been built into out/xcltitle-game
 #   audio    tests/audio/run.sh: the XMA2 / Opus decoders (builds FFmpeg's the first time)
 # Default: build layout node bench win32 linux ffp sm gdi. Needs tools/setup-toolchain.sh to have run. Exit status 1 if a step fails.
@@ -271,6 +273,9 @@ for s in ${*:-build layout node bench win32 linux ffp sm gdi}; do case $s in
           elif [ ! -f out/gdk-samples/pbr-local/SimplePBR.exe ] && [ ! -d "$WINSDK/xwin" ]; then echo "skip  pbr: the sample is not built and there are no SDKs to build it in WINSDK=$WINSDK"
           else LINES_SHOWN=3 step pbr tests/gfx/pbr.sh; fi ;;
   images) LINES_SHOWN=9 step images tests/images.sh ;;
+  desireplay) if [ ! -f "${DESIRE_ZIP:-$HOME/games/DESI-Re-v0.1-Windows-x64.zip}" ]; then echo "skip  desireplay: no zip at DESIRE_ZIP=${DESIRE_ZIP:-$HOME/games/DESI-Re-v0.1-Windows-x64.zip}"
+          elif [ ! -f "$REDIST/vcruntime140.dll" ]; then echo "skip  desireplay: no MSVC runtime DLLs in REDIST=$REDIST"
+          else LINES_SHOWN=4 step desireplay tests/gfx/desireplay.sh; fi ;;
   audio)  step audio tests/audio/run.sh ;;
   xcl)    if [ -f out/xcltitle-game/xcl_testtitle.exe ]; then LINES_SHOWN=3 step xcl tests/gfx/xcl.sh; else echo "skip  xcl: out/xcltitle-game/xcl_testtitle.exe is not built"; fi ;;
   *) echo "unknown step: $s"; fail=1 ;;

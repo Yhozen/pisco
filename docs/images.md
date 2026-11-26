@@ -153,6 +153,12 @@ opt = "-O1"                               # clang's level for the lifted C (defa
 [quirks]
 heap_fill = 0xCD                          # what a heap block the title did not ask to be zeroed holds (default: whatever
                                           # the runtime's allocator left); Narbacular Drop depends on it being non-zero
+
+[shaders]                                 # HLSL the title compiles at run time (D3DCompile), compiled by the build:
+frames = 30                               # the image is run in Node until this many presents (SW_EXIT_FRAMES), with
+# session = "sessions/start.json"         # D3DCompile logging each source (SW_HLSL_CAPTURE=1); tools/hlsl-prep.mjs
+                                          # compiles them (dxc: DXC, or ~/tools/dxc/dxc under Wine) and translates
+                                          # them (dxil2spv, naga): the image's "shaders" layer, in the title's folder
 ```
 
 `tools/build-title.sh` reads the same recipe (`RECIPE=...`: `[cpu]`, `[registry]` built into the module, `[dll]`,

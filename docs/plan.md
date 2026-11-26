@@ -64,8 +64,8 @@ A new runtime is a new folder and a new base; a new title of an existing runtime
 | L0 to L4 | a fourth runtime, Linux x64: the core's neutral parts apart, the lifter reads an ELF, a C library starts and finds a machine, fastfetch in Node and in the page | done ([fastfetch.md](fastfetch.md#progress)) |
 | N0 to N3 | Linux processes (fork, execve, wait4, pipes), images of several programs, neofetch on bash and busybox in Node and in the page | done ([neofetch.md](neofetch.md#progress)) |
 | D0 | Desire (DESI:Re v0.1) on the Windows x64 runtime: census, recipe (`pisco build` reads a zip and adds the user's C++ runtime DLLs), and the oracle (Direct3D 12 under Wine on lavapipe) | done ([desire.md](desire.md#progress)) |
-| D1 | Desire lifted and started: the first frame in Node, strict, with Wine's seeds drawing Wine's maze | next |
-| D2 | MSVC's FH4 exception tables in the lifter | |
+| D1 | Desire lifted and started: the first frame in Node, strict, with Wine's seeds drawing Wine's maze | done ([desire.md](desire.md#progress)) |
+| D2 | MSVC's FH4 exception tables in the lifter | next |
 | D3 | Desire's main loop in Node on the virtual clock: keyboard and window messages for 64-bit titles, shaders compiled by `pisco build` | |
 | D4 | Desire's pixels in Chrome against Wine's | |
 | D5 | Desire playable by hand | |

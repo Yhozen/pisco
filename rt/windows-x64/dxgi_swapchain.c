@@ -76,10 +76,14 @@ IMP(dxgi, SwapChain_QueryInterface) { SC; self->refs++; M64(ARG(2)) = ARG(0); RE
 IMP(dxgi, SwapChain_AddRef) { SC; RET(++self->refs); }
 IMP(dxgi, SwapChain_Release) { SC; RET(self->refs > 1 ? --self->refs : 0); }
 IMP(dxgi, SwapChain_GetBuffer) { SC; u32 i = (u32)ARG(1); if (i >= self->count) { RET(E_INVALIDARG); return; } Obj *b = d3d12_obj(self->buffers[i]); b->refs++; RET(d3d12_give(b, ARG(2), ARG(3))); }
-// (sync interval, flags): with an interval, the present waits for the next 60 Hz vertical blank (SW_PACE=off: none)
+// (sync interval, flags): with an interval, the present waits for the next 60 Hz vertical blank (SW_PACE=off: none).
+// SW_EXIT_FRAMES=N ends the process after N presents (pisco build's shader step: the run only lists the shaders)
+void rt_exit_process(u32 code);
 IMP(dxgi, SwapChain_Present) {
   SC; u32 interval = (u32)ARG(1);
   rt_gpu_present(d3d12_id_of(self->buffers[self->index]), ++self->frames, interval); self->index = (self->index + 1) % self->count;
+  static s64 exit_after = -1; if (exit_after < 0) { const char *e = getenv("SW_EXIT_FRAMES"); exit_after = e ? atoll(e) : 0; }
+  if (exit_after && self->frames >= (u64)exit_after) { rt_log("exit after %llu frames (SW_EXIT_FRAMES)", (unsigned long long)self->frames); rt_exit_process(0); }
   if (interval && !d3d12_pace_off()) {
     static u64 next; u64 now = (u64)host_now_us(), period = 16667ull * (interval > 4 ? 4 : interval);
     if (!next || now > next + period) next = now;

@@ -27,3 +27,8 @@ display = "1280x720"   # the window's client area (Engine.cpp); the game draws a
 [lifter]
 split = 8
 entries = []
+
+[shaders]
+# its three HLSL sources (seven entry points) are compiled with D3DCompile when the renderer starts: the image is run
+# for 30 frames (the boot logo) and what it compiled is compiled here, with dxc to DXIL and then to WGSL
+frames = 30

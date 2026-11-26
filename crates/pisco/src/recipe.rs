@@ -26,7 +26,12 @@ pub struct Recipe {
     pub cpu: Option<Vec<String>>, pub dll: BTreeMap<String, String>, pub registry: Vec<RegValue>,
     pub split: usize, pub entries: Vec<u64>, pub base_address: Option<u64>, pub opt: String,
     pub heap_fill: Option<u8>, // [quirks] heap_fill: the byte a heap block the title did not ask to be zeroed holds
+    pub shaders: Option<Shaders>,
 }
+/// [shaders]: the HLSL a title compiles at run time (D3DCompile), compiled when the image is built: the image is run
+/// once in Node for `frames` frames (with the `session`, if one is given), the sources it logged are compiled with
+/// dxc and translated, and the results become a layer of the image (docs/images.md)
+pub struct Shaders { pub frames: u64, pub session: Option<String> }
 pub struct Library { pub description: String, pub sources: Vec<String> }
 pub struct Base {
     pub dir: PathBuf, pub name: String, pub version: i64, pub architecture: String, pub os: String,
@@ -97,7 +102,7 @@ pub fn load_recipe(dir: &Path) -> R<Recipe> {
     let path = if dir.is_dir() { dir.join("title.toml") } else { dir.to_path_buf() };
     let t = load(&path)?;
     let dir = path.parent().unwrap().to_path_buf();
-    let known = ["name", "from", "libraries", "source", "run", "cpu", "dll", "registry", "lifter", "build", "quirks"];
+    let known = ["name", "from", "libraries", "source", "run", "cpu", "dll", "registry", "lifter", "build", "quirks", "shaders"];
     if let Some(k) = t.keys().find(|k| !known.contains(&k.as_str())) { return Err(format!("{}: {k} is not a recipe key ({})", path.display(), known.join(", "))); }
     let src = table(&t, "source")?.ok_or(format!("{}: no [source]", path.display()))?;
     let run = table(&t, "run")?.ok_or(format!("{}: no [run]", path.display()))?;
@@ -151,6 +156,10 @@ pub fn load_recipe(dir: &Path) -> R<Recipe> {
         heap_fill: match table(&t, "quirks")?.and_then(|q| q.get("heap_fill")) {
             None => None,
             Some(v) => Some(v.as_integer().filter(|n| (0..=255).contains(n)).ok_or("quirks.heap_fill: a byte, 0 to 255")? as u8),
+        },
+        shaders: match table(&t, "shaders")? {
+            None => None,
+            Some(sh) => Some(Shaders { frames: sh.get("frames").and_then(|v| v.as_integer()).filter(|n| *n > 0).ok_or("[shaders] frames = <presents to run for>")? as u64, session: s(sh, "session") }),
         },
         dir,
     })
