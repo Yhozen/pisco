@@ -7,16 +7,13 @@ titles, its own next steps and its own goal:
 |---|---|---|---|
 | [Xbox Series](#xbox-series) | Doom as a console title, XCL's console test title (50/50) | D3D12.X shaders from RDNA2 code, MSVC FH4 | Minecraft, the Xbox Series build |
 | [Windows x64](#windows-x64) | Stockfish 19, SimpleTriangleDesktop, SimplePBR | more desktop D3D12 titles | desktop D3D12 titles |
-| [Windows x86](#windows-x86) | Narbacular Drop, playable | Tag: The Power of Paint (Direct3D 9 shaders, D3DX effects, FMOD Ex) | 32-bit Direct3D 9 games of the 2000s |
+| [Windows x86](#windows-x86) | Narbacular Drop, playable; Tag: The Power of Paint into its second level | Tag played by hand on a real GPU, then its later levels | 32-bit Direct3D 9 games of the 2000s |
 
 ## Shared: the recompiler, the core runtime, the packages
 
 - **Gate A (CPU and OS layer on synthetic titles): passed** in Node and headless Chrome — our own titles
   (Rust, C++ with libc++/libunwind, a multi-image title with a DLL) and XCL's console test title (46 of its
   50 checks in Node, where the 4 that read pixels back cannot pass; all 50 in Chrome, below).
-- **A real 64-bit Windows program** (Stockfish 19's official build, MinGW-compiled, 103 MB) runs bit-exactly:
-  `bench` searches 2,497,913 nodes, the signature published with the release, at ~106 k nodes/s in Node and
-  ~111 k in Chrome.
 - wasm32 vs wasm64 measured (`docs/memory.md`).
 - **Title images**: `pisco build` makes an image FROM one base per runtime (`bases/`), the only list of the
   runtime's files; one title of each base is built twice with empty caches to equal digests (`tests/run.sh images`).
@@ -34,21 +31,27 @@ titles, its own next steps and its own goal:
 
 ### Next, toward its goal (Minecraft, the Xbox Series build), in the order it probably needs them
 
-0. ~~**The graphics ladder's steps 1–2**~~: done 2026-11-24, as Windows x64 titles (SimpleTriangleDesktop with clang-cl and MSVC builds,
-   SimplePBR; `docs/journey.md` §3.20–3.21, `tests/gfx/st.sh`, `tests/gfx/pbr.sh`). What they needed:
-   the MSVC C++ runtime DLLs, the AVX rule in the lifter, DXGI swap chains, vertex / index / constant buffers,
-   depth, BC textures. The shared D3D12 core they need exists (written for all of D3D12, tested on Doom's part).
-1. **D3D12.X** (historical note, before 2026-11-24): nothing yet. First a null device (objects that accept every call, as XCL's M1) to reach the
-   first frame submission (Gate B); its vtable layouts can come from XCL's `hle/d3d12_layout.rs`. Then command
-   lists → WebGPU, title memory copied to GPU buffers before each submission (VIctory's `shadow.rs` model).
-2. **Shaders**: the census exists (`crates/shaders`, decoder and container parser from XCL). A translator
-   RDNA2 → WGSL is the big piece; XCL's HLSL emitter (`gpu/recomp/emit.rs`) is the reference.
-3. **MSVC C++ exceptions**: FH3 works (§3.20); FH4 (current `cl.exe`) is untested.
-4. **Audio**: done for PCM, XMA2 and Opus (FFmpeg); XMA streamed across buffers is not.
-5. **Input**: GameInput's object exists with timestamps only; readings from the Gamepad API next.
-6. **Persistence**: the VFS overlay is in memory; saves should go to OPFS in the browser, a folder in Node.
-7. **Speed**: lifted code runs ~1.3–6× native on our micro-benchmarks. Next: keep flags lazily, register
-   locals across calls, AVX2 paths (the virtual CPU reports SSE4.2 only), wasm64 only when needed.
+The graphics ladder is done up to Minecraft (steps 1–4: SimpleTriangleDesktop and SimplePBR, now Windows x64
+titles; Doom; XCL's checks). What is left before and during step 5:
+
+1. **The Minecraft files** (`docs/first-run.md`): every Minecraft-specific answer waits on them, among them
+   which imports are missing, which shader stages it uses and whether it needs wasm64. `tools/census.sh
+   <folder>/Minecraft.Windows.exe` answers those in minutes without running the game.
+2. **Shaders, RDNA2 → WGSL**: the console ships GPU machine code. The census and the decoder exist
+   (`crates/shaders`, from XCL); the translator is the big piece, with XCL's HLSL emitter (`gpu/recomp/emit.rs`)
+   and its instruction tests as the reference. Steps 1–4 do not exercise it: their shaders are DXIL.
+3. **WebGPU's limits**: no mesh shaders, no bindless heaps (XCL saw Minecraft use eight heaps of 73,727
+   descriptors), no 64-bit atomics. The answer (per-draw bindings, compute emulation) is decided after the census.
+4. **MSVC C++ exceptions, FH4**: FH3 works with the real `vcruntime140` (`docs/journey.md` §3.20); FH4, which
+   current `cl.exe` emits, is untested for want of a test title built by it.
+5. **Audio**: PCM, XMA2 and Opus voices play (FFmpeg); each XMA buffer is decoded whole when it is submitted,
+   so XMA streamed across buffers is not handled, and XAudio2 has no device callbacks yet.
+6. **Speed**: lifted code runs ~1.3–6× native on our micro-benchmarks. Next: keep flags lazily, register
+   locals across calls, AVX2 paths (the virtual CPU reports up to SSE4.2 and POPCNT, no AVX), wasm64 only
+   when needed.
+
+Done since the first version of this list: D3D12.X (Doom, XCL's checks), GameInput readings (keyboard and
+gamepad, from the page), saves kept in OPFS in the browser and in a folder in Node (`SW_SAVES`).
 
 ## Windows x64
 
@@ -147,9 +150,9 @@ width); the runtime is built per guest width (`-DGUEST_BITS=32`: arguments on th
 `tools/stdcall-sizes.sh`, the TEB on `fs`, 4-byte loader writes); a low image gets a gap between the runtime's
 stack and its data ([memory.md](memory.md)). Not yet for 32-bit guests: exception dispatch (the three
 unresolved jumps of the game are `_JumpToContinuation` and friends in its C runtime, reached only when a C++
-exception is thrown), MMX and 3DNow (the virtual CPU still reports MMX and SSE to every title; a feature set
-per title comes with M2), `fbld` / `fbstp`, the x87 tag
-word, 80-bit precision, and every import beyond the four the two test titles call.
+exception is thrown), MMX and 3DNow (left unlifted: a recipe's `[cpu]` leaves them out of CPUID, as Narbacular Drop's and Tag's do, so titles
+take other paths), `fbld` / `fbstp`, the x87 tag word and 80-bit precision. (Imports were then only the four the two
+test titles call; Narbacular Drop and Tag have brought the rest.)
 
 ### Tag: The Power of Paint (2008), the second title
 

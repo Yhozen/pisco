@@ -1,7 +1,8 @@
-# Tag: The Power of Paint: census and oracle (T0, 2026-11-25)
+# Tag: The Power of Paint (2026-11-25)
 
-What the game asks of Windows, Direct3D 9, D3DX and FMOD Ex, measured under Wine before any code was written for
-it: milestone T0 of the PISCO plan. How the measurements are taken is in
+The second Windows x86 title. Its census and oracle (milestone T0 of the PISCO plan) come first: what the game asks
+of Windows, Direct3D 9, D3DX and FMOD Ex, measured under Wine before any code was written for it. How to play it
+and each milestone after T0 are at the end ([Play it](#play-it), [Progress](#progress)). How the measurements are taken is in
 [`tools/oracle-wine/README.md`](../tools/oracle-wine/README.md). The game's files, Microsoft's DLLs, logs,
 screenshots and the captured shader bytecodes stay outside the repository (under `out/oracle/tag/`): this page
 holds names and counts only.
@@ -224,6 +225,14 @@ look, the left button to paint and the right button to erase once a gun is taken
   byte. Against Wine's `+d3d9` trace (`d3d9-compare.py`): the same 76 methods, 96 counted arguments with the same
   sets of values; textures made and locked differ in number only as long phases do (the same 86 texture files are
   opened, `SW_FILES=1`). FMOD Ex came here, not in T5: strict mode needs `FMOD_System_Create`.
+- **T3, the shader translator.** `rt/windows-x86/d3d9_sm.c` turns Direct3D 9 bytecode, vs_1_1 to vs_2_x and ps_1_1
+  to ps_2_x, into WGSL: a pure function of the tokens and a link key (fog, alpha test, the samplers' types for
+  ps_1_x), beside the fixed-function generator and sharing its locations between the stages. Labels become WGSL
+  functions, loops stop at 255 iterations as Direct3D's do, `def` constants win over the constant block, ps_1_x
+  constants are clamped to [-1, 1]. What it does not take (shader model 3, ps_1_x's texture-addressing operations,
+  `vPos` / `vFace`) it refuses with the reason. `tests/run.sh sm`: shaders assembled token by token cover every
+  opcode, register, modifier and flow-control form from 1.1 to 2.x and pass naga, and bad inputs are refused;
+  Tag's 46 bytecodes are all translated (their WGSL compiles in Chrome since T4).
 - **T4, pixels.** In headless Chrome (WebGPU on SwiftShader), strict, on the virtual clock, `tests/run.sh tag` plays
   `menu-to-level1` with every title shader translated (21 WGSL modules, 13 pipelines, 673,707 draws, no draw left
   out, no WebGPU error) and sets the checkpoints against Wine's: level 1 1.24 / 0.95 / 1.35 of 255 on average

@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 # base/windows-x64:1, what a 64-bit Windows desktop title is built FROM (docs/images.md): the core runtime, the
-# libraries it shares with the Xbox Series runtime (rt/gdk/: D3D12, DXGI, XAudio2, XGameRuntime, GameInput) and
+# libraries it shares with the Xbox Series runtime (rt/gdk/: D3D12, DXGI, XAudio2, XGameRuntime, GameInput, the title's window) and
 # its own (rt/windows-x64/: DXGI's factory and swap chains, the PC GDK's objects).
 name = "base/windows-x64"
 version = 1

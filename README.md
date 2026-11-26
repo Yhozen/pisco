@@ -60,9 +60,9 @@ runtime (rt/, C on wasi-libc, linked into the same module) ◄──────
  one folder per runtime (each base lists its own; `pisco sources <base>` prints them):
   gdk/        what the Xbox Series and Windows x64 runtimes share: D3D12 (d3d12.c), DXGI and MFPlat, D3DCompile
               from precompiled shaders, XAudio2 + audio_codec.c (XMA2 / Opus via FFmpeg), XGameRuntime (task
-              queues, XAsync, XUser, saves, PLS, package), GameInput
-  xbox-series/ the console's own: kernelx, XMem (with the GPU-visible region), its screen (user32 / DWM),
-              D3D12.X's frame clock and list methods, XG, DirectStorage
+              queues, XAsync, XUser, saves, PLS, package), GameInput, the title's window (user32 / DWM)
+  xbox-series/ the console's own: kernelx, XMem (with the GPU-visible region), D3D12.X's frame clock and list
+              methods, XG, DirectStorage
   windows-x64/ DXGI's factory and swap chains, the PC GDK's QueryApiImpl objects
   windows-x86/ user32, gdi32 (text drawn: font.c, stb_truetype, Liberation Sans), the registry, DirectInput 8,
               FMOD 3 (fmod3.c, audio_decode.c), and Direct3D 9 (d3d9*.c: the device; d3d9_ffp.c: its

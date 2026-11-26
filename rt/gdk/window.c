@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-// The console's screen: the ntuser and DWM functions a title's window uses.
-#include "../gdk/gdk.h"
+// The title's window: the ntuser and DWM functions a 64-bit title (console or desktop) uses. Shared by the Xbox Series
+// and Windows x64 runtimes: on the console it is the screen, on the desktop the window DXGI presents to.
+#include "gdk.h"
 
 // ---- the title's window: the console's screen, a hidden 1920x1080 frameless tool window ----
 typedef struct { u32 magic; u32 style, exstyle; u64 proc; } Window;
