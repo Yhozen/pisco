@@ -6,7 +6,7 @@ titles, its own next steps and its own goal:
 | Runtime | Runs | Next | Goal |
 |---|---|---|---|
 | [Xbox Series](#xbox-series) | Doom as a console title, XCL's console test title (50/50) | D3D12.X shaders from RDNA2 code, MSVC FH4 | Minecraft, the Xbox Series build |
-| [Windows x64](#windows-x64) | Stockfish 19, SimpleTriangleDesktop, SimplePBR | more desktop D3D12 titles | desktop D3D12 titles |
+| [Windows x64](#windows-x64) | Stockfish 19, SimpleTriangleDesktop, SimplePBR | Desire (D3D12 on its own engine): census and oracle done | desktop D3D12 titles |
 | [Windows x86](#windows-x86) | Narbacular Drop, playable; Tag: The Power of Paint into its second level | Tag played by hand on a real GPU, then its later levels | 32-bit Direct3D 9 games of the 2000s |
 | [Linux x64](#linux-x64) | fastfetch 2.71.0; neofetch 7.1.0 (bash, busybox) | threads, signals, writes | statically linked command-line programs |
 
@@ -62,6 +62,10 @@ gamepad, from the page), saves kept in OPFS in the browser and in a folder in No
 - **The graphics ladder's steps 1–2**: SimpleTriangleDesktop (both builds, through DXGI, with Microsoft's C++
   runtime DLLs lifted and MSVC C++ exceptions) and SimplePBR (DirectXTK12, PBR with image-based lighting, HDR)
   render in headless Chrome (§3.20, §3.21).
+- **Desire** (DESI:Re v0.1, a maze escape on its author's C++20 / Direct3D 12 engine), the first third-party
+  D3D12 game: census and oracle done ([desire.md](desire.md)). `pisco build` makes its image from the zip and the
+  user's C++ runtime DLLs; under Wine it runs on vkd3d and lavapipe, and Wine's log gives the seeds of its random
+  maze. Next: the 64 imports it needs that no runtime answers, then its first frame in Node.
 
 ## Windows x86
 

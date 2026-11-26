@@ -1,7 +1,7 @@
 #!/bin/bash
 # SPDX-License-Identifier: GPL-2.0-or-later
 # tests/run.sh [step...]: the one entry point. Builds the test titles from their sources, then runs the checks.
-#   build    hello, threads, bench (cargo) and cxx, dll (llvm-mingw), where tests/regress.sh looks for them;
+#   build    pisco's unit tests; hello, threads, bench (cargo) and cxx, dll (llvm-mingw), where tests/regress.sh looks for them;
 #            the 32-bit titles: hello again for i686, and fixtures/x87
 #   layout   tests/layout.sh: the runtime's files are listed only by the bases, and every one is in some base
 #   node     tests/regress.sh: every title in Node (XCL's title and Stockfish too when their files are there)
@@ -79,6 +79,7 @@ step() { # name, command...: one line, the log's tail on failure
 }
 build() {
   cargo build -q --release -p pisco-lifter -p pisco-shaders -p pisco || return 1
+  cargo test -q --release -p pisco > out/test-pisco-unit.log 2>&1 || { tail -20 out/test-pisco-unit.log; return 1; }   # pisco's own (the zip reader)
   for t in hello threads bench bench-native; do (cd "fixtures/$t" && cargo build -q --release) || return 1; done
   # one C++ runtime inside each image (-static): nothing but the title's own DLL is shipped beside it
   "$CXX" -O2 -static fixtures/cxx/eh.cpp -o fixtures/cxx/eh.exe || return 1

@@ -1,0 +1,29 @@
+# The recipe for Desire (DESI:Re v0.1, 2026, satokunDayo; a maze escape on its own C++20 / Direct3D 12 engine):
+# `pisco build recipes/desire --source DESI-Re-v0.1-Windows-x64.zip --with REDIST=<folder>` makes its image
+# (docs/images.md). What is known of the title: docs/desire.md.
+name = "desire"
+from = "base/windows-x64:1"
+
+[source]
+# the user's own copy, from https://satokundayo.itch.io/desire: never stored in the repository, nor in any image that
+# leaves the machine (the game's code and art carry no licence; its three libraries are MIT)
+file = "DESI-Re-v0.1-Windows-x64.zip"
+sha256 = "98e6f722bdf5d6395e61742b45d2600cf2d2689ef79da3a1c79096cf8d7ff634"
+extract = "zip"
+root = "DESI-Re-v0.1-Windows-x64"
+app = 'C:\Games\Desire'
+
+[[source.add]]
+# Microsoft's C++ runtime, which the title is built against (/MD, MSVC 14.38) and the zip leaves to the system: the
+# user's copy of the x64 redistributable (14.38 or later), beside the exe, lifted with it as for the samples
+from = "REDIST"
+files = ["msvcp140.dll", "vcruntime140.dll", "vcruntime140_1.dll"]
+to = 'C:\Games\Desire'
+
+[run]
+exe = 'C:\Games\Desire\Desire.exe'
+display = "1280x720"   # the window's client area (Engine.cpp); the game draws at 320x180 and scales it up
+
+[lifter]
+split = 8
+entries = []

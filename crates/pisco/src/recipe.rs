@@ -12,7 +12,12 @@ pub enum RegData { Dword(u32), Sz(String) }
 #[derive(Clone, Debug)]
 pub struct RegValue { pub key: String, pub name: String, pub data: RegData }
 
-pub struct Source { pub file: String, pub sha256: Option<String>, pub extract: String, pub app: Option<String>, pub map: BTreeMap<String, String>, pub cabs: Vec<Cab> }
+pub struct Source { pub file: String, pub sha256: Option<String>, pub extract: String, pub app: Option<String>, pub map: BTreeMap<String, String>, pub cabs: Vec<Cab>,
+    pub root: Option<String>, pub adds: Vec<Add> }
+/// [[source.add]]: further files of the user's that the title needs and its download does not carry (Microsoft's
+/// C++ runtime DLLs beside a title built with /MD), taken from a folder named on the command line
+/// (`pisco build --with NAME=<folder>`) or by the environment variable NAME, put in a folder of C:
+pub struct Add { pub from: String, pub files: Vec<String>, pub to: String }
 /// [[source.cab]]: files taken out of a cabinet among the installer's files (cabextract), put in a folder of C:
 pub struct Cab { pub cab: String, pub files: Vec<String>, pub to: String }
 pub struct Recipe {
@@ -110,6 +115,17 @@ pub fn load_recipe(dir: &Path) -> R<Recipe> {
         },
         Some(_) => return Err("[[source.cab]]: an array of tables".into()),
     }
+    let mut adds = Vec::new();
+    match src.get("add") {
+        None => {}
+        Some(Value::Array(a)) => for c in a {
+            let c = c.as_table().ok_or("[[source.add]]: tables")?;
+            adds.push(Add { from: s(c, "from").ok_or("[[source.add]] from = \"NAME\" (pisco build --with NAME=<folder>, or the environment variable NAME)")?,
+                files: strs(c, "files")?.filter(|f| !f.is_empty()).ok_or("[[source.add]] files = [\"name.dll\"]")?,
+                to: s(c, "to").ok_or("[[source.add]] to = 'C:\\...'")? });
+        },
+        Some(_) => return Err("[[source.add]]: an array of tables".into()),
+    }
     let mut dll = BTreeMap::new();
     for (k, v) in table(&t, "dll")?.into_iter().flatten() {
         let how = v.as_str().ok_or("[dll]: \"name.dll\" = \"builtin\"")?;
@@ -120,7 +136,8 @@ pub fn load_recipe(dir: &Path) -> R<Recipe> {
         name: s(&t, "name").ok_or("recipe: no name")?,
         from: s(&t, "from").ok_or("recipe: no from (a base, e.g. \"base/windows-x86:1\")")?,
         libraries: strs(&t, "libraries")?.unwrap_or_default(),
-        source: Source { file: s(src, "file").ok_or("[source] file")?, sha256: s(src, "sha256").map(|x| x.to_ascii_lowercase()), extract: s(src, "extract").unwrap_or("file".into()), app: s(src, "app"), map, cabs },
+        source: Source { file: s(src, "file").ok_or("[source] file")?, sha256: s(src, "sha256").map(|x| x.to_ascii_lowercase()), extract: s(src, "extract").unwrap_or("file".into()), app: s(src, "app"), map, cabs,
+            root: s(src, "root").map(|r| r.trim_matches('/').to_string()), adds },
         exe: s(run, "exe").ok_or("[run] exe")?,
         display: s(run, "display"),
         args: strs(run, "args")?.unwrap_or_default(),

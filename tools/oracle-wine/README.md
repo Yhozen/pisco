@@ -177,7 +177,13 @@ $O reg narbacular-drop delete 'HKLM\Software\Microsoft\Direct3D' /f /reg:32
 - **The X focus.** With no window manager nothing gives Wine's window the input focus, and without it Wine
   reads no raw mouse motion: a DirectInput title sees buttons but no movement. `{"focus": true}` sets it.
 - **Relative motion only.** An absolute pointer warp arrives as one huge movement.
-- **A virtual desktop** (`prefix` sets 1024x768): a full-screen title otherwise minimises when it loses focus.
+- **A virtual desktop** (`prefix` sets 1024x768, or `ORACLE_SCREEN`): a full-screen title otherwise minimises when it
+  loses focus. A title whose window is larger takes a bigger screen on a display of its own (Desire: 1600x900 on
+  `:78`, docs/desire.md), since one X server serves every title on a display.
+- **Direct3D 12** runs through Wine's `d3d12` (vkd3d) on lavapipe, Mesa's software Vulkan driver:
+  `VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.x86_64.json`.
+- **Window titles**: with `+relay` and `RelayInclude` holding `user32.SetWindowTextW`, `play.py` writes the title
+  current at each shot to `<shot>.title.txt`.
 - **`LANG=C.UTF-8`**: an installer with a non-ASCII file name fails in the C locale.
 - **No Mono / Gecko** (`WINEDLLOVERRIDES`): their install prompts wait for a click nobody can give.
 - **A prefix whose first boot was interrupted is broken** (32-bit programs fail to load `kernel32`); `prefix`

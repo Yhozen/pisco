@@ -9,3 +9,4 @@ description = "Builds, runs and inspects PISCO title images (docs/images.md)"
 sha2 = "0.10"
 toml = { version = "0.8", default-features = false, features = ["parse"] }
 serde_json = "1"
+miniz_oxide = "0.9"
