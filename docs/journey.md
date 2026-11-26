@@ -522,6 +522,29 @@ is a bash script, and a title is one process ([fastfetch.md](fastfetch.md)).
   module's memory. No shell is named, since none started it.
 - **The page** learnt a terminal's colours; a Linux title's image has the page as its terminal.
 
+### 3.25 neofetch: processes (2026-11-26)
+
+neofetch is what was asked for first, and a bash script: it needs bash, its subshells and a few programs, so the
+Linux runtime needed processes. A process is an instance of its program's module with memory of its own; what
+joins them (the process table, the pipes) is the host's, in one SharedArrayBuffer every worker reads with Atomics
+(`web/kernel.mjs`). bash and busybox are built from their sources; busybox's applets are scripts that run it.
+
+- **fork** is the hard one: the child must go on in the middle of the parent's call stack, and the runtime's stack
+  cannot be copied. The memory can: the host copies it into a new instance, and the child enters the guest at the
+  return address after the `syscall`. For that, every function of a Linux title can be entered at the return
+  address of each of its calls, and the runtime runs the guest in a loop that goes on at whatever address a
+  function returned to. A child returns from function after function into that loop, each time entering the next
+  one up the guest's stack. `longjmp` became the same thing: unwind to the loop, go on at the saved address.
+- `fixtures/linux-proc`, and then `bash -c` with `$(...)`, worked the first time they ran. neofetch needed two system
+  calls more (`getpeername`, bash asking whether its input is a socket, and `setgid`), and ran in Node in strict
+  mode: 83 processes, about 7 seconds.
+- **In Chrome it overflowed the stack.** A thousand nested calls of one function of bash's parser: gcc's
+  `jmp [table+index*8]` in code that is not position-independent had made each case a function of its own (its
+  address is in data, like a function pointer) and the parser's loop a recursion. Node's workers have a 64 MiB
+  stack; a browser's have about one. The lifter reads those tables now and does not count their slots as function
+  pointers: bash's lifted code shrank by 40 %, and the parser is a loop again.
+- **The page became a terminal**: neofetch draws its logo, then moves the cursor up and writes beside it.
+
 ## 4. Roadblocks
 
 ### Resolved

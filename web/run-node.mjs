@@ -3,18 +3,20 @@
 //                              or node run-node.mjs <image> [title arguments...] (a title image: web/image.mjs, docs/images.md;
 //                              its file layers are the title's C: drive, its config says which exe, its registry, ...)
 // Environment: SW_* variables reach the runtime (SW_TRACE, SW_STRICT, SW_CLOCK, ...); SW_SAVES, SW_SESSION and SW_AUDIO_WAV
-// are the host's too.
+// are the host's too. SW_ROOT=<folder> (a Linux title): the folder is the root of its file system and every program
+// in it has its module beside it (bin/bash -> bin/bash.wasm), for execve; with SW_EXE=<path of the first program>.
 // The main thread only supervises: the title's threads (its main thread too) run in workers, so an exit
 // from any of them ends the process even while others are blocked.
 import fs from 'node:fs';
 import path from 'node:path';
-import { Worker, isMainThread, workerData } from 'node:worker_threads';
+import { Worker, isMainThread, workerData, parentPort } from 'node:worker_threads';
 import { sessionSteps } from './session.mjs';
-import { isImageDir, openImageDir, driveName } from './image.mjs';
+import { isImageDir, openImageDir, driveName, blobPath } from './image.mjs';
+import { createKernel, processImports } from './kernel.mjs';
 
 const EXIT = new BroadcastChannel('pisco-exit');
 const GPU_OPEN = new BroadcastChannel('pisco-gpu'); // a title thread opened the GPU ring: the supervisor runs the null back end
-const STACK_MB = 64; // wasm frames of recursive guest code live on the worker's native stack
+const STACK_MB = +(process.env.PISCO_STACK_MB || 64); // wasm frames of recursive guest code live on the worker's native stack
 
 if (isMainThread) {
   const [first, ...rest] = process.argv.slice(2);
@@ -26,8 +28,11 @@ if (isMainThread) {
   } else {
     const [exePath, ...more] = rest; args = more;
     module = await WebAssembly.compile(fs.readFileSync(first));
-    dir = path.dirname(path.resolve(exePath)); // the title's folder: its exe and the DLLs it ships
+    dir = process.env.SW_ROOT ? path.resolve(process.env.SW_ROOT) : path.dirname(path.resolve(exePath)); // the title's folder: its exe and the DLLs it ships
   }
+  // a Linux title: its processes (web/kernel.mjs), each in a worker of its own
+  const kernel = WebAssembly.Module.exports(module).some((e) => e.name === 'rt_fork_resume') ? createKernel() : null;
+  const programs = image?.config.programs || null;   // a title image's other programs: path -> module blob
   const memory = new WebAssembly.Memory({ initial: 1024, maximum: 65536, shared: true });
   const tids = new Int32Array(new SharedArrayBuffer(4)); tids[0] = 1;
   // SW_SAVES=<folder>: what the title keeps between runs (rt/vfs.c) lives there: its persistent storage (S:\) at the
@@ -50,10 +55,29 @@ if (isMainThread) {
     const { startNull } = await import('./gpu/null.js');
     gpu = startNull(memory, e.data, { dir, log: say });
   };
-  new Worker(new URL(import.meta.url), { workerData: { t0: performance.timeOrigin, module, memory, dir, imageDir, folder, tids, tid: 0, saves, store, args, env },
-    resourceLimits: { stackSizeMb: STACK_MB } }).on('error', (e) => { console.error(e); process.exit(121); });
+  const compiled = new Map();
+  const moduleOf = (where) => {
+    const key = where.file || where.blob;
+    if (!compiled.has(key)) compiled.set(key, WebAssembly.compile(where.file ? fs.readFileSync(where.file) : fs.readFileSync(path.join(imageDir, blobPath(where.blob)))));
+    return compiled.get(key);
+  };
+  const startProcess = (data) => {
+    const w = new Worker(new URL(import.meta.url), { workerData: { t0: performance.timeOrigin, dir, imageDir, folder, saves, store, kernel, programs, tid: 0, ...data },
+      resourceLimits: { stackSizeMb: STACK_MB } });
+    w.on('error', (e) => { console.error(e); process.exit(121); });
+    w.on('message', async (m) => {
+      if (m.fork) startProcess({ module: m.fork.module, memory: m.fork.memory, pid: m.fork.pid, mode: 'fork', tids: new Int32Array(new SharedArrayBuffer(4)).fill(1), args: [], env });
+      if (m.exec) {
+        const mod = await moduleOf(m.exec.program);
+        startProcess({ module: mod, memory: new WebAssembly.Memory({ initial: 1024, maximum: 65536, shared: true }), pid: m.exec.pid, mode: 'exec',
+          tids: new Int32Array(new SharedArrayBuffer(4)).fill(1), args: m.exec.args, env: { ...env, ...m.exec.settings } });
+        w.terminate();
+      }
+    });
+  };
+  startProcess({ module, memory, tids, args, env, pid: 1, mode: 'start' });
 } else {
-  const { module, memory, dir, imageDir, folder, tids, tid, args, env, saves, store, t0 } = workerData;
+  const { module, memory, dir, imageDir, folder, tids, tid, args, env, saves, store, t0, kernel, programs, pid = 1, mode = 'start' } = workerData;
   // a title image: its drive, read from the layers (the main thread has checked their digests)
   const drive = imageDir ? (await openImageDir(imageDir, { verify: false, wasm: false })).drive : null;
   const clock = () => performance.timeOrigin + performance.now() - t0; // one monotonic clock for every thread
@@ -102,7 +126,7 @@ if (isMainThread) {
   };
   // a path in the title's folder, matched without regard to case as Windows does: the real path or null
   const resolve = (name) => {
-    let p = dir;
+    let p = dir; name = name.replace(/^c:(\/|$)/i, '');   // (SW_ROOT: a Linux title's root is the folder)
     for (const part of name.split(/[\\/]/).filter(Boolean)) {
       let list; try { list = fs.readdirSync(p); } catch { return null; }
       const real = list.find((f) => f.toLowerCase() === part.toLowerCase()); if (!real) return null;
@@ -156,6 +180,13 @@ if (isMainThread) {
     exit: (code) => exit(code),
     ...imageFiles,
   };
+  if (kernel) Object.assign(host, processImports(kernel, { pid, memory: () => memory, module, ask: (m) => parentPort.postMessage(m), end: () => process.exit(0),
+    // where a program's module is: a title image's (its config), or beside the program in SW_ROOT
+    program: (name) => {
+      const p = name.replace(/^c:\//i, '');
+      if (programs) return programs['/' + p] ? { blob: programs['/' + p] } : null;
+      const f = path.join(dir, p + '.wasm'); return fs.existsSync(f) ? { file: f } : null;
+    } }), pid === 1 ? { exit: host.exit } : {});
   const spawn = (arg) => {
     const t = Atomics.add(tids, 0, 1);
     new Worker(new URL(import.meta.url), { workerData: { t0, module, memory, dir, imageDir, folder, tids, tid: t, args, env, saves, store, start: arg }, resourceLimits: { stackSizeMb: STACK_MB } })
@@ -164,7 +195,8 @@ if (isMainThread) {
   };
   const instance = new WebAssembly.Instance(module, { env: { memory }, wasi_snapshot_preview1: wasi, wasi: { 'thread-spawn': spawn }, host });
   try {
-    if (tid === 0) { instance.exports._start(); exit(0); }
+    if (tid === 0 && mode === 'fork') { instance.exports.rt_fork_resume(); exit(0); }
+    else if (tid === 0) { instance.exports._start(); exit(0); }
     else instance.exports.wasi_thread_start(tid, workerData.start);
   } catch (e) {
     fs.writeSync(2, String(e.stack || e) + "\n");   // (synchronously: a worker's console is flushed by the main thread, maybe too late)

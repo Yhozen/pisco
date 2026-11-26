@@ -51,7 +51,13 @@ static void g_self_maps(Buf *b) {
     put(b, "%08llx-%08llx r-xp %08llx 00:01 1 %s\n", a, e, m->sections[i].off & ~4095ull, linux_exe); }
 }
 static void g_os_release(Buf *b) { put(b, "NAME=\"PISCO\"\nID=pisco\nPRETTY_NAME=\"PISCO (Linux x86-64 imitated in WebAssembly)\"\nVERSION_ID=\"1\"\nHOME_URL=\"https://github.com/Yhozen/series-web\"\n"); }
-static void g_passwd(Buf *b) { put(b, "root:x:0:0:root:/root:\n" LINUX_USER ":x:%d:%d:" LINUX_USER ":/home/" LINUX_USER ":\n", LINUX_UID, LINUX_UID); }   // (no login shell is named: there is none to start)
+// the login shell: the first of bash and sh the file system has (a title with no shell names none)
+static const char *login_shell(void) {
+  static const char *const shells[] = { "/bin/bash", "/bin/sh" };
+  for (unsigned i = 0; i < 2; i++) { Node n; if (!fs_lookup(shells[i], &n, 1)) { free(n.data); if (n.type == N_FILE) return shells[i]; } }
+  return "";
+}
+static void g_passwd(Buf *b) { const char *sh = login_shell(); put(b, "root:x:0:0:root:/root:%s\n" LINUX_USER ":x:%d:%d:" LINUX_USER ":/home/" LINUX_USER ":%s\n", sh, LINUX_UID, LINUX_UID, sh); }
 static void g_group(Buf *b) { put(b, "root:x:0:\n" LINUX_USER ":x:%d:\n", LINUX_UID); }
 static void g_hostname(Buf *b) { put(b, LINUX_HOSTNAME "\n"); }
 static void g_hosts(Buf *b) { put(b, "127.0.0.1\tlocalhost " LINUX_HOSTNAME "\n"); }

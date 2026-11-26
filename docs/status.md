@@ -8,7 +8,7 @@ titles, its own next steps and its own goal:
 | [Xbox Series](#xbox-series) | Doom as a console title, XCL's console test title (50/50) | D3D12.X shaders from RDNA2 code, MSVC FH4 | Minecraft, the Xbox Series build |
 | [Windows x64](#windows-x64) | Stockfish 19, SimpleTriangleDesktop, SimplePBR | more desktop D3D12 titles | desktop D3D12 titles |
 | [Windows x86](#windows-x86) | Narbacular Drop, playable; Tag: The Power of Paint into its second level | Tag played by hand on a real GPU, then its later levels | 32-bit Direct3D 9 games of the 2000s |
-| [Linux x64](#linux-x64) | fastfetch 2.71.0 | threads, a second process, pipes | statically linked command-line programs |
+| [Linux x64](#linux-x64) | fastfetch 2.71.0; neofetch 7.1.0 (bash, busybox) | threads, signals, writes | statically linked command-line programs |
 
 ## Shared: the recompiler, the core runtime, the packages
 
@@ -180,21 +180,26 @@ Still to do: playing it by hand on a real GPU (T6 of [the plan](plan.md)); the l
 - **`fixtures/linux-hello`** (`tests/run.sh linux`, a default step and in CI): stdio, `printf`'s floating point,
   `malloc` and `mmap`, `qsort`, a jump table, thread-local storage, `setjmp` / `longjmp`, files. What it prints of
   its C library is what the same program prints run natively; what it prints of the machine is `expected.txt`.
-- The runtime is one process with one thread, a read-only file system whose root is the title's folder or its
-  image's drive, and a generated `/proc`, `/sys`, `/dev` and `/etc` (`rt/linux-x64/`). It links none of the Windows
-  core: only `rt/core.c`, `rt/clock.c` and `rt/builtins.c`.
+- **neofetch 7.1.0** ([its page](neofetch.md)) on bash 5.2.37 and busybox 1.36.1, each lifted into a module of its
+  own: 83 processes a run (82 forks, 10 programs executed), in strict mode in Node and in headless Chrome
+  (`tests/run.sh neofetch`). The page is a terminal (a cursor that moves).
+- **`fixtures/linux-proc`** (in `tests/run.sh linux`): fork, a pipe from child to parent, execve, a script run
+  through its `#!`, wait4, a longjmp across a fork, against its native run.
+- A process is an instance of its program's module with memory of its own; the host keeps the process table and
+  the pipes (`web/kernel.mjs`). The file system is read-only, its root the title's folder or its image's drive, with
+  a generated `/proc`, `/sys`, `/dev` and `/etc` (`rt/linux-x64/`). It links none of the Windows core: only
+  `rt/core.c`, `rt/clock.c` and `rt/builtins.c`.
 
 ### Next
 
-1. **Threads** (`clone` with `CLONE_THREAD`, futexes that wait): on the workers the Windows runtimes' threads
-   already run on.
-2. **A second process**: `fork` / `execve` / `wait4` and pipes, for a shell and what it starts (neofetch is a bash
-   script). One module per program, or several programs lifted into one, is undecided.
-3. **Position-independent programs** (static-PIE: `R_X86_64_RELATIVE`), so that a distribution's own static
+1. **Threads** (`clone` with `CLONE_VM`, futexes that wait): on the workers the Windows runtimes' threads already
+   run on.
+2. **Signals**: `SIGCHLD`, `SIGPIPE`, `kill` between processes (a shell with job control needs them).
+3. **A file system that can be written** (a tmpfs the processes share), so that a program can keep a file.
+4. **Position-independent programs** (static-PIE: `R_X86_64_RELATIVE`), so that a distribution's own static
    binaries can be titles, and function discovery good enough for a stripped one.
-4. **Input**: the page's keyboard as standard input, and answers to a terminal's queries.
-5. Jump tables of the non-PIE form (`jmp [table+index*8]`) are found through the code addresses in data, which
-   cuts their functions at every case: correct, but more lifted code than needed.
+5. **Input**: the page's keyboard as standard input, and answers to a terminal's queries; then an interactive shell.
+6. **Fork without copying everything**: a fork copies the whole memory (64 MiB for bash, about 20 ms).
 
 ## Known limits
 

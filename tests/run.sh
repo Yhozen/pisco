@@ -10,7 +10,13 @@
 #            (fixtures/*/expected.txt; tools/oracle-wine/oracle.sh run makes them again)
 #   linux    fixtures/linux-hello, a Linux x86-64 program statically linked with musl (tools/setup-toolchain.sh musl;
 #            skipped without it): what it prints of its C library must be what it prints when run here, on Linux,
-#            and what it prints of the machine must be the machine rt/linux-x64/ describes (expected.txt)
+#            and what it prints of the machine must be the machine rt/linux-x64/ describes (expected.txt). Then
+#            fixtures/linux-proc (fork, pipes, execve, a script, wait4, a longjmp across a fork) must print what it
+#            prints run here
+#   neofetch neofetch (docs/neofetch.md), when tools/build-neofetch.sh has built its root into out/neofetch: its image
+#            built by `pisco build`, run by `pisco run` in strict mode on the virtual clock, its output as for a pipe;
+#            it must print recipes/neofetch/traces/pipe.txt (NEOFETCH_RECORD=1 records it again), and the same in
+#            headless Chrome
 #   fastfetch  fastfetch as a Linux title (docs/fastfetch.md), when tools/build-fastfetch.sh has built it into
 #            out/fastfetch: lifted, run in Node in strict mode on the virtual clock with its logo left out and its
 #            output as for a pipe; what it prints must be recipes/fastfetch/traces/pipe.txt (FASTFETCH_RECORD=1
@@ -122,6 +128,32 @@ linux() {
   SW_STRICT=1 SW_CLOCK=16667 node web/run-node.mjs $d/wasm/title.wasm $d/hello > $d/got.txt 2>&1
   cmp -s $d/got.txt fixtures/linux-hello/expected.txt || { echo "linux-hello differs from expected.txt (< ours, > expected):"; diff $d/got.txt fixtures/linux-hello/expected.txt | head -12; return 1; }
   echo "linux-hello: $(wc -l < $d/native.txt) lines equal its run on this machine, $(wc -l < fixtures/linux-hello/expected.txt) lines with the machine the runtime describes"
+  # processes: the fixture's root is the file system, its program's module beside it (SW_ROOT, web/run-node.mjs)
+  local p=out/linux-proc
+  MUSL=$MUSL fixtures/linux-proc/build.sh $p/root > /dev/null || { echo "linux-proc: does not compile"; return 1; }
+  tools/build-title.sh $p/root/bin/proc $p/wasm > out/linux-proc.build.log 2>&1 || { echo "linux-proc: build failed (out/linux-proc.build.log)"; return 1; }
+  cp $p/wasm/title.wasm $p/root/bin/proc.wasm
+  # natively: the same tree under its own path (the script's #! names /bin/proc there)
+  rm -rf /tmp/pisco-linux-proc && mkdir -p /tmp/pisco-linux-proc/bin && cp $p/root/bin/proc /tmp/pisco-linux-proc/bin/ && printf '#!/tmp/pisco-linux-proc/bin/proc --script\n' > /tmp/pisco-linux-proc/bin/script && chmod +x /tmp/pisco-linux-proc/bin/script
+  /tmp/pisco-linux-proc/bin/proc /tmp/pisco-linux-proc/bin/script > $p/native.txt 2>&1
+  SW_STRICT=1 SW_ROOT=$p/root SW_EXE=/bin/proc timeout 120 node web/run-node.mjs $p/root/bin/proc.wasm $p/root/bin/proc /bin/script > $p/got.txt 2>&1
+  cmp -s $p/got.txt $p/native.txt || { echo "linux-proc differs from its run on this machine (< ours, > native):"; diff $p/got.txt $p/native.txt | head -12; return 1; }
+  echo "linux-proc: $(wc -l < $p/native.txt) lines (fork, pipes, execve, a script, wait4, longjmp) equal its run on this machine"
+}
+neofetch() {
+  local d=out/neofetch want=recipes/neofetch/traces/pipe.txt
+  target/release/pisco build recipes/neofetch --out out/images/neofetch > out/neofetch.image.log 2>&1 || { echo "pisco build failed (out/neofetch.image.log)"; return 1; }
+  SW_STRICT=1 SW_CLOCK=16667 timeout 300 target/release/pisco run out/images/neofetch > $d/got.txt 2>&1 || { echo "it ended with an error:"; tail -3 $d/got.txt; return 1; }
+  [ -z "${NEOFETCH_RECORD:-}" ] || cp $d/got.txt $want
+  cmp -s $d/got.txt $want || { echo "what it prints is not $want (< this run, > recorded):"; diff $d/got.txt $want | head -12; return 1; }
+  # the system calls its processes make, for the progress map (tools/progress.mjs --refresh)
+  SW_TRACE=1 SW_CLOCK=16667 timeout 300 target/release/pisco run out/images/neofetch > $d/trace.log 2>&1
+  local forks execs; forks=$(grep -c '^pisco: fork: the child' $d/trace.log); execs=$(grep -c '^pisco: execve /' $d/trace.log)
+  sed -n 's/^pisco: \([a-z_0-9]*\)(.*/\1/p' $d/trace.log | LC_ALL=C sort -u > $d/syscalls.txt
+  SW_STRICT=1 SW_CLOCK=16667 SW_TTY=0 TIMEOUT=300 node tools/run-chrome.mjs out/images/neofetch 2>&1 | grep -v -e '^gpu: ' -e '^image: ' > $d/got-chrome.txt
+  local trim="awk 1 | sed -e :a -e '/^\\n*\$/{\$d;N;ba' -e '}'"   # (the page's console has no last newline, nor the blank lines at the end)
+  diff <(eval "$trim" < $want) <(eval "$trim" < $d/got-chrome.txt) > $d/chrome.diff || { echo "in Chrome it prints something else (< recorded, > Chrome):"; head -8 $d/chrome.diff; return 1; }
+  echo "neofetch: $(wc -l < $want) lines as recorded, in strict mode, in Node and in Chrome; $forks processes forked, $execs programs executed"
 }
 fastfetch() {
   local d=out/fastfetch want=recipes/fastfetch/traces/pipe.txt
@@ -216,7 +248,8 @@ for s in ${*:-build layout node bench win32 linux ffp sm gdi}; do case $s in
   node)   LINES_SHOWN=8 step node tests/regress.sh ;;
   bench)  step bench bench ;;
   win32)  LINES_SHOWN=4 step win32 win32 ;;
-  linux)  if [ -x "$MUSL/bin/musl-gcc" ]; then step linux linux; else echo "skip  linux: no musl in MUSL=$MUSL (tools/setup-toolchain.sh musl)"; fi ;;
+  linux)  if [ -x "$MUSL/bin/musl-gcc" ]; then LINES_SHOWN=2 step linux linux; else echo "skip  linux: no musl in MUSL=$MUSL (tools/setup-toolchain.sh musl)"; fi ;;
+  neofetch) if [ -x out/neofetch/root/bin/bash ]; then step neofetch neofetch; else echo "skip  neofetch: out/neofetch/root is not built (tools/build-neofetch.sh)"; fi ;;
   fastfetch) if [ -x out/fastfetch/fastfetch ]; then step fastfetch fastfetch; else echo "skip  fastfetch: out/fastfetch/fastfetch is not built (tools/build-fastfetch.sh)"; fi ;;
   chrome) LINES_SHOWN=6 step chrome chrome ;;
   nd)     if [ -f "$ND/Narbacular Drop.exe" ]; then LINES_SHOWN=3 step nd nd; else echo "skip  nd: the game is not installed (ND=$ND)"; fi ;;

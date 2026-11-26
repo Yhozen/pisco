@@ -48,7 +48,7 @@ for (const rt of Object.keys(RUNTIMES)) {
 const impls = new Map([...implsOf['windows-x64'], ...implsOf['xbox-series']]); // D3D12's methods: both 64-bit runtimes
 // the runtime each title is built for (its recipe's base)
 const TITLE_RUNTIME = { 'Doom (our console title)': 'xbox-series', "XCL's console test title": 'xbox-series', 'Stockfish 19 (official build)': 'windows-x64',
-  'SimpleTriangleDesktop (clang-cl)': 'windows-x64', 'SimpleTriangleDesktop (MSVC)': 'windows-x64', 'SimplePBR (clang-cl)': 'windows-x64', 'Narbacular Drop': 'windows-x86', 'Tag: The Power of Paint': 'windows-x86', 'fastfetch 2.71.0': 'linux-x64' };
+  'SimpleTriangleDesktop (clang-cl)': 'windows-x64', 'SimpleTriangleDesktop (MSVC)': 'windows-x64', 'SimplePBR (clang-cl)': 'windows-x64', 'Narbacular Drop': 'windows-x86', 'Tag: The Power of Paint': 'windows-x86', 'fastfetch 2.71.0': 'linux-x64', 'neofetch 7.1.0 (bash, busybox)': 'linux-x64' };
 const dataImports = new Set(['msvcrt.dll!__initenv', 'msvcrt.dll!_commode', 'msvcrt.dll!_fmode']);
 // rt/process.c's find_import, in JavaScript, against one runtime's functions
 function resolves(full, rt) {
@@ -108,7 +108,7 @@ if (argv.includes('--refresh')) {
     data.titles[name] = [...new Set(names.filter((n, i) => !targets[i]))].sort(); // imports between the title's own images are not the runtime's
   }
   // a Linux title: the system calls it made in its recorded run (tests/run.sh fastfetch writes the list)
-  for (const [name, file] of Object.entries({ 'fastfetch 2.71.0': 'out/fastfetch/syscalls.txt' })) {
+  for (const [name, file] of Object.entries({ 'fastfetch 2.71.0': 'out/fastfetch/syscalls.txt', 'neofetch 7.1.0 (bash, busybox)': 'out/neofetch/syscalls.txt' })) {
     const f = path.join(root, file);
     if (!fs.existsSync(f)) { console.log(`progress: ${name}: ${file} not there, kept from before`); continue; }
     data.titles[name] = fs.readFileSync(f, 'utf8').split('\n').filter(Boolean).map((n) => `syscall!${n}`).sort();

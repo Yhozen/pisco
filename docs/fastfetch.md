@@ -50,7 +50,8 @@ whose output from its C library must be what the same program prints when run na
 - **`syscall`** is a call into the runtime (`rt_syscall`, `rt/linux-x64/syscall.c`); **FS** is the thread pointer,
   which musl sets with `arch_prctl` after reading the auxiliary vector the runtime puts on the first stack.
 - **`setjmp` / `longjmp`**: a lifted function returns by returning, so the C library's `longjmp` is replaced by the
-  runtime's, and the return address of each call to `setjmp` is a landing pad, as for a Windows title's exceptions.
+  runtime's, which goes on at the address `setjmp` saved (since neofetch: by entering the function there,
+  [neofetch.md](neofetch.md#what-it-took)).
 - **The x87 at 64 bits of precision**: musl's `printf` and `strtod` do their arithmetic in `long double`. With the
   registers kept as doubles (right for Windows code, which runs the x87 at 53 bits) `printf("%f")` truncated
   instead of rounding. A Linux title's registers are the module's `long double` (binary128), each result rounded to
@@ -63,11 +64,11 @@ whose output from its C library must be what the same program prints when run na
 
 ## Limits
 
-- One process, one thread: `fork`, `clone` and `execve` say `ENOSYS`, so the lines fastfetch gets from other
-  programs (Shell's version, Packages) are left out. A program built with threads would stop at its first
-  `pthread_create`.
+- No threads: a program built with them would stop at its first `pthread_create`. Processes came later, with
+  neofetch ([neofetch.md](neofetch.md)); fastfetch's own image has no other program to start, so the lines it gets
+  from other programs (Shell's version, Packages) are left out.
 - No network, no signals delivered, nothing can be written but the standard streams and `/dev/null`.
-- A program must be linked `-static -no-pie` and keep its symbols (for `setjmp` to be found; without `.symtab` and
+- A program must be linked `-static -no-pie` and keep its symbols (for `longjmp` to be found; without `.symtab` and
   `.eh_frame` the lifter still finds what calls and data refer to).
 - No keyboard is wired to a title's standard input in the page; a terminal query a program sends is not answered.
 - x87 results are rounded twice (to 113 bits, then to 64): a result exactly between two 64-bit values can differ in

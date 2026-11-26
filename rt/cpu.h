@@ -38,6 +38,7 @@ typedef struct Cpu {
   u32 eflags;     // 32-bit guests: the EFLAGS bits pushfd / popfd carry beside the function's flags (AC, ID)
   fpx st[8];      // x87 registers: doubles, or for a Linux title 64 bits of precision (fpx, below)
   struct Landing *landing; // the innermost frame an exception can resume in (rt/seh.c)
+  u64 resume;     // a Linux title: the return address the function entered next goes on from (0: its entry)
 } Cpu;
 // A lifted function with landing pads registers one while it runs. `jb` is a jmp_buf in its frame.
 typedef struct Landing { void *jb; u64 entry_rsp; u64 resume; struct Landing *prev; } Landing;
@@ -71,7 +72,7 @@ void rt_trap(u64 addr) __attribute__((noreturn));
 void rt_unimpl(u64 addr) __attribute__((noreturn));
 void rt_call(Cpu *c, u64 target);       // each runtime's: its imports, then rt_dispatch
 void rt_dispatch(Cpu *c, u64 target);   // core.c: the lifted function at that address
-void rt_syscall(Cpu *c);                // a Linux title's `syscall` instruction (rt/linux-x64/syscall.c)
+void rt_syscall(Cpu *c, u64 next);      // a Linux title's `syscall` instruction (rt/linux-x64/syscall.c); next: where it returns
 void rt_longjmp(Cpu *c);                // a Linux title's longjmp, in place of its C library's (rt/linux-x64/jump.c)
 void rt_cpuid(Cpu *c);
 u64 rt_rdtsc(void);
