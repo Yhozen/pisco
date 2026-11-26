@@ -63,7 +63,15 @@ function run(d) {
     if (!files.has(name)) { const u = urlOf(name); let data = null; if (u) { const x = new XMLHttpRequest(); x.open('GET', u, false); x.responseType = 'arraybuffer'; x.send(); if (x.status === 200) data = new Uint8Array(x.response); } files.set(name, data); }
     return files.get(name);
   };
-  const ask = (name, what) => { const u = urlOf(name); if (!u) return null; const x = new XMLHttpRequest(); x.open('GET', `${u}?${what}`, false); x.send(); return x.status === 200 ? x.responseText : null; };
+  // a file's size or kind, or a folder's listing, asked once: the server's files never change while the title runs (its
+  // writes stay in rt/vfs.c's overlay), and each request blocks the title's thread for a round trip (Tag reopens its
+  // textures dozens of times a second: uncached, its thread spent most of its time waiting here)
+  const answers = new Map();
+  const ask = (name, what) => {
+    const key = `${what}\0${name}`;
+    if (!answers.has(key)) { const u = urlOf(name); let r = null; if (u) { const x = new XMLHttpRequest(); x.open('GET', `${u}?${what}`, false); x.send(); if (x.status === 200) r = x.responseText; } answers.set(key, r); }
+    return answers.get(key);
+  };
   const host = {
     fault: (kind, a) => { bus.postMessage({ out: `pisco: ${kinds[kind]}${kind === 5 ? '' : ` at 0x${BigInt.asUintN(64, a).toString(16)}`}\n` }); exit(120); },
     now_us: () => clock() * 1000,

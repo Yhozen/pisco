@@ -163,6 +163,7 @@ u64 rt_handle_new(Object *o);
 Object *rt_handle_get(u64 h);
 Object *rt_object_new(int type);
 void rt_handle_close(u64 h);
+void rt_mapping_free(Object *o);   // kernel32.c: a mapping no handle or view holds, and its bytes (rt_wait_lock held)
 #if GUEST_BITS == 32
 #define PSEUDO_PROCESS 0xFFFFFFFFull
 #define PSEUDO_THREAD 0xFFFFFFFEull

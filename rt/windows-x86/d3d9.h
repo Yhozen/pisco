@@ -81,6 +81,7 @@ typedef struct Buffer9 {       // a vertex buffer or an index buffer
   u32 gpu_id, gpu_dirty;       // d3d9_gpu.c: the buffer on the GPU, and the `dirty` last sent there
   u32 gpu_lo, gpu_hi;          //   the bytes locked for writing since then,
   u8 gpu_pending, gpu_mode;    //   whether any lock said which, and how they may be written (GPU_WRITE_*)
+  u8 *gpu_copy;                //   what the GPU holds, for a large buffer locked whole (only what differs is sent)
 } Buffer9;
 typedef struct Declaration9 { Object9 o; u32 count, fvf; Element9 *elements;   // `count` includes the end marker; `fvf`: the code it was made from, 0 for a title's own
                               struct Declaration9 *next_fvf; } Declaration9;

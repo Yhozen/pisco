@@ -9,7 +9,8 @@
 // shaders, the vertex layout from the declaration, raster / depth / blend state, the target's formats), a
 // uniform block (matrices, lights, material, fog, ...), the texture and sampler of stage 0, the vertex and index
 // buffers. Buffers and textures are created on the GPU when first used and written when their `dirty` counters
-// have moved (a buffer: the bytes its locks named, in the way the locks' flags allow). A pass begins when the
+// have moved (a buffer: the bytes its locks named, in the way the locks' flags allow; for a lock of all of a
+// large buffer, only the bytes that differ from what the GPU holds). A pass begins when the
 // target changes and at every Clear.
 //
 // ---- Direct3D 9's conventions where they differ from WebGPU's: each is handled once, here or in d3d9_ffp.c ----
@@ -60,7 +61,7 @@ static u32 bits_of(float f) { u32 v; memcpy(&v, &f, 4); return v; }
 static void color_rgba(u32 c, float out[4]) { out[0] = (float)((c >> 16) & 255) / 255.0f; out[1] = (float)((c >> 8) & 255) / 255.0f; out[2] = (float)(c & 255) / 255.0f; out[3] = (float)(c >> 24) / 255.0f; }
 
 static u32 next_id = 1;
-static struct { u64 draws, skipped, passes, readbacks, buffer_writes, buffer_bytes, texture_writes, texture_bytes, uniform_bytes; u32 buffers, textures; } stat;
+static struct { u64 draws, skipped, passes, readbacks, buffer_writes, buffer_bytes, buffer_bytes_kept, texture_writes, texture_bytes, uniform_bytes; u32 buffers, textures; } stat;
 static void rec(u32 op, const u32 *w, u32 n) { u8 *p = rt_gpu_rec_begin(op, 4 * n); memcpy(p, w, 4 * n); rt_gpu_rec_end_quiet(); }
 
 // ---- resources ----
@@ -127,12 +128,34 @@ void d3d9_gpu_buffer_locked(Buffer9 *b, u32 offset, u32 size, u32 flags) {
   }
   b->gpu_pending = 1;
 }
+// The bytes between *lo and *hi that differ from the GPU's copy, narrowed to whole words (none: *hi == *lo).
+static void changed(const u8 *now, const u8 *sent, u32 size, u32 *lo, u32 *hi) {
+  u32 l = *lo, h = *hi; u64 x, y;
+  while (l + 8 <= h) { memcpy(&x, now + l, 8); memcpy(&y, sent + l, 8); if (x != y) break; l += 8; }
+  while (l < h && now[l] == sent[l]) l++;
+  while (h >= l + 8) { memcpy(&x, now + h - 8, 8); memcpy(&y, sent + h - 8, 8); if (x != y) break; h -= 8; }
+  while (h > l && now[h - 1] == sent[h - 1]) h--;
+  if (h == l) { *lo = *hi = l & ~3u; return; }
+  *lo = l & ~3u; *hi = (h + 3) & ~3u; if (*hi > size) *hi = size;
+}
+enum { COPY_MIN = 16u << 10 };   // smaller buffers are sent whole: comparing would cost about what it saves
 static u32 buffer(Buffer9 *b) {
   if (!b->gpu_id) { b->gpu_id = resource(0, 0, b->size, 1, 1, 1, 0); stat.buffers++; }
   if (b->dirty != b->gpu_dirty) {   // its bytes changed: the locked range, or all of it if nothing said which
     u32 lo = b->gpu_pending ? b->gpu_lo & ~3u : 0, hi = b->gpu_pending ? (b->gpu_hi + 3) & ~3u : b->size;   // whole words, of the buffer's own bytes
     if (hi > b->size || hi < lo) hi = b->size;
-    if (hi > lo) write_buffer(b->gpu_id, lo, b->bits + lo, hi - lo, b->gpu_pending ? b->gpu_mode : GPU_WRITE_ORDERED);
+    u32 mode = b->gpu_pending ? b->gpu_mode : GPU_WRITE_ORDERED;
+    // A lock of the whole buffer that keeps its bytes (NOOVERWRITE, or no flag) says nothing of which ones the title
+    // wrote: Tag locks a 384 KiB vertex buffer whole a dozen times a frame to append a few vertices. From the second
+    // such lock on, the buffer keeps a copy of what the GPU holds and only the bytes that differ are sent. A DISCARD
+    // leaves the GPU's other bytes undefined, so the copy is dropped.
+    if (mode == GPU_WRITE_DISCARD) { free(b->gpu_copy); b->gpu_copy = 0; }
+    else if (!lo && hi == b->size && b->size >= COPY_MIN) {
+      if (b->gpu_copy) { changed(b->bits, b->gpu_copy, b->size, &lo, &hi); stat.buffer_bytes_kept += b->size - (hi - lo); }
+      else b->gpu_copy = malloc(b->size);   // filled below, with all of it
+    }
+    if (hi > lo) write_buffer(b->gpu_id, lo, b->bits + lo, hi - lo, mode);
+    if (b->gpu_copy && hi > lo) memcpy(b->gpu_copy + lo, b->bits + lo, hi - lo);
     b->gpu_dirty = b->dirty; b->gpu_pending = 0;
   }
   return b->gpu_id;
@@ -172,7 +195,7 @@ void d3d9_gpu_release(Object9 *o) {
   switch (o->kind) {
   case K_SURFACE: destroy(((Surface9 *)o)->gpu_id); destroy(((Surface9 *)o)->part_id); break;
   case K_TEXTURE: case K_VOLUMETEXTURE: case K_CUBETEXTURE: destroy(((Texture9 *)o)->gpu_id); break;
-  case K_VERTEXBUFFER: case K_INDEXBUFFER: destroy(((Buffer9 *)o)->gpu_id); break;
+  case K_VERTEXBUFFER: case K_INDEXBUFFER: destroy(((Buffer9 *)o)->gpu_id); free(((Buffer9 *)o)->gpu_copy); ((Buffer9 *)o)->gpu_copy = 0; break;
   default: break;
   }
 }
@@ -723,7 +746,7 @@ void d3d9_gpu_shot(const char *name) {
 }
 void d3d9_gpu_stats(void) {
   if (!rt_gpu_ring) return;
-  rt_log("== Direct3D 9 on the GPU: %u vertex shaders, %u fragment shaders, %u pipelines, %u samplers; %llu draws (%llu left out) in %llu passes; %u buffers, %llu writes, %llu bytes; %u textures, %llu writes, %llu bytes; %llu bytes of uniforms; %llu read-backs",
-         vertex_shader_count, fragment_shader_count, pipeline_count, sampler_count, stat.draws, stat.skipped, stat.passes, stat.buffers, stat.buffer_writes, stat.buffer_bytes, stat.textures, stat.texture_writes, stat.texture_bytes, stat.uniform_bytes, stat.readbacks);
+  rt_log("== Direct3D 9 on the GPU: %u vertex shaders, %u fragment shaders, %u pipelines, %u samplers; %llu draws (%llu left out) in %llu passes; %u buffers, %llu writes, %llu bytes (%llu not sent: unchanged); %u textures, %llu writes, %llu bytes; %llu bytes of uniforms; %llu read-backs",
+         vertex_shader_count, fragment_shader_count, pipeline_count, sampler_count, stat.draws, stat.skipped, stat.passes, stat.buffers, stat.buffer_writes, stat.buffer_bytes, stat.buffer_bytes_kept, stat.textures, stat.texture_writes, stat.texture_bytes, stat.uniform_bytes, stat.readbacks);
 }
 void d3d9_gpu_finish(void) { rt_gpu_drain(); }

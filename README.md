@@ -37,7 +37,8 @@ from [XCL](https://github.com/ivall/xcl) are GPL-2.0-only). See [LICENSING.md](L
 Docs: [the plan](docs/plan.md) (the structure, the runtimes, the rules a change follows) ·
 [the journey so far](docs/journey.md) (what was built, measured and learned, roadblocks) ·
 [status and next steps, by runtime](docs/status.md) · [first run of a console title](docs/first-run.md) · [wasm32 or wasm64](docs/memory.md) ·
-[Narbacular Drop, the first Windows PC title](docs/narbacular-drop.md) · [title images and `pisco`](docs/images.md)
+[Narbacular Drop, the first Windows PC title](docs/narbacular-drop.md) · [title images and `pisco`](docs/images.md) ·
+[hosts: the browser, its limits and a native host](docs/hosts.md)
 
 ## How it works
 

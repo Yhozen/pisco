@@ -357,8 +357,29 @@ IMP(kernel32, OpenFileMappingA) {
   if (!ex) { SET_LAST_ERROR(2); RET(0); return; }
   RET(rt_handle_new(o));
 }
-IMP(kernel32, MapViewOfFile) { Object *o = rt_handle_get(ARG(0)); RET(o && o->type == OBJ_MAPPING ? o->view + ((ARG(2) << 32) | (u32)ARG(3)) : 0); }
-IMP(kernel32, UnmapViewOfFile) { RET(1); }
+// A mapping lives while a handle or a view holds it: a view stays valid after the mapping's handle is closed, until
+// UnmapViewOfFile. Then its bytes go too. (Tag maps every texture file it loads, dozens of times a second; when the
+// bytes were never freed, it grew by about 100 KB a frame and failed at 2 GiB after five minutes of play.)
+typedef struct View { u64 at; Object *o; struct View *next; } View;
+static View *views;   // under rt_wait_lock
+void rt_mapping_free(Object *o) { if (o->view) rt_vfree(o->view); free(o); }
+IMP(kernel32, MapViewOfFile) {
+  Object *o = rt_handle_get(ARG(0));
+  if (!o || o->type != OBJ_MAPPING) { RET(0); return; }
+  View *v = malloc(sizeof *v); v->at = o->view + ((ARG(2) << 32) | (u32)ARG(3)); v->o = o;
+  pthread_mutex_lock(&rt_wait_lock); o->refs++; v->next = views; views = v; pthread_mutex_unlock(&rt_wait_lock);
+  RET(v->at);
+}
+IMP(kernel32, UnmapViewOfFile) {
+  pthread_mutex_lock(&rt_wait_lock);
+  for (View **pv = &views; *pv; pv = &(*pv)->next) if ((*pv)->at == ARG(0)) {
+    View *v = *pv; Object *o = v->o; *pv = v->next; free(v);
+    if (--o->refs == 0) rt_mapping_free(o);
+    break;
+  }
+  pthread_mutex_unlock(&rt_wait_lock);
+  RET(1);
+}
 
 // ---- time ----
 // The title's clock (rt.h): the host's, or with SW_CLOCK=<microseconds a frame> a virtual one that starts at a
