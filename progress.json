@@ -1,12 +1,12 @@
 {
- "updated": "2026-11-25",
+ "updated": "2026-11-26",
  "d3d12": [
   223,
   353
  ],
  "imports": [
-  910,
-  1005
+  939,
+  1035
  ],
  "xcl": [
   50,
@@ -71,6 +71,13 @@
    "runtime": "Windows x86",
    "done": 306,
    "total": 315,
+   "shipped": 0
+  },
+  {
+   "name": "fastfetch 2.71.0",
+   "runtime": "Linux x64",
+   "done": 29,
+   "total": 30,
    "shipped": 0
   }
  ]
