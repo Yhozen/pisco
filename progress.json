@@ -5,8 +5,8 @@
   353
  ],
  "imports": [
-  939,
-  1035
+  954,
+  1050
  ],
  "xcl": [
   50,
@@ -78,6 +78,13 @@
    "runtime": "Linux x64",
    "done": 29,
    "total": 30,
+   "shipped": 0
+  },
+  {
+   "name": "neofetch 7.1.0 (bash, busybox)",
+   "runtime": "Linux x64",
+   "done": 36,
+   "total": 36,
    "shipped": 0
   }
  ]
