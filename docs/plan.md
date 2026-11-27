@@ -20,6 +20,7 @@ packages  Doom as a console title, XCL's   Stockfish, SimpleTriangleDesktop,    
   (`rt/core.c`, `rt/clock.c`, `rt/builtins.c`) and its own folder, and so does the PS5 runtime, with the GPU ring and the mixer. None of them is "the" runtime: what started as the goal, Minecraft on the Xbox Series runtime, is now that
   runtime's goal, one among several.
 - **Hosts** run an image: the browser page (`web/browser/`, WebGPU) and Node (`web/run-node.mjs`, a null GPU).
+  A separate Wasmtime experiment runs one x86-64 benchmark function through a Linux KVM import. [Host probe](hosts.md#a-wasmtime-host-with-a-kvm-import)
 
 ## The runtimes
 

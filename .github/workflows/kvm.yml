@@ -1,0 +1,29 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+name: KVM host probe
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - '.github/workflows/kvm.yml'
+      - 'tests/kvm/**'
+      - 'tests/memory64/fnv.rs'
+      - 'fixtures/bench/src/work.rs'
+      - 'crates/lifter/**'
+      - 'rt/cpu.h'
+      - 'rt/modules.h'
+      - 'tests/run.sh'
+permissions:
+  contents: read
+jobs:
+  kvm:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build tools and access to the runner's KVM device
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq acl clang lld xxd
+          sudo setfacl -m "u:$(id -un):rw" /dev/kvm
+      - name: Compare lifted and hardware execution
+        run: KVM_REQUIRED=1 tests/run.sh kvm

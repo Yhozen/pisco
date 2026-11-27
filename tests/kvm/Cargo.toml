@@ -1,0 +1,19 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+[package]
+name = "pisco-kvm-probe"
+version = "0.1.0"
+edition = "2021"
+license = "GPL-2.0-or-later"
+publish = false
+
+# Only the optional probe builds Wasmtime and the Linux KVM bindings.
+[workspace]
+
+[dependencies]
+kvm-bindings = "0.14.2"
+kvm-ioctls = "0.25.1"
+memmap2 = "0.9"
+wasmtime = { version = "51", default-features = false, features = ["cranelift", "runtime", "std"] }
+
+[profile.dev]
+debug = 0

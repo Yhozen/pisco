@@ -585,6 +585,12 @@ described. Now each pull request adds its entry as a file in `changelog/` (the i
 of them), and on `main` `.github/workflows/changelog.yml` draws the page again with `tools/changelog.mjs` and publishes
 the draft release that holds the entry's video. The eleven entries written by hand became the first eleven files.
 
+### 3.29 Calling KVM from Wasm (2026-11-27)
+
+The FNV benchmark gave the native host experiment a reference result and a function that needs only a byte array.
+The same ELF supplies the lifted code and the machine code. A Wasmtime import runs the latter on a KVM vCPU and
+returns its checksum to the Wasm caller. [How to run the comparison](hosts.md#a-wasmtime-host-with-a-kvm-import)
+
 ## 4. Roadblocks
 
 ### Resolved

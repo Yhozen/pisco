@@ -147,6 +147,30 @@ When a title needs one of: a WebGPU feature it lacks (bindless, mesh shaders, 64
 memory, or a speed the browser cannot reach after profiling shows the time is in the browser (the GPU process, the
 upload path), not in our code. Profile first: the Tag case looked like a browser limit and was ours.
 
+## A Wasmtime host with a KVM import
+
+`tests/run.sh kvm` builds the FNV-1a workload from `fixtures/bench` as an x86-64 ELF. The probe's Wasm module
+contains both PISCO's lift of that ELF and its original text section. Its `check` function fills an input buffer and
+either calls the lifted entry or passes the original bytes, ELF entry address and input to `hypervisor.run_x86_64`.
+
+The Rust host bounds-checks both slices against Wasm memory and copies them into a private KVM memory slot.
+It starts one x86-64 vCPU in long mode at the ELF entry with the same two SysV arguments. A return from the
+function lands on a host-supplied `hlt`. The host checks the exit and instruction pointer, then returns RAX to
+Wasm. Each call creates a VM and copies the input, so the check measures correctness only.
+
+Run on x86-64 Linux with Rust 1.97 or later, GNU binutils, `xxd`, and Clang with a Wasm linker. The script also
+recognises the project's wasi-sdk in `WASI_SDK`. Without read/write access to `/dev/kvm` it checks the lifted path
+and reports a hardware skip. To require both paths, run
+
+```sh
+KVM_REQUIRED=1 tests/run.sh kvm
+```
+
+Each path must match the FNV checksum for empty input, 257 bytes and the benchmark's 64 MiB
+(`48e7c13380222325`). The hardware run must also return through KVM exactly once per input. The probe runs a
+freestanding function. A title host would additionally need an image loader, guest services and devices. KVM
+here requires an x86-64 host CPU. An Apple Silicon Mac can run x86 code through PISCO's lift. [Probe source](../tests/kvm/)
+
 ## Sources
 
 - Tauri and WebGPU: [tauri#6381](https://github.com/tauri-apps/tauri/issues/6381);

@@ -11,6 +11,9 @@ titles, its own next steps and its own goal:
 | [Linux x64](#linux-x64) | fastfetch 2.71.0; neofetch 7.1.0 (bash, busybox); cowsay 3.8.4 (perl) | threads, signals, writes | statically linked command-line programs |
 | [PS5](ps5.md) | the raymarching tech demo (CPU-drawn, AVX2): its three scenes, pad and music in the browser | more system functions, a GPU (AGC) title | PS5 homebrew |
 
+The optional native host probe compares a lifted benchmark function with its original x86-64 code on Linux KVM.
+Run it with `tests/run.sh kvm`. [Host experiment](hosts.md#a-wasmtime-host-with-a-kvm-import)
+
 ## Shared: the recompiler, the core runtime, the packages
 
 - **Gate A (CPU and OS layer on synthetic titles): passed** in Node and headless Chrome — our own titles

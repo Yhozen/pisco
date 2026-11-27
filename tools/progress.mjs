@@ -313,5 +313,6 @@ fs.writeFileSync(path.join(out, 'progress.html'), `<!doctype html>
 <li><b>Runtime imports</b>, one panel per runtime: the union of what its titles import (${titleBars.map((b) => esc(`${b.name} (${b.runtime})`)).join(', ')}), resolved as that runtime (its base's files) resolves them.</li>
 <li><b>XCL's console test title</b>: its 50 checks, from the last run.</li>
 </ul>
+<p><a href="https://github.com/Yhozen/pisco/blob/main/docs/hosts.md#a-wasmtime-host-with-a-kvm-import">Native host experiment</a> · One x86-64 benchmark function run through a Wasmtime KVM import.</p>
 `);
 console.log(`progress: ${out}/progress.svg  D3D12 ${dd}/${dt}, imports ${id}/${it}, XCL ${xd}/${xt}, ladder ${steps_done}/${steps.length}`);

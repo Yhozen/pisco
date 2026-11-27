@@ -6,6 +6,7 @@
 #   layout   tests/layout.sh: the runtime's files are listed only by the bases, and every one is in some base
 #   node     tests/regress.sh: every title in Node (XCL's title and Stockfish too when their files are there)
 #   bench    the benchmark title's checksums against the same work built natively
+#   kvm      optional Wasmtime host probe: the same x86-64 FNV function lifted and run through a KVM import
 #   win32    the 32-bit titles in Node: hello, and the x87 and crt32 titles against what they printed under Wine
 #            (fixtures/*/expected.txt; tools/oracle-wine/oracle.sh run makes them again)
 #   linux    fixtures/linux-hello, a Linux x86-64 program statically linked with musl (tools/setup-toolchain.sh musl;
@@ -282,6 +283,7 @@ for s in ${*:-build layout node bench win32 linux avx ffp sm gdi changelog}; do 
   layout) step layout tests/layout.sh ;;
   node)   LINES_SHOWN=8 step node tests/regress.sh ;;
   bench)  step bench bench ;;
+  kvm)    LINES_SHOWN=8 step kvm tests/kvm/run.sh ;;
   win32)  LINES_SHOWN=4 step win32 win32 ;;
   avx)    if [ -x "$MUSL/bin/musl-gcc" ]; then step avx tests/avx.sh; else echo "skip  avx: no musl in MUSL=$MUSL (tools/setup-toolchain.sh musl)"; fi ;;
   linux)  if [ -x "$MUSL/bin/musl-gcc" ]; then LINES_SHOWN=2 step linux linux; else echo "skip  linux: no musl in MUSL=$MUSL (tools/setup-toolchain.sh musl)"; fi ;;
