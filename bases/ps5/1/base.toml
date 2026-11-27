@@ -1,0 +1,16 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# base/ps5:1, what a PS5 title is built FROM (docs/images.md): one native PS5 executable (an ELF of type 0xFE10, as the
+# open ps5-payload-sdk and ps5-native-tool make homebrew), the parts of the core that imitate no system (the lifted
+# functions' table, the virtual CPU with AVX2 and FMA, memory, the clock), the GPU ring and the mixer, and the PS5
+# runtime (rt/ps5/: the start of the process, libkernel, the C library, VideoOut, Pad, AudioOut).
+name = "base/ps5"
+version = 1
+architecture = "amd64"
+os = "ps5"
+
+[cpu]
+features = ["fpu", "tsc", "cx8", "cmov", "mmx", "fxsr", "sse", "sse2", "sse3", "ssse3", "sse4.1", "sse4.2", "popcnt", "cx16", "pclmul"]
+
+[runtime]
+sources = ["rt/builtins.c", "rt/core.c", "rt/clock.c", "rt/gpu_ring.c", "rt/mixer.c", "rt/ps5/*.c"]
+opt = "-O2"
