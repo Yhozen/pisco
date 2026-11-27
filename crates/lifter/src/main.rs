@@ -195,7 +195,7 @@ impl Image {
         // symbols: functions, and the labels of hand-written assembly (no type)
         for sym in file.symbols() {
             let a = sym.address();
-            if machine && (matches!(sym.name().unwrap_or(""), "common_startup_64" | "early_top_pgt" | "__switch_to_asm" | "early_idt_handler_array" | "irq_entries_start" | "spurious_entries_start")
+            if machine && (matches!(sym.name().unwrap_or(""), "common_startup_64" | "early_top_pgt" | "__switch_to_asm" | "do_task_dead" | "early_idt_handler_array" | "irq_entries_start" | "spurious_entries_start")
                 || sym.name().unwrap_or("").starts_with("__SCT__")) {
                 img.named.insert(sym.name().unwrap_or("").to_string(), (a, sym.size()));
             }
@@ -1072,6 +1072,11 @@ fn decode_func(img: &Image, entry: u64, entries: &BTreeSet<u64>) -> (Func, BTree
                 }
                 // a machine's task switch (__switch_to_asm's load of the next task's stack): a new task starts after it
                 if is_switch(img, &ins) { f.leaders.insert(next); f.rets.insert(next); }
+                // a machine's jump back: an interrupt is taken on it (rt/cpu.h POLL), and the code goes on at its target,
+                // where the kernel may also send it back later (after a signal's handler): a return address
+                if img.machine && matches!(ins.flow_control(), FlowControl::UnconditionalBranch | FlowControl::ConditionalBranch) && ins.op0_kind() == OpKind::NearBranch64 && ins.near_branch_target() <= ip {
+                    f.rets.insert(ins.near_branch_target());
+                }
                 if m32 && outside(next) {
                     break; // runs into another function: emitted as a call to it
                 }
@@ -1987,6 +1992,8 @@ impl Emit<'_> {
             // runs, and the TLB of the code's privilege: the kernel's above the canonical hole, the user's below it
             let first = s.find("Flags f={0};(void)f;").expect("a function's flags");
             s.insert_str(first + "Flags f={0};(void)f;".len(), &format!("u64 ip_=0x{entry:x}ull;(void)ip_;TlbEntry*const tlb_={};(void)tlb_;", if entry >> 47 != 0 { "mmu_k" } else { "mmu_u" }));
+            // a task that ends (Linux's do_task_dead): its host stack and C stack can go once it has switched away
+            if self.img.named.get("do_task_dead").is_some_and(|v| v.0 == entry) { s = s.replacen(&format!("goto L_{entry:x};\n"), &format!("rt_task_dying(c);goto L_{entry:x};\n"), 1); }
         }
         let mut prev_next = 0;
         for (&ip, i) in &f.insns {
@@ -2002,8 +2009,13 @@ impl Emit<'_> {
             if self.img.machine && !body.is_empty() {
                 // the instruction's address, for the fault it may raise; its stores as calls (MW64...); an
                 // interrupt is taken at the function's start and at each jump back (rt_poll)
+                // (on a jump back, the interrupt is taken on the edge itself: at its target, which is a label)
                 let back = matches!(i.flow_control(), FlowControl::UnconditionalBranch | FlowControl::ConditionalBranch) && is_near(i) && i.near_branch_target() <= ip;
-                body = format!("ip_=0x{ip:x}ull;{}{}", if ip == entry || back { format!("POLL(0x{ip:x}ull);") } else { String::new() }, machine_stores(&body));
+                if back {
+                    let t = i.near_branch_target();
+                    body = body.replace(&format!("goto L_{t:x};"), &format!("{{POLL(0x{t:x}ull);goto L_{t:x};}}"));
+                }
+                body = format!("ip_=0x{ip:x}ull;{}{}", if ip == entry { format!("POLL(0x{ip:x}ull);") } else { String::new() }, machine_stores(&body));
             }
             if !body.is_empty() {
                 writeln!(s, "{body}").unwrap();

@@ -80,7 +80,8 @@ typedef struct Co {
   Level *levels;       // innermost first
   u32 sp;              // its C stack pointer while it is parked
   u64 key;             // parked: the kernel stack pointer it was left with (what switch_to loads to go back)
-  int id, started, parked;
+  int id, started, parked, dying, free;
+  char *cstack;        // its C stack (malloc'd), freed when it has died
   u64 start_pc;
 } Co;
 extern Co *co_cur;

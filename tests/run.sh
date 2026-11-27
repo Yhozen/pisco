@@ -34,8 +34,8 @@
 #   kernel   the Linux title's kernel (docs/linux.md), when tools/build-linux.sh has built it into out/linux: the
 #            lifter must read vmlinux as a machine's image (--machine) and say what it does not lift yet. With QEMU
 #            (tools/oracle-qemu; said in one line without it) the kernel must run /init to its end there, and its
-#            programs must print recipes/linux/traces/programs.txt (KERNEL_RECORD=1 records it again), on QEMU's
-#            machine and on one without HPET, PIT and PIC, which is what rt/microvm-x64 will have. Then the title's
+#            programs must print recipes/linux/traces/programs.txt (KERNEL_RECORD=1 records it again) on QEMU's
+#            machine, and a machine without HPET, PIT and PIC (rt/microvm-x64's) must boot it to /init. Then the title's
 #            image (`pisco build recipes/linux`: the kernel and the initramfs's busybox lifted into one module, minutes
 #            the first time) booted by `pisco run` in Node: its console must be the same twice, its boot up to "Run
 #            /init as init process" recipes/linux/traces/boot.txt (the compiler's name and the kernel's sizes left
@@ -209,10 +209,11 @@ kernel() {
   cmp -s $d/programs.txt $want || { echo "on QEMU the programs print otherwise than the recorded trace (< now, > recorded):"; diff $d/programs.txt $want | head -8; return 1; }
   # the machine rt/microvm-x64 will be: no HPET, no PIT, no 8259 (QEMU's emulated CPU has no TSC-deadline timer, so the
   # kernel is told the TSC's rate and runs without a timer interrupt there)
-  ORACLE_RUN=$d/oracle-small ORACLE_QEMU_MACHINE=q35,hpet=off,pit=off,pic=off tools/oracle-qemu/oracle.sh run linux tsc_early_khz=2900000 > $d/oracle-small.txt 2>&1 \
-    || { echo "on QEMU without HPET, PIT and PIC the kernel did not run /init to its end ($d/oracle-small.txt):"; tail -4 $d/oracle-small.txt; return 1; }
-  ORACLE_RUN=$d/oracle-small tools/oracle-qemu/oracle.sh programs linux | cmp -s - $want || { echo "without HPET, PIT and PIC the programs print otherwise than the recorded trace"; return 1; }
-  echo "QEMU: /init ran to its end, $(wc -l < $want) lines from its programs equal the recorded trace, also without HPET, PIT and PIC"
+  # (there QEMU's CPU has no TSC-deadline timer, so the kernel has no timer interrupt: /init's programs that sleep
+  # wait for ever. The check is that this hardware boots the kernel to its first program)
+  ORACLE_RUN=$d/oracle-small ORACLE_QEMU_MACHINE=q35,hpet=off,pit=off,pic=off ORACLE_TIMEOUT=60 tools/oracle-qemu/oracle.sh run linux tsc_early_khz=2900000 > $d/oracle-small.txt 2>&1
+  grep -q '^init: Linux' $d/oracle-small.txt || { echo "on QEMU without HPET, PIT and PIC the kernel did not reach /init ($d/oracle-small.txt):"; tail -4 $d/oracle-small.txt; return 1; }
+  echo "QEMU: /init ran to its end, $(wc -l < $want) lines from its programs equal the recorded trace; without HPET, PIT and PIC it boots to /init"
   # lifted, on the machine: the title's image, its boot up to the first program, then the programs
   target/release/pisco build recipes/linux --out out/images/linux > $d/image.log 2>&1 || { echo "pisco build recipes/linux failed ($d/image.log)"; tail -3 $d/image.log; return 1; }
   local boot=recipes/linux/traces/boot.txt k
@@ -230,10 +231,14 @@ kernel() {
   SW_CMDLINE="$(cat recipes/linux/cmdline) rdinit=/bin/sh" timeout 600 target/release/pisco run out/images/linux < recipes/linux/console-input.txt 2>&1 | tr -d '\r' | sed -n '/^Run \/bin\/sh as init process/,$p' | grep -v '^pisco: ' > $d/console.txt
   [ -z "${KERNEL_RECORD:-}" ] || cp $d/console.txt $con
   cmp -s $d/console.txt $con || { echo "typed into, the shell answers otherwise than $con (< now, > recorded):"; diff $d/console.txt $con | head -8; return 1; }
+  # many processes: 500 programs run one after another by a shell (each task's stacks freed when it ends)
+  printf 'mount -t devtmpfs dev /dev\ni=0; while [ $i -lt 500 ]; do /bin/true; i=$((i+1)); done; echo ran $i programs\nprintf "\\000" | dd of=/dev/port bs=1 seek=244 count=1 2>/dev/null\n' \
+    | SW_CMDLINE="$(cat recipes/linux/cmdline) rdinit=/bin/sh" timeout 600 target/release/pisco run out/images/linux 2>&1 | tr -d '\r' > $d/many.txt
+  grep -qx 'ran 500 programs' $d/many.txt || { echo "a shell did not run 500 programs ($d/many.txt):"; tail -3 $d/many.txt; return 1; }
   # a disk: virtio's block device, formatted, written, mounted again and read by /init
   SW_DISK=16M timeout 600 target/release/pisco run out/images/linux < /dev/null 2>&1 | tr -d '\r' > $d/disk.txt
   grep -qx 'disk: on the disk, 1000 lines, 16777216 bytes' $d/disk.txt || { echo "with a disk, /init did not read back what it wrote ($d/disk.txt):"; grep -E 'vda|disk|virtio' $d/disk.txt | tail -4; return 1; }
-  echo "lifted (pisco run): $(wc -l < $boot) lines of boot to /init, twice the same, equal to $boot; /init's programs print what they print on QEMU; a shell typed into answers as $con; a virtio disk formatted, written and read again"
+  echo "lifted (pisco run): $(wc -l < $boot) lines of boot to /init, twice the same, equal to $boot; /init's programs print what they print on QEMU; a shell typed into answers as $con; 500 programs in a row; a virtio disk formatted, written and read again"
 }
 neofetch() {
   local d=out/neofetch want=recipes/neofetch/traces/pipe.txt

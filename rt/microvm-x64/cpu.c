@@ -21,7 +21,7 @@ void cpu_deliver(Cpu *c, u32 vector, int has_err, u32 err, u64 rip, u64 want) {
   u64 handler = (u64)(g[0] | g[1] << 8) | (u64)(g[6] | g[7] << 8) << 16 | (u64)(g[8] | g[9] << 8 | g[10] << 16 | (u32)g[11] << 24) << 32;
   unsigned ist = g[4] & 7, type = g[5] & 15;
   if (!(g[5] & 0x80)) rt_fatal("machine: vector %u has no handler (at 0x%llx)", vector, rip);
-  if (mc_trace > 1) rt_log("machine: vector %u at 0x%llx (cpl %d) -> 0x%llx", vector, rip, mc.cpl, handler);
+  if (mc_trace > 1) rt_log("machine: task %d: vector %u at 0x%llx (cpl %d) -> 0x%llx", co_cur->id, vector, rip, mc.cpl, handler);
   int old_cpl = mc.cpl; u64 old_rsp = R[RSP];
   u64 rsp = old_rsp;
   if (old_cpl == 3) rsp = vread64(mc.tss_base + 4);
@@ -48,6 +48,7 @@ void rt_exc(Cpu *c, u32 vector, u32 err, u64 rip, u64 next) { cpu_deliver(c, vec
 // a return to (rip, cpl): to the Level that waits for it (its raiser goes on), or else the innermost one is
 // abandoned and the code there is entered by address in the loop below it
 void cpu_resume_at(Cpu *c, u64 rip, int cpl) {
+  if (mc_trace > 2) { rt_log("machine: task %d: back to 0x%llx (cpl %d); waiting:", co_cur->id, rip, cpl); for (Level *l = co_cur->levels; l; l = l->prev) rt_log("    0x%llx (cpl %d)", l->want_rip, l->want_cpl); }
   for (Level *l = co_cur->levels; l; l = l->prev)
     if (l->want_cpl == cpl && (l->want_rip == rip || l->alt_rip == rip)) {
       if (l->alt_rip == rip && l->want_rip != rip) rt_fatal("machine: a handler went back to 0x%llx, which cannot be done again", rip);
@@ -55,6 +56,15 @@ void cpu_resume_at(Cpu *c, u64 rip, int cpl) {
     }
   Level *l = co_cur->levels;
   if (mc_trace) rt_log("machine: on at 0x%llx (cpl %d), not where it was interrupted", rip, cpl);
+  // a program sent elsewhere while code of its waits below (a signal's handler, on the way back from a fault, an
+  // interrupt or a system call): the code there runs on top, and the code that waits goes on when the kernel comes
+  // back to it (sigreturn). (A new program after execve runs on top too; its old frames go with the task.)
+  if (cpl == 3 && l && l->want_cpl == 3) {
+    Level n = { .want_rip = ~0ull, .alt_rip = ~0ull, .want_cpl = -1, .prev = l };
+    co_cur->levels = &n;
+    run_level(c, &n, rip);
+  }
+  // else (a fix-up in the kernel, or nothing waits): what was interrupted is abandoned
   if (l) { co_cur->levels = l->prev; if (l->prev) { l->prev->loop_pc = rip; longjmp(l->prev->loop, 1); } }
   co_cur->root_pc = rip; longjmp(co_cur->root, 1);
 }
@@ -79,6 +89,7 @@ void rt_sysret(Cpu *c) {
 
 void rt_syscall_m(Cpu *c, u64 next, Flags *f) {
   if (!(mc.efer & 1)) { cpu_deliver(c, 6, 0, 0, next - 2, next); return; }
+  if (mc_trace > 2) rt_log("machine: task %d: system call %llu at 0x%llx", co_cur->id, R[RAX], next);
   R[RCX] = next; R[11] = flags_get64(f) | (mc_rflags & RFLAGS_SYS);
   mc.cpl = 0; mc.seg[S_CS] = (u16)((mc.star >> 32) & 0xFFFC); mc.seg[S_SS] = (u16)(((mc.star >> 32) & 0xFFFC) + 8);
   mc_rflags = ((mc_rflags & ~mc.fmask) & RFLAGS_SYS) | 2;

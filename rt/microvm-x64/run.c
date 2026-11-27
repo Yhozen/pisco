@@ -11,7 +11,7 @@
 #include <unistd.h>
 #include "machine.h"
 
-HOST("co_switch") void host_co_switch(int from, int to, int start);   // suspends `from`; resumes `to` or starts it
+HOST("co_switch") void host_co_switch(int from, int to, int start, int dead);   // suspends `from` (or drops it: dead); resumes `to` or starts it
 HOST("stat") s64 host_stat(const char *name, u32 len);                 // a file's size, -1 missing
 
 // the C stack pointer (a wasm global), and the entry of a new host stack: its C stack set before any C runs
@@ -117,26 +117,32 @@ enum { MAX_CO = 1024, C_STACK = 512 * 1024 };
 static Co *tasks[MAX_CO]; static int n_co;
 Co *co_cur;
 static Co *co_new(void) {
-  if (n_co == MAX_CO) rt_fatal("machine: more than %d kernel tasks", MAX_CO);
+  for (int i = 0; i < n_co; i++) if (tasks[i]->free) { Co *co = tasks[i]; int id = co->id; memset(co, 0, sizeof *co); co->id = id; return co; }   // a dead task's slot
+  if (n_co == MAX_CO) rt_fatal("machine: more than %d kernel tasks at once", MAX_CO);
   Co *co = calloc(1, sizeof *co); co->id = n_co; tasks[n_co++] = co; return co;
 }
-u32 co_stack_top(int id) { (void)id; char *s = malloc(C_STACK); if (!s) rt_fatal("machine: no memory for a task's C stack"); return (u32)(uptr)(s + C_STACK); }
+static Co *co_dead;   // a task that died and switched away: its C stack is freed by the next to run
+static void reap(void) { if (co_dead) { free(co_dead->cstack); co_dead->cstack = 0; co_dead->free = 1; co_dead = 0; } }
+void rt_task_dying(Cpu *c) { (void)c; co_cur->dying = 1; }
+u32 co_stack_top(int id) { char *s = malloc(C_STACK); if (!s) rt_fatal("machine: no memory for a task's C stack"); tasks[id]->cstack = s; return (u32)(uptr)(s + C_STACK); }
 void co_main(int id) {
-  Co *co = tasks[id]; co_cur = co;
+  Co *co = tasks[id]; co_cur = co; reap();
   co->root_pc = co->start_pc;
   root_loop(&cpu, co);
 }
 void rt_switch(Cpu *c, u64 rsp, u64 next) {
   Co *me = co_cur, *to = 0;
   me->key = R[RSP];
-  for (int i = 0; i < n_co; i++) if (tasks[i] != me && tasks[i]->parked && tasks[i]->key == rsp) { to = tasks[i]; break; }
+  for (int i = 0; i < n_co; i++) if (tasks[i] != me && tasks[i]->parked && !tasks[i]->free && tasks[i]->key == rsp) { to = tasks[i]; break; }
   R[RSP] = rsp;
   int start = 0;
   if (!to) { to = co_new(); to->start_pc = next; start = 1; }
-  if (mc_trace > 1) rt_log("machine: task switch from stack 0x%llx to 0x%llx (%s)", me->key, rsp, start ? "a new task" : "it goes on");
-  me->parked = 1; to->parked = 0; me->sp = rt_sp_get();
-  host_co_switch(me->id, to->id, start);
-  rt_sp_set(me->sp); me->parked = 0; co_cur = me;
+  if (mc_trace > 1) rt_log("machine: task switch from %d (stack 0x%llx%s) to %d (0x%llx, %s)", me->id, me->key, me->dying ? ", ending" : "", to->id, rsp, start ? "a new task" : "it goes on");
+  int dead = me->dying && me->cstack;   // (the boot task's C stack is the module's own: never freed)
+  me->parked = !dead; to->parked = 0; me->sp = rt_sp_get();
+  if (dead) co_dead = me;
+  host_co_switch(me->id, to->id, start, dead);
+  rt_sp_set(me->sp); me->parked = 0; co_cur = me; reap();
 }
 
 // ---- the start ----

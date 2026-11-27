@@ -274,6 +274,8 @@ reasoning and the measurements: [research/kernel-as-a-title.md](research/kernel-
   and reads it again.
 - **K6, done**: programs at the same addresses, each lifted on its own (`lifter --user`) and found by the hash of
   the code page that runs: busybox and linux-hello in one `/init`, as on QEMU.
+- **K7, done**: a signal delivered on the way back from a fault or an interrupt (the handler runs on top, the
+  interrupted code goes on after `sigreturn`); a task's stacks freed when it ends: 4,000 programs in a row.
 - **Next**: a module per program (so bash, GPL-3.0, can run beside the GPL-2.0 kernel), a network, snapshots.
 
 ## Known limits

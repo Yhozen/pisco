@@ -232,12 +232,25 @@ has not mapped yet is read first, as a fetch would: the kernel's page fault hand
 - bash is GPL-3.0-or-later and cannot be linked into one module with the GPL-2.0-only kernel
   ([LICENSING.md](../LICENSING.md)); that needs a module per program, next.
 
+## What it took (K7): signals anywhere, and many processes
+
+- **A signal on the way back from a fault**: a shell's copy-on-write fault came back with SIGCHLD pending, so the
+  kernel went to the handler, and after `sigreturn` back to the faulting instruction, which no label marks. Now when
+  the kernel sends a program elsewhere while code of its waits below (on a fault, an interrupt or a system call), the
+  code there runs on top, and the waiting code goes on when the kernel comes back to it: the access is done again. A
+  fix-up in the kernel still abandons what faulted.
+- **Interrupts in loops are taken on the jump back**, at its target, which is a label: an interrupted loop the
+  kernel resumes later (after a handler) goes on at its next iteration with its flags as they are.
+- **Tasks that end**: `do_task_dead` marks the task; when it switches away, its C stack is freed, its slot used again
+  and its wasm stack dropped by the host. A task that ended was found again by a new task whose kernel stack had its
+  stack pointer, and went on as the process that had exited.
+- Checked: `/init` catches a signal sent into a busy loop, as on QEMU; a shell runs 500 programs one after another
+  (`tests/run.sh kernel`). 4,000 programs took 5.2 s, the host's memory 635 MB at the end against 595 MB after 2,000.
+
 ## Limits
 
 - Only programs lifted with the kernel run (busybox and linux-hello). Programs under other licences than
   GPL-2.0-compatible ones (bash) need a module of their own.
-- A signal that interrupts a program between system calls returns, after its handler, to an instruction that is
-  no label: such a program stops the machine (shells and busybox wait in system calls, where it works).
 - Model-specific registers the machine does not know read as 0 where a CPU raises #GP, which some of the kernel's
   `rdmsr_safe` callers would want.
 - A store that faults between its read and its write (an add to memory whose page must be copied) reads again after
@@ -258,4 +271,5 @@ has not mapped yet is read first, as a fetch would: the kernel's page fault hand
 | K4 | a console typed into, in Node and in the page; `pisco build recipes/linux`, two builds the same | done |
 | K5 | a virtio disk: formatted, written and read again by `/init` | done |
 | K6 | programs at the same addresses, found by the hash of their code pages: busybox and linux-hello | done |
-| K7 | a module per program (bash beside the kernel), a network, snapshots | next |
+| K7 | signals delivered anywhere (on the way back from a fault or an interrupt); tasks' stacks freed when they end | done |
+| K8 | a module per program (bash beside the kernel), a network, snapshots | next |

@@ -17,6 +17,8 @@ hello: longjmp: 42
 kill: the child ended with 143
 trap: USR1 handled
 trap: the subshell ended with 3
+async: USR2 caught while counting
+async: counted to 30000
 spawn: 20 loops
 exec: 10 programs run
 init: done

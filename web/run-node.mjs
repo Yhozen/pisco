@@ -243,8 +243,8 @@ if (isMainThread) {
   let coEntry = null;
   if (machine) {
     const parked = new Map();
-    host.co_switch = new WebAssembly.Suspending((from, to, start) => {
-      const mine = new Promise((resolve) => parked.set(from, resolve));
+    host.co_switch = new WebAssembly.Suspending((from, to, start, dead) => {
+      const mine = new Promise((resolve) => { if (!dead) parked.set(from, resolve); });   // (a task that died is never resumed: its stack is dropped)
       if (start) coEntry(to).catch((e) => { fs.writeSync(2, String(e.stack || e) + "\n"); exit(123); });
       else { const go = parked.get(to); if (!go) throw new Error(`machine: task ${to} is not waiting`); parked.delete(to); go(); }
       return mine;

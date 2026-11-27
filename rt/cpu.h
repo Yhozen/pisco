@@ -185,6 +185,7 @@ void rt_out(struct Cpu *c, u16 port, unsigned size, u32 v);
 void rt_switch(struct Cpu *c, u64 rsp, u64 next);
 void rt_check_return(struct Cpu *c, u64 call, u64 next, u64 sp);
 void rt_static_call(struct Cpu *c, u64 tramp);
+void rt_task_dying(struct Cpu *c);   // the running task ends: once it switches away, its stacks go
 // a program a machine's kernel runs, lifted on its own (lifter --user): its functions, its return addresses, and
 // how the machine knows it is the one in memory (the hash of each page of its code, the code's bytes only)
 typedef struct ProgramDef {

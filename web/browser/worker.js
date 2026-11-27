@@ -121,8 +121,8 @@ function run(d) {
   let coEntry = null;
   if (machine) {
     const parked = new Map();
-    host.co_switch = new WebAssembly.Suspending((from, to, begin) => {
-      const mine = new Promise((resolve) => parked.set(from, resolve));
+    host.co_switch = new WebAssembly.Suspending((from, to, begin, dead) => {
+      const mine = new Promise((resolve) => { if (!dead) parked.set(from, resolve); });   // (a task that died is never resumed: its stack is dropped)
       if (begin) coEntry(to).catch((err) => { bus.postMessage({ out: `pisco: ${err && err.stack || err}\n` }); exit(123); });
       else { const go = parked.get(to); if (!go) throw new Error(`machine: task ${to} is not waiting`); parked.delete(to); go(); }
       return mine;
