@@ -16,6 +16,11 @@ Videos: <a href="https://github.com/Yhozen/pisco/releases">releases</a></p>
 <h2>Changelog</h2>
 <!-- changelog:start -->
 
+<h3>This changelog, from files <span class="d">2026-11-27</span><span class="tag">PR #38</span></h3>
+<p>Each pull request now adds its entry as a file in <code>changelog/</code>, and a workflow on <code>main</code> draws this page from them
+and publishes the release holding an entry's video, in the manner of
+<a href="https://github.com/changesets/changesets">changesets</a>. The page was edited by hand before.</p>
+
 <h3>cowsay, on perl <span class="d">2026-11-27</span><span class="tag">PR #37</span></h3>
 <p>cowsay 3.8.4 on perl 5.44, built from source as a static Linux program: six runs (cowsay and cowthink, several
 cows) print what native perl prints, in Node and in Chrome. The port found two recompiler gaps that a newer compiler
@@ -64,7 +69,7 @@ are Wine's, and in headless Chrome its first level is within 1.4 of 255 of Wine'
 <li>CI for the tests that need no game files, and <code>reuse lint</code>.</li>
 </ul>
 
-<h3>Microsoft's desktop D3D12 samples <span class="d">2026-11-25</span></h3>
+<h3>Microsoft's desktop D3D12 samples <span class="d">2026-11-25</span><span class="tag">PR #38</span></h3>
 <p>Steps 1 and 2 of the graphics ladder: Microsoft's SimpleTriangleDesktop (clang-cl and MSVC builds) and SimplePBR on
 the Windows x64 runtime, drawn with WebGPU.</p>
 
@@ -75,11 +80,11 @@ recompiler's 32-bit mode with x87, a Win32 process for a 32-bit guest, fixed-fun
 FMOD 3 on an AudioWorklet, DirectInput from the keyboard and a Pointer Lock mouse, saves in OPFS, and recipes that
 build title images. 103–355 frames a second on that machine.</p>
 
-<h3>XCL's console checks, 50 of 50 <span class="d">2026-11-24</span></h3>
+<h3>XCL's console checks, 50 of 50 <span class="d">2026-11-24</span><span class="tag">PR #38</span></h3>
 <p>Step 4 of the ladder: XCL's console test title passes all 50 of its checks in Chrome. The progress map shows what the
 runtime implements against what titles use.</p>
 
-<h3>Doom as an Xbox console title, in a web browser <span class="d">2026-11-24</span></h3>
+<h3>Doom as an Xbox console title, in a web browser <span class="d">2026-11-24</span><span class="tag">PR #38</span></h3>
 <video src="doom-series-web.mp4" controls playsinline preload="metadata"></video>
 <p>doomgeneric + Freedoom, built against D3D12.X, GameInput, XAudio2 and XGameSave; its x86-64 code recompiled to
 WebAssembly, D3D12.X translated to WebGPU, XAudio2 mixed into an AudioWorklet, saves kept in the browser (OPFS).
