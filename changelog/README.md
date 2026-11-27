@@ -19,5 +19,6 @@ cowsay 3.8.4 on perl 5.44, built from source as a static Linux program: ...
 - **The name** is `<yyyy-mm-dd>-<n>-<slug>.md`: newest date first, and the higher `<n>` first within a day.
 - **A video goes in a release, never in the repository.** Make a draft release with the video and a `poster.png`
   (`gh release create <tag> --draft --title "..." video.mp4 poster.png`) and name its tag in `video:`; the workflow
-  publishes it, with the entry as its notes, when the entry is merged.
+  publishes it, with the entry as its notes, when the entry is merged; its tag is made then, on the merged commit
+  of `main` (whatever branch the draft was made from).
 - **Check an entry:** `tests/run.sh changelog`, or `node tools/changelog.mjs` to list them all.
