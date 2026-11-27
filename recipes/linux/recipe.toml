@@ -3,20 +3,32 @@
 # the busybox of its initramfs into one module, on the machine rt/microvm-x64 imitates. /init's programs print what
 # they print on QEMU (traces/programs.txt). No sha256: built on this machine from checked sources, the files'
 # bytes depend on the compiler's.
+schema = 1
 name = "linux"
 from = "base/microvm-x64:1"
 
-[source]
+[about]
+display_name = "Linux"
+version = "6.18.65"
+revision = 1
+
+[[input]]
+id = "root"
+kind = "folder"
 file = "../../out/linux/root"
-extract = "folder"
+built_by = "tools/build-linux.sh"
+
+[[extract]]
+kind = "folder"
+input = "root"
 app = "/"
 
 [run]
-exe = "/vmlinux"
+kernel = "/vmlinux"
 initrd = "/initramfs.cpio"
 cmdline = "console=ttyS0,115200 earlyprintk=serial,ttyS0,115200 panic=-1 no_timer_check vdso=0 tsc=reliable 8250.nr_uarts=1 norandmaps"
 
-[lifter]
+[hints.pisco]
 split = 16
 programs = ["/busybox", "/hello", "/fastfetch", "/perl"]
 # each in a wasm module of its own, not linked with the kernel: bash's licence (GPL-3.0-or-later) is not the kernel's

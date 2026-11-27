@@ -108,7 +108,7 @@ target/release/pisco run out/images/narbacular-drop --session recipes/narbacular
 target/release/pisco run out/images/narbacular-drop --chrome          # headless Chrome; in a browser of your own:
 node tools/serve.mjs 8000 web out/images/narbacular-drop           # then http://127.0.0.1:8000/browser/index.html?image=/files/0/
 target/release/pisco build recipes/tag --source ~/Downloads/Tag_setup.exe                          # -> out/images/tag, the same way
-target/release/pisco build recipes/desire --source ~/Downloads/DESI-Re-v0.1-Windows-x64.zip --with REDIST=<the x64 C++ runtime DLLs>   # -> out/images/desire
+target/release/pisco build recipes/desire --source ~/Downloads/DESI-Re-v0.1-Windows-x64.zip --input redist=<the x64 C++ runtime DLLs>   # -> out/images/desire
 target/release/pisco inspect out/images/narbacular-drop               # its layers, config and registry
 target/release/pisco census <a title's .exe>                          # what the base and its libraries answer for
 ```

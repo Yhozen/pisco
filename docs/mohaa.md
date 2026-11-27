@@ -78,7 +78,7 @@ MESA_EXTENSION_MAX_YEAR=2001 tools/oracle-wine/oracle.sh start mohaa 'C:\Program
 ## The image
 
 `pisco build recipes/mohaa --source mohaaspdemo.zip` reads the zip, the Wise installer inside it and the InstallShield
-setup inside that (`extract = "wise"` with `[source.installshield.groups]`, `crates/pisco/src/installers.rs`), with
+setup inside that (a `wise` extract step and an `installshield` one, `crates/pisco/src/installers.rs`), with
 no program of the installer's run. `--compare` against Wine's installed folder: all 801 files equal (the 6 that
 differ are those the game wrote). The exe and `system86.dll` are lifted and the image links (90 s); the game DLLs in
 `main\` and Miles in `snddrivers\` are not lifted yet (M1).
@@ -129,7 +129,7 @@ tools/oracle-wine/mohaa-play.sh recipes/mohaa/sessions/menu.json menu1      # th
   compiler of today makes SSE2 of MMX's intrinsics) prints 63 lines equal to Wine's on a real CPU.
 - **Miles' mixer** (`MSSMIXER`, hand-written) saves DS and ES around its routines: `push`/`pop` of DS, ES and SS are
   stack moves in a flat address space, and the lifter's discovery accepts code that saves them in pairs and returns.
-- **DLLs the engine loads itself**: `[lifter] load` lifts `main\gamex86.dll`, `main\cgamex86.dll`,
+- **DLLs the engine loads itself**: `[code] load` lifts `main\gamex86.dll`, `main\cgamex86.dll`,
   `main\ffx86.dll`, Miles and its plugins with the exe; such a DLL is loaded on demand (DllMain at LoadLibrary, its
   sections read again if it is loaded a second time after its last FreeLibrary).
 - **Configure.exe is not run.** The engine starts it when the markers it leaves are missing; the recipe's `[files]`
@@ -172,7 +172,7 @@ tools/oracle-wine/mohaa-play.sh recipes/mohaa/sessions/menu.json menu1      # th
 - **A Pentium III.** The recipe gives the processor the oracle's machine is to the engine (MMX and SSE): the engine
   and Miles take the paths they take under Wine on an Intel processor, and the engine's console names the same CPU.
 - **One more of Miles' mixer routines** (`MSSMIXER` at `0x2113d047` as linked) is found by no discovery rule and is
-  named in the recipe's `[lifter] entries`.
+  named in the recipe's `[code] entries`.
 
 ## What M4 took
 

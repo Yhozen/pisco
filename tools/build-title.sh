@@ -10,22 +10,24 @@
 # PS5 executable (OS=ps5), microvm-x64 for a machine's image such as a kernel (OS=microvm),
 # windows-x86 for a 32-bit title, windows-x64 for another 64-bit one. A title links
 # only its base's files and every library of the base (LICENSING.md); with RECIPE, the recipe's base and libraries.
-# RECIPE=<recipe.toml>: the app's recipe (CPU features, registry values); tools/recipe-gen.py reads it.
+# RECIPE=<recipe.toml>: the app's recipe (CPU features, registry values, builtin DLLs), as `pisco recipe --json` reads it
+# (pisco is the one reader of recipes); tools/recipe-gen.py takes that.
 set -euo pipefail
 root=$(cd "$(dirname "$0")/.." && pwd); exe=$1; out=$2; mkdir -p "$out"
 W=${WASI_SDK:-$HOME/tools/wasi-sdk-34.0-x86_64-linux}/bin
 JOBS=${JOBS:-$(nproc)}
 TARGET="--target=wasm32-wasip1-threads -matomics -mbulk-memory -msimd128 -mnontrapping-fptoint -msign-ext"
 # DLL_DIR=<folder>: the DLLs the title imports from its system folder (an image's C:\WINDOWS\system32), lifted with it
-"$root/target/release/lifter" "$exe" "$out/title.c" --split "${SPLIT:-8}" ${TRACE_PC:+--trace-pc} ${DLL_DIR:+--dll-dir "$DLL_DIR=c:/WINDOWS/system32"} $([ -n "${RECIPE:-}" ] && python3 "$root/tools/recipe-gen.py" --lifter-options "$RECIPE")
+PISCO=$root/target/release/pisco; [ -x "$PISCO" ] || { echo "build-title.sh: $PISCO is not built (cargo build --release -p pisco)" >&2; exit 2; }
+RJ=""; if [ -n "${RECIPE:-}" ]; then RJ=$out/recipe.json; "$PISCO" recipe "$RECIPE" --json > "$RJ" || exit 2; fi
+"$root/target/release/lifter" "$exe" "$out/title.c" --split "${SPLIT:-8}" ${TRACE_PC:+--trace-pc} ${DLL_DIR:+--dll-dir "$DLL_DIR=c:/WINDOWS/system32"} $([ -n "$RJ" ] && python3 "$root/tools/recipe-gen.py" --lifter-options "$RJ")
 GUEST_BITS=64; IMAGE_LOW=0; IMAGE_HIGH=0; FIXED_BASE=0; OS=windows
 [ -f "$out/title.env" ] && . "$out/title.env"
 [ -z "${PROFILE:-}" ] || { echo "build-title.sh: PROFILE is gone; BASE=windows-x86, windows-x64, xbox-series or linux-x64" >&2; exit 2; }
-PISCO=$root/target/release/pisco; [ -x "$PISCO" ] || { echo "build-title.sh: $PISCO is not built (cargo build --release -p pisco)" >&2; exit 2; }
 if [ -n "${RECIPE:-}" ] && [ -z "${BASE:-}" ]; then RT_FILES=$("$PISCO" sources "$(dirname "$RECIPE")")
 else BASE=${BASE:-$([ "$OS" = linux ] && echo linux-x64 || { [ "$OS" = ps5 ] && echo ps5; } || { [ "$OS" = microvm ] && echo microvm-x64; } || { [ "$GUEST_BITS" = 32 ] && echo windows-x86 || echo windows-x64; })}; RT_FILES=$("$PISCO" sources "base/$BASE:1" --all-libraries); fi
 RT_FILES=$(for f in $RT_FILES; do echo "$root/$f"; done)
-python3 "$root/tools/recipe-gen.py" ${RECIPE:+"$RECIPE"} > "$out/recipe.gen.c"
+python3 "$root/tools/recipe-gen.py" ${RJ:+"$RJ"} > "$out/recipe.gen.c"
 # the import table: every IMP(dll, name) the runtime defines, and for a 32-bit title the stdcall sizes
 "$root/tools/gen-imports.sh" "$GUEST_BITS" "$out" "$out/imports.gen.c" $RT_FILES
 CF="$TARGET -mllvm -wasm-enable-sjlj ${OPT:--O2} -fno-strict-aliasing -I$root/rt -Wno-everything -DGUEST_BITS=$GUEST_BITS"

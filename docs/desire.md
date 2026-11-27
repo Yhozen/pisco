@@ -17,7 +17,7 @@ this page holds names and counts only.
 | `licenses/`, `THIRD_PARTY_NOTICES.md` | D3D12 Memory Allocator 3.2.0, ufbx 0.23.0, DirectXMath: MIT, all three compiled into the exe. The notices say the MIT terms are the libraries' only, not the engine's or the game's |
 
 The zip does not carry Microsoft's C++ runtime (`msvcp140.dll`, `vcruntime140.dll`, `vcruntime140_1.dll`): the
-recipe takes them from the user's copy of the x64 redistributable (`[[source.add]]`, `--with REDIST=<folder>`).
+recipe takes them from the user's copy of the x64 redistributable (an `[[extract]] copy` step, `--input redist=<folder>`).
 The one used here is the redistributable 14.44.35211 (`vc_redist.x64.exe` from Microsoft), its three DLLs taken out
 of its `vcRuntimeMinimum` cabinet.
 
@@ -124,8 +124,8 @@ about 1,140 each (one a frame), `SetWindowTextW` 795, `CoCreateInstance` 10 (one
 
 ## The image
 
-`pisco build recipes/desire --source DESI-Re-v0.1-Windows-x64.zip --with REDIST=<folder>` reads the zip itself
-(`extract = "zip"`, `root` the top folder), copies the three runtime DLLs beside the exe, and lifts the four images
+`pisco build recipes/desire --source DESI-Re-v0.1-Windows-x64.zip --input redist=<folder>` reads the zip itself
+(an `[[extract]] zip` step, `root` the top folder), copies the three runtime DLLs beside the exe, and lifts the four images
 together: 5,334 functions (3,829 found from the exception tables), 43 jump tables, 260 AVX instructions made traps
 (the virtual CPU reports no AVX). 364 imports: 219 answered by the base, 81 between the lifted images, **64 not
 implemented**. In Node, strict, it stops at the first of them (`_dclass`).
@@ -144,7 +144,7 @@ implemented**. In Node, strict, it stops at the first of them (`_dclass`).
 
 ```sh
 target/release/pisco build recipes/desire --source ~/Downloads/DESI-Re-v0.1-Windows-x64.zip \
-    --with REDIST=<a folder with msvcp140.dll, vcruntime140.dll, vcruntime140_1.dll (x64, 14.38 or later)>   # -> out/images/desire
+    --input redist=<a folder with msvcp140.dll, vcruntime140.dll, vcruntime140_1.dll (x64, 14.38 or later)>   # -> out/images/desire
 node tools/serve.mjs 8000 web out/images/desire    # then http://127.0.0.1:8000/browser/index.html?image=/files/0/
 ```
 
@@ -182,7 +182,7 @@ browser's storage, as on a PC it stays in `Assets/Maps`.
     `GetResourceAllocationInfo1/2/3` over the existing methods; `CheckFeatureSupport`'s OPTIONS and ARCHITECTURE
     fields at their offsets (heap tier 1, binding tier 3; UMA on the console only); the adapter answers
     `IDXGIAdapter2` to `4`.
-  - **Shaders, compiled by `pisco build`** (`[shaders] frames = 30`): the image is run once with
+  - **Shaders, compiled by `pisco build`** (`[warmup] frames = 30`): the image is run once with
     `SW_HLSL_CAPTURE=1` (`D3DCompile` logs each source and answers with a placeholder) until its 30th frame
     (`SW_EXIT_FRAMES`); `tools/hlsl-prep.mjs` compiles the seven sources with dxc and translates them; they become
     the image's `shaders` layer. Two fixes on the way: `rt_log` cut lines at 1 KiB, so long sources reached dxc

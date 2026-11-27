@@ -1,13 +1,23 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 # fixtures/hello built for i686 (tests/run.sh build makes it), as an image FROM the same base as Narbacular Drop:
 # its base layer is the same blob (tests/run.sh images). It needs none of the base's libraries.
+schema = 1
 name = "hello32"
 from = "base/windows-x86:1"
 
-[source]
+[about]
+display_name = "hello, 32-bit"
+revision = 1
+
+[[input]]
 # built from source in this repository, so no sha256: whatever cargo made
+id = "program"
 file = "../../fixtures/hello/target/i686-pc-windows-msvc/release/hello.exe"
-extract = "file"
+built_by = "tests/run.sh build"
+
+[[extract]]
+kind = "file"
+input = "program"
 
 [run]
 exe = 'C:\Program Files\hello32\hello.exe'

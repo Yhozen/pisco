@@ -12,9 +12,9 @@
 #                                                          so the Windows build runs under Wine)
 #   upx    UPX in ~/tools/upx                              tools/oracle-wine: unpacking a packed DLL before +snoop
 #   reuse  the REUSE tool in ~/tools/reuse-venv             `reuse lint`: every file has a licence (LICENSING.md)
-#   innoextract  innoextract 1.9 in ~/tools/innoextract     `pisco build`: a recipe's `extract = "innosetup"` (its
+#   innoextract  innoextract 1.9 in ~/tools/innoextract     `pisco build`: a recipe's `innosetup` extract step (its
 #                                                          static Linux build, checked by sha256)
-#   cabextract  cabextract 1.11 in ~/tools/cabextract       `pisco build`: a recipe's [[source.cab]] (built from its
+#   cabextract  cabextract 1.11 in ~/tools/cabextract       `pisco build`: a recipe's cab extract step (built from its
 #                                                          source, checked by sha256; needs cc and make)
 #   linux-headers  the Linux kernel's headers (Alpine 3.20's linux-headers 6.6 and, for <drm/...>, its libdrm-dev, each
 #          checked by sha256) in ~/tools/linux-headers-6.6-r0      tools/build-fastfetch.sh, tools/build-neofetch.sh

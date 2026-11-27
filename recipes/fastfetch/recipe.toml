@@ -2,16 +2,27 @@
 # fastfetch 2.71.0 (https://github.com/fastfetch-cli/fastfetch, MIT): the first Linux title (docs/fastfetch.md).
 # tools/build-fastfetch.sh builds it from its source into out/fastfetch: one x86-64 program, statically linked with
 # musl, with its symbols. Nothing of it is in the repository.
+schema = 1
 name = "fastfetch"
 from = "base/linux-x64:1"
 
-[source]
+[about]
+display_name = "fastfetch"
+version = "2.71.0"
+revision = 1
+
+[[input]]
 # built on this machine from a checked source: its bytes depend on the compiler's, so no sha256 here
+id = "program"
 file = "../../out/fastfetch/fastfetch"
-extract = "file"
+built_by = "tools/build-fastfetch.sh"
+
+[[extract]]
+kind = "file"
+input = "program"
 
 [run]
 exe = "/usr/bin/fastfetch"
 
-[lifter]
+[hints.pisco]
 split = 16

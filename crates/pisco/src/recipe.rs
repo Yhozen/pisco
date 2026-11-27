@@ -12,37 +12,48 @@ pub enum RegData { Dword(u32), Sz(String) }
 #[derive(Clone, Debug)]
 pub struct RegValue { pub key: String, pub name: String, pub data: RegData }
 
-pub struct Source { pub file: String, pub sha256: Option<String>, pub extract: String, pub app: Option<String>, pub map: BTreeMap<String, String>, pub cabs: Vec<Cab>,
+/// What pins an input (docs/spec/recipe.md#inputs)
+#[derive(Clone, Debug)]
+pub enum Pin { Sha256(Vec<String>), BuiltBy(String), Unpinned(String) }
+/// [[input]]: a file or folder the user supplies
+#[derive(Clone, Debug)]
+pub struct Input { pub id: String, pub folder: bool, pub file: String, pub files: Option<Vec<String>>, pub pin: Pin }
+/// The recipe's steps as pisco runs them: the first ([[extract]] innosetup, zip, wise, file or folder) with what
+/// follows it (installshield, cab, copy)
+pub struct Source { pub file: String, pub extract: String, pub app: Option<String>, pub map: BTreeMap<String, String>, pub cabs: Vec<Cab>,
     pub root: Option<String>, pub adds: Vec<Add>,
     /// [source.installshield] groups: where each file group of an InstallShield 5 / 6 setup inside the installer
     /// goes, below the title's folder ("" the folder itself, "-" not installed); InstallShield's own script says
     /// it, and is not read
     pub installshield: Option<BTreeMap<String, String>> }
-/// [[source.add]]: further files of the user's that the title needs and its download does not carry (Microsoft's
-/// C++ runtime DLLs beside a title built with /MD), taken from a folder named on the command line
-/// (`pisco build --with NAME=<folder>`) or by the environment variable NAME, put in a folder of C:
-pub struct Add { pub from: String, pub files: Vec<String>, pub to: String }
-/// [[source.cab]]: files taken out of a cabinet among the installer's files (cabextract), put in a folder of C:
+/// [[extract]] copy: the files of a folder input that the app needs and its download does not carry (Microsoft's
+/// C++ runtime DLLs beside an app built with /MD), from the folder named on the command line (`pisco build --input
+/// <id>=<folder>`, or --with) or by the environment variable <ID>, put in a folder of C:
+pub struct Add { pub from: String, pub files: Vec<String>, pub to: String, pub pin: Pin }
+/// [[extract]] cab: files taken out of a cabinet among the installer's files (cabextract), put in a folder of C:
 pub struct Cab { pub cab: String, pub files: Vec<String>, pub to: String }
 pub struct Recipe {
-    pub dir: PathBuf, pub name: String, pub from: String, pub libraries: Vec<String>, pub source: Source,
+    pub dir: PathBuf, pub name: String, pub from: String, pub platform: String, pub libraries: Vec<String>, pub source: Source,
+    pub display_name: Option<String>, pub version: Option<String>, pub revision: Option<i64>,
+    pub inputs: Vec<Input>, pub primary: Input,
     pub exe: String, pub display: Option<String>, pub args: Vec<String>,
-    /// a machine's title (base/microvm-x64): [run] initrd (its initramfs, on the drive) and cmdline (the kernel's)
+    /// a machine's app (base/microvm-x64): [run] initrd (its initramfs, on the drive) and cmdline (the kernel's); its
+    /// kernel is `exe`
     pub initrd: Option<String>, pub cmdline: Option<String>,
-    /// a machine's title: [lifter] programs, lifted with the kernel at their own addresses (lifter --program)
+    /// a machine's app: [hints.pisco] programs, lifted with the kernel at their own addresses (lifter --program)
     pub programs: Vec<String>,
-    /// a machine's title: [lifter] modules, programs each in a wasm module of its own (a side module the host loads)
+    /// a machine's app: [hints.pisco] modules, programs each in a wasm module of its own (a side module the host loads)
     pub modules: Vec<String>,
     pub cpu: Option<Vec<String>>, pub dll: BTreeMap<String, String>, pub registry: Vec<RegValue>,
     pub split: usize, pub entries: Vec<u64>, pub base_address: Option<u64>, pub opt: String,
-    /// [lifter] load: DLLs the title loads itself (LoadLibrary) from its folder or below it, lifted with it
+    /// [code] load: DLLs the app loads itself (LoadLibrary) from its folder or below it, lifted with it
     pub load: Vec<String>,
     /// [files]: small text files a setup step would write (settings), by their place on C:
     pub files: BTreeMap<String, String>,
-    pub heap_fill: Option<u8>, // [quirks] heap_fill: the byte a heap block the title did not ask to be zeroed holds
+    pub heap_fill: Option<u8>, // [quirks] heap_fill: the byte a heap block the app did not ask to be zeroed holds
     pub shaders: Option<Shaders>,
 }
-/// [shaders]: the HLSL a title compiles at run time (D3DCompile), compiled when the image is built: the image is run
+/// [warmup]: the HLSL an app compiles at run time (D3DCompile), compiled when the image is built: the image is run
 /// once in Node for `frames` frames (with the `session`, if one is given), the sources it logged are compiled with
 /// dxc and translated, and the results become a layer of the image (docs/images.md)
 pub struct Shaders { pub frames: u64, pub session: Option<String> }
@@ -112,84 +123,181 @@ pub fn drive_path(p: &str) -> R<String> {
     Ok(rest.split('\\').filter(|s| !s.is_empty()).collect::<Vec<_>>().join("/"))
 }
 
+/// Every key a recipe of schema 1 may have, "table.key" (docs/spec/recipe.md has the same list: tests/run.sh spec)
+pub const KEYS: &[&str] = &["schema", "name", "from", "libraries",
+    "about.display_name", "about.version", "about.revision", "about.notes",
+    "input.id", "input.kind", "input.file", "input.files", "input.sha256", "input.built_by", "input.unpinned", "input.where",
+    "extract.kind", "extract.input", "extract.app", "extract.map", "extract.root", "extract.groups", "extract.from", "extract.files", "extract.to",
+    "run.exe", "run.display", "run.args", "run.kernel", "run.initrd", "run.cmdline",
+    "cpu.features", "dll", "registry", "files", "quirks",
+    "code.entries", "code.base", "code.load", "warmup.frames", "warmup.session", "hints"];
+/// pisco's own options, [hints.pisco] (docs/spec/recipe.md)
+pub const HINTS: &[&str] = &["split", "opt", "programs", "modules"];
+pub const EXTRACT_KINDS: &[&str] = &["innosetup", "zip", "wise", "installshield", "file", "folder", "cab", "copy"];
+pub const DLL_CHOICES: &[&str] = &["native", "builtin"];
+pub const QUIRKS: &[&str] = &["heap_fill"];
+/// The CPU features a recipe may name (tools/recipe-gen.py has their bits)
+pub const CPU_FEATURES: &[&str] = &["fpu", "tsc", "cx8", "cmov", "mmx", "fxsr", "sse", "sse2", "sse3", "ssse3", "sse4.1", "sse4.2", "popcnt", "cx16", "pclmul"];
+
+/// A table's keys, each one of `known` (keys of KEYS under `prefix`); the message lists them
+fn only(t: &Table, prefix: &str, what: &str) -> R<()> {
+    let known: Vec<&str> = KEYS.iter().filter_map(|k| if prefix.is_empty() { Some(k.split('.').next().unwrap()) } else { k.strip_prefix(&format!("{prefix}.")) }).collect();
+    for k in t.keys() {
+        if !known.contains(&k.as_str()) {
+            let mut list = known.clone(); list.dedup();
+            return Err(format!("{what}: {k} is not a key of {} (schema 1 knows {})", if prefix.is_empty() { "a recipe".to_string() } else { format!("[{prefix}]") }, list.join(", ")));
+        }
+    }
+    Ok(())
+}
+fn slug(x: &str) -> bool { !x.is_empty() && x.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-') }
+fn sha_list(v: &Value, what: &str) -> R<Vec<String>> {
+    let list = match v { Value::String(x) => vec![x.clone()], Value::Array(a) => a.iter().map(|x| x.as_str().map(String::from).ok_or(format!("{what}: strings"))).collect::<R<_>>()?, _ => return Err(format!("{what}: a sha256, or a list of them")) };
+    let list: Vec<String> = list.into_iter().map(|x| x.trim_start_matches("sha256:").to_ascii_lowercase()).collect();
+    if list.is_empty() || list.iter().any(|x| x.len() != 64 || !x.bytes().all(|b| b.is_ascii_hexdigit())) { return Err(format!("{what}: 64 hex digits")); }
+    Ok(list)
+}
+/// The platform a base imitates, from its name (the [run] keys depend on it)
+pub fn platform_of(from: &str) -> &str {
+    from.strip_prefix("base/").and_then(|x| x.split(':').next()).unwrap_or("")
+}
+
 pub fn load_recipe(dir: &Path) -> R<Recipe> {
     let path = if dir.is_dir() { dir.join("recipe.toml") } else { dir.to_path_buf() };
     if !path.is_file() && path.with_file_name("title.toml").is_file() { return Err(format!("{}: a recipe is recipe.toml now (git mv title.toml recipe.toml)", path.with_file_name("title.toml").display())); }
     let t = load(&path)?;
+    let at = path.display().to_string();
     let dir = path.parent().unwrap().to_path_buf();
-    let known = ["name", "from", "libraries", "source", "run", "cpu", "dll", "registry", "lifter", "build", "quirks", "shaders", "files"];
-    if let Some(k) = t.keys().find(|k| !known.contains(&k.as_str())) { return Err(format!("{}: {k} is not a recipe key ({})", path.display(), known.join(", "))); }
-    let src = table(&t, "source")?.ok_or(format!("{}: no [source]", path.display()))?;
-    let run = table(&t, "run")?.ok_or(format!("{}: no [run]", path.display()))?;
-    let lifter = table(&t, "lifter")?.cloned().unwrap_or_default();
-    let build = table(&t, "build")?.cloned().unwrap_or_default();
-    let mut map = BTreeMap::new();
-    for (k, v) in table(src, "map")?.into_iter().flatten() { map.insert(k.clone(), v.as_str().ok_or("source.map: strings")?.to_string()); }
-    let mut cabs = Vec::new();
-    match src.get("cab") {
-        None => {}
-        Some(Value::Array(a)) => for c in a {
-            let c = c.as_table().ok_or("[[source.cab]]: tables")?;
-            cabs.push(Cab { cab: s(c, "cab").ok_or("[[source.cab]] cab = 'C:\\...\\x.cab'")?, files: strs(c, "files")?.filter(|f| !f.is_empty()).ok_or("[[source.cab]] files = [\"name.dll\"]")?,
-                to: s(c, "to").ok_or("[[source.cab]] to = 'C:\\WINDOWS\\system32'")? });
-        },
-        Some(_) => return Err("[[source.cab]]: an array of tables".into()),
+    match t.get("schema") {
+        Some(Value::Integer(1)) => {}
+        Some(v) => return Err(format!("{at}: schema = {}: this pisco reads recipes of schema 1 (docs/spec/recipe.md)", match v { Value::Integer(i) => i.to_string(), other => format!("a {}", other.type_str()) })),
+        None => return Err(format!("{at}: no schema: a recipe starts with `schema = 1` (docs/spec/recipe.md)")),
     }
-    let mut adds = Vec::new();
-    match src.get("add") {
-        None => {}
-        Some(Value::Array(a)) => for c in a {
-            let c = c.as_table().ok_or("[[source.add]]: tables")?;
-            adds.push(Add { from: s(c, "from").ok_or("[[source.add]] from = \"NAME\" (pisco build --with NAME=<folder>, or the environment variable NAME)")?,
-                files: strs(c, "files")?.filter(|f| !f.is_empty()).ok_or("[[source.add]] files = [\"name.dll\"]")?,
-                to: s(c, "to").ok_or("[[source.add]] to = 'C:\\...'")? });
-        },
-        Some(_) => return Err("[[source.add]]: an array of tables".into()),
+    only(&t, "", &at)?;
+    let name = s(&t, "name").ok_or(format!("{at}: no name"))?;
+    if !slug(&name) { return Err(format!("{at}: name = \"{name}\": lower-case letters, digits and -")); }
+    let from = s(&t, "from").ok_or(format!("{at}: no from (a base, e.g. \"base/windows-x86:1\")"))?;
+    let platform = platform_of(&from).to_string();
+    for k in ["about", "run", "cpu", "code", "warmup"] { if let Some(x) = table(&t, k)? { only(x, k, &at)?; } }
+    let about = table(&t, "about")?.cloned().unwrap_or_default();
+    if let Some(v) = about.get("revision") { if !matches!(v, Value::Integer(n) if *n >= 1) { return Err(format!("{at}: about.revision: an integer from 1")); } }
+    for k in ["display_name", "version", "notes"] { if about.get(k).is_some_and(|v| !v.is_str()) { return Err(format!("{at}: about.{k}: a string")); } }
+
+    // [[input]]
+    let mut inputs: Vec<Input> = Vec::new();
+    for v in t.get("input").map(|v| v.as_array().cloned().ok_or(format!("{at}: [[input]]: an array of tables"))).transpose()?.unwrap_or_default() {
+        let i = v.as_table().ok_or(format!("{at}: [[input]]: tables"))?;
+        only(i, "input", &at)?;
+        let id = s(i, "id").ok_or(format!("{at}: an [[input]] without id"))?;
+        if !slug(&id) { return Err(format!("{at}: input id \"{id}\": lower-case letters, digits and -")); }
+        if inputs.iter().any(|x| x.id == id) { return Err(format!("{at}: two inputs are \"{id}\"")); }
+        let kind = s(i, "kind").unwrap_or("file".into());
+        if kind != "file" && kind != "folder" { return Err(format!("{at}: input {id}: kind = \"{kind}\": \"file\" or \"folder\"")); }
+        let files = strs(i, "files")?;
+        if files.is_some() && kind != "folder" { return Err(format!("{at}: input {id}: files are for a folder input (kind = \"folder\")")); }
+        let pins = ["sha256", "built_by", "unpinned"].iter().filter(|k| i.contains_key(**k)).count();
+        if pins != 1 { return Err(format!("{at}: input {id}: say exactly one of sha256 (pinned), built_by (made here by a script) or unpinned (and why)")); }
+        let pin = if let Some(v) = i.get("sha256") { Pin::Sha256(sha_list(v, &format!("{at}: input {id}: sha256"))?) }
+            else if let Some(b) = s(i, "built_by") { Pin::BuiltBy(b) } else { Pin::Unpinned(s(i, "unpinned").ok_or(format!("{at}: input {id}: unpinned = \"why\""))?) };
+        inputs.push(Input { id: id.clone(), folder: kind == "folder", file: s(i, "file").ok_or(format!("{at}: input {id}: no file"))?, files, pin });
     }
-    let installshield = match table(src, "installshield")? {
-        None => None,
-        Some(is) => {
-            let mut g = BTreeMap::new();
-            for (k, v) in table(is, "groups")?.ok_or("[source.installshield] groups = { \"group\" = 'folder', ... }")? { g.insert(k.clone(), v.as_str().ok_or("[source.installshield] groups: strings")?.to_string()); }
-            Some(g)
-        }
+    let input = |id: &Option<String>, step: &str| -> R<Input> {
+        let id = id.as_ref().ok_or(format!("{at}: [[extract]] {step}: no input"))?;
+        inputs.iter().find(|x| &x.id == id).cloned().ok_or(format!("{at}: [[extract]] {step}: no input \"{id}\""))
     };
+
+    // [[extract]]: the first step unpacks the app; installshield follows wise; copy and cab steps follow
+    let steps = t.get("extract").map(|v| v.as_array().cloned().ok_or(format!("{at}: [[extract]]: an array of tables"))).transpose()?.unwrap_or_default();
+    if steps.is_empty() { return Err(format!("{at}: no [[extract]] step")); }
+    let (mut source, mut primary): (Option<Source>, Option<Input>) = (None, None);
+    for (n, v) in steps.iter().enumerate() {
+        let e = v.as_table().ok_or(format!("{at}: [[extract]]: tables"))?;
+        only(e, "extract", &at)?;
+        let kind = s(e, "kind").ok_or(format!("{at}: an [[extract]] step without kind"))?;
+        if !EXTRACT_KINDS.contains(&kind.as_str()) { return Err(format!("{at}: [[extract]] kind = \"{kind}\": one of {}", EXTRACT_KINDS.join(", "))); }
+        let allowed: &[&str] = match kind.as_str() {
+            "innosetup" => &["kind", "input", "app", "map"], "zip" => &["kind", "input", "app", "root"], "wise" | "folder" => &["kind", "input", "app"], "file" => &["kind", "input"],
+            "installshield" => &["kind", "groups"], "cab" => &["kind", "from", "files", "to"], _ => &["kind", "input", "to"],
+        };
+        if let Some(k) = e.keys().find(|k| !allowed.contains(&k.as_str())) { return Err(format!("{at}: [[extract]] {kind}: {k} is not one of its keys ({})", allowed.join(", "))); }
+        let first = matches!(kind.as_str(), "innosetup" | "zip" | "wise" | "file" | "folder");
+        if first != (n == 0) { return Err(format!("{at}: [[extract]] {kind}: {}", if first { "only the first step unpacks the app (there is one such step)" } else { "the first step unpacks the app: innosetup, zip, wise, file or folder" })); }
+        match kind.as_str() {
+            _ if first => {
+                let i = input(&s(e, "input"), &kind)?;
+                if (kind == "folder") != i.folder { return Err(format!("{at}: [[extract]] {kind} reads input {}, a {}", i.id, if i.folder { "folder" } else { "file" })); }
+                let mut map = BTreeMap::new();
+                for (k, v) in table(e, "map")?.into_iter().flatten() { map.insert(k.clone(), v.as_str().ok_or(format!("{at}: [[extract]] map: strings"))?.to_string()); }
+                source = Some(Source { file: i.file.clone(), extract: kind.clone(), app: s(e, "app"), map, cabs: vec![],
+                    root: s(e, "root").map(|r| r.trim_matches('/').to_string()), adds: vec![], installshield: None });
+                primary = Some(i);
+            }
+            "installshield" => {
+                let src = source.as_mut().unwrap();
+                if n != 1 || src.extract != "wise" { return Err(format!("{at}: [[extract]] installshield: pisco reads it straight after the wise step that unpacks it")); }
+                let mut g = BTreeMap::new();
+                for (k, v) in table(e, "groups")?.ok_or(format!("{at}: [[extract]] installshield: groups = {{ \"group\" = 'folder', ... }}"))? { g.insert(k.clone(), v.as_str().ok_or(format!("{at}: [[extract]] installshield groups: strings"))?.to_string()); }
+                src.installshield = Some(g);
+            }
+            "cab" => source.as_mut().unwrap().cabs.push(Cab { cab: s(e, "from").ok_or(format!("{at}: [[extract]] cab: from = 'C:\\...\\x.cab'"))?,
+                files: strs(e, "files")?.filter(|f| !f.is_empty()).ok_or(format!("{at}: [[extract]] cab: files = [\"name.dll\"]"))?, to: s(e, "to").ok_or(format!("{at}: [[extract]] cab: to = 'C:\\...'"))? }),
+            _ => { // copy
+                let i = input(&s(e, "input"), "copy")?;
+                let files = i.files.clone().filter(|f| !f.is_empty()).ok_or(format!("{at}: [[extract]] copy reads input {}: a folder input with its files named", i.id))?;
+                source.as_mut().unwrap().adds.push(Add { from: i.id.clone(), files, to: s(e, "to").ok_or(format!("{at}: [[extract]] copy: to = 'C:\\...'"))?, pin: i.pin.clone() });
+            }
+        }
+    }
+    let source = source.unwrap(); let primary = primary.unwrap();
+    for i in &inputs { if i.id != primary.id && !source.adds.iter().any(|a| a.from == i.id) { return Err(format!("{at}: input {} is read by no step", i.id)); } }
+
+    // [run], by platform
+    let run = table(&t, "run")?.ok_or(format!("{at}: no [run]"))?;
+    let run_keys: &[&str] = match platform.as_str() { "microvm-x64" => &["kernel", "initrd", "cmdline"], "linux-x64" | "ps5" => &["exe", "args"], _ => &["exe", "display", "args"] };
+    if let Some(k) = run.keys().find(|k| !run_keys.contains(&k.as_str())) { return Err(format!("{at}: [run] {k}: not a key of {platform}'s [run] ({}; docs/spec/platforms/)", run_keys.join(", "))); }
+    let exe = if platform == "microvm-x64" { s(run, "kernel").ok_or(format!("{at}: [run] kernel"))? } else { s(run, "exe").ok_or(format!("{at}: [run] exe"))? };
+
     let mut dll = BTreeMap::new();
     for (k, v) in table(&t, "dll")?.into_iter().flatten() {
-        let how = v.as_str().ok_or("[dll]: \"name.dll\" = \"builtin\"")?;
-        if how != "builtin" { return Err(format!("[dll] {k} = {how}: only \"builtin\" is known (the runtime answers for the DLL)")); }
-        dll.insert(k.to_ascii_lowercase(), how.to_string());
+        let how = v.as_str().ok_or(format!("{at}: [dll]: \"name.dll\" = \"builtin\""))?;
+        if !DLL_CHOICES.contains(&how) { return Err(format!("{at}: [dll] {k} = \"{how}\": one of {}", DLL_CHOICES.join(", "))); }
+        if how == "builtin" { dll.insert(k.to_ascii_lowercase(), how.to_string()); }   // native: what a shipped DLL gets anyway
     }
+    let cpu = match table(&t, "cpu")? { Some(c) => strs(c, "features")?, None => None };
+    if let Some(f) = cpu.iter().flatten().find(|f| !CPU_FEATURES.contains(&f.as_str())) { return Err(format!("{at}: cpu.features: {f} is not one of {}", CPU_FEATURES.join(" "))); }
+    let quirks = table(&t, "quirks")?.cloned().unwrap_or_default();
+    if let Some(k) = quirks.keys().find(|k| !QUIRKS.contains(&k.as_str())) { return Err(format!("{at}: [quirks] {k}: not a quirk ({})", QUIRKS.join(", "))); }
+    let code = table(&t, "code")?.cloned().unwrap_or_default();
+    let hints = table(&t, "hints")?.cloned().unwrap_or_default();
+    for (k, v) in &hints { if !v.is_table() { return Err(format!("{at}: hints.{k}: a table, [hints.{k}]")); } }
+    let ours = table(&hints, "pisco")?.cloned().unwrap_or_default();
+    if let Some(k) = ours.keys().find(|k| !HINTS.contains(&k.as_str())) { return Err(format!("{at}: [hints.pisco] {k}: not one of pisco's ({})", HINTS.join(", "))); }
+    let micro = |k: &str| -> R<Vec<String>> { let v = strs(&ours, k)?.unwrap_or_default(); if !v.is_empty() && platform != "microvm-x64" { return Err(format!("{at}: [hints.pisco] {k}: for a machine's app (base/microvm-x64)")); } Ok(v) };
+    let mut files = BTreeMap::new();
+    for (k, v) in table(&t, "files")?.into_iter().flatten() { files.insert(k.clone(), v.as_str().ok_or(format!("{at}: [files] {k}: a string"))?.to_string()); }
     Ok(Recipe {
-        name: s(&t, "name").ok_or("recipe: no name")?,
-        from: s(&t, "from").ok_or("recipe: no from (a base, e.g. \"base/windows-x86:1\")")?,
+        display_name: s(&about, "display_name"), version: s(&about, "version"), revision: about.get("revision").and_then(|v| v.as_integer()),
         libraries: strs(&t, "libraries")?.unwrap_or_default(),
-        source: Source { file: s(src, "file").ok_or("[source] file")?, sha256: s(src, "sha256").map(|x| x.to_ascii_lowercase()), extract: s(src, "extract").unwrap_or("file".into()), app: s(src, "app"), map, cabs,
-            root: s(src, "root").map(|r| r.trim_matches('/').to_string()), adds, installshield },
-        exe: s(run, "exe").ok_or("[run] exe")?,
         display: s(run, "display"),
         args: strs(run, "args")?.unwrap_or_default(),
         initrd: s(run, "initrd"), cmdline: s(run, "cmdline"),
-        programs: strs(&lifter, "programs")?.unwrap_or_default(),
-        modules: strs(&lifter, "modules")?.unwrap_or_default(),
-        cpu: match table(&t, "cpu")? { Some(c) => strs(c, "features")?, None => None },
-        dll,
+        programs: micro("programs")?, modules: micro("modules")?,
+        cpu, dll, files,
         registry: registry(table(&t, "registry")?)?,
-        files: match table(&t, "files")? { None => BTreeMap::new(), Some(f) => f.iter().map(|(k, v)| v.as_str().map(|x| (k.clone(), x.to_string())).ok_or(format!("[files] {k}: a string"))).collect::<R<_>>()? },
-        split: lifter.get("split").map(|v| v.as_integer().filter(|n| *n >= 1).ok_or("lifter.split: a number from 1")).transpose()?.unwrap_or(8) as usize,
-        entries: match lifter.get("entries") { Some(Value::Array(a)) => a.iter().map(|v| int(v, "lifter.entries")).collect::<R<_>>()?, _ => vec![] },
-        load: strs(&lifter, "load")?.unwrap_or_default(),
-        base_address: lifter.get("base").map(|v| int(v, "lifter.base")).transpose()?,
-        opt: s(&build, "opt").unwrap_or("-O2".into()),
-        heap_fill: match table(&t, "quirks")?.and_then(|q| q.get("heap_fill")) {
+        split: ours.get("split").map(|v| v.as_integer().filter(|n| *n >= 1).ok_or(format!("{at}: hints.pisco.split: a number from 1"))).transpose()?.unwrap_or(8) as usize,
+        entries: match code.get("entries") { Some(Value::Array(a)) => a.iter().map(|v| int(v, "code.entries")).collect::<R<_>>()?, Some(_) => return Err(format!("{at}: code.entries: a list")), None => vec![] },
+        load: strs(&code, "load")?.unwrap_or_default(),
+        base_address: code.get("base").map(|v| int(v, "code.base")).transpose()?,
+        opt: s(&ours, "opt").unwrap_or("-O2".into()),
+        heap_fill: match quirks.get("heap_fill") {
             None => None,
-            Some(v) => Some(v.as_integer().filter(|n| (0..=255).contains(n)).ok_or("quirks.heap_fill: a byte, 0 to 255")? as u8),
+            Some(v) => Some(v.as_integer().filter(|n| (0..=255).contains(n)).ok_or(format!("{at}: quirks.heap_fill: a byte, 0 to 255"))? as u8),
         },
-        shaders: match table(&t, "shaders")? {
+        shaders: match table(&t, "warmup")? {
             None => None,
-            Some(sh) => Some(Shaders { frames: sh.get("frames").and_then(|v| v.as_integer()).filter(|n| *n > 0).ok_or("[shaders] frames = <presents to run for>")? as u64, session: s(sh, "session") }),
+            Some(sh) => Some(Shaders { frames: sh.get("frames").and_then(|v| v.as_integer()).filter(|n| *n > 0).ok_or(format!("{at}: [warmup] frames = <frames to run for>"))? as u64, session: s(sh, "session") }),
         },
-        dir,
+        primary, inputs, source, exe, platform, name, from, dir,
     })
 }
 

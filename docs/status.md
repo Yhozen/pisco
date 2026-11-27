@@ -191,8 +191,8 @@ loads itself and Miles Sound System 6.1c beside it ([mohaa.md](mohaa.md)). What 
 - **The lifter**: MMX (eight registers of their own, `c->mm[]`; each operation the SSE2 one on the low half, the
   high unpacks and the packs arranged to agree; `fixtures/mmx` prints Wine's 63 lines), `push`/`pop` of DS, ES and SS
   in a flat address space, and Miles' hand-written mixer found as code (balanced segment saves are not data).
-- **Images**: `extract = "wise"` (a Wise installer and the InstallShield 5 / 6 cabinets inside it, read without
-  running either), `[lifter] load` (DLLs a title loads itself from its folder or below it, lifted with it), `[files]`
+- **Images**: a `wise` extract step (a Wise installer and the InstallShield 5 / 6 cabinets inside it, read without
+  running either), `[code] load` (DLLs a title loads itself from its folder or below it, lifted with it), `[files]`
   (the settings a setup step writes).
 - **The process**: DLLs loaded on demand (DllMain at LoadLibrary, PROCESS_DETACH at the last FreeLibrary, the
   sections read again on a second load), files still open at the end saved as Windows would have written them,
@@ -279,7 +279,7 @@ reasoning and the measurements: [research/kernel-as-a-title.md](research/kernel-
 - **K8, done**: fastfetch and cowsay on perl run on the lifted Linux beside busybox, as on QEMU; fastfetch reads the
   kernel's own `/proc`.
 - **K9, done**: bash (GPL-3.0) in a wasm module of its own, loaded by the host beside the kernel's
-  (`web/side.mjs`, `[lifter] modules`), runs as on QEMU.
+  (`web/side.mjs`, `[hints.pisco] modules`), runs as on QEMU.
 - **K10, done**: in Node, a program no build lifted is lifted when it first runs (`web/lift.mjs`, `out/lift-cache`).
 - **K11, done**: the program's image is taken from memory at its entry point, so a static program runs from the disk
   or anywhere, lifted when it first runs.

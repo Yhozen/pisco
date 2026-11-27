@@ -20,6 +20,13 @@ pub const LOCAL: &str = "org.pisco.local-only";
 
 pub fn sha256(data: &[u8]) -> String { hex(&Sha256::digest(data)) }
 pub fn hex(b: &[u8]) -> String { b.iter().map(|x| format!("{x:02x}")).collect() }
+/// A file tree's digest (docs/spec/image.md#the-tree-digest), in hex: one line per entry, `<type>\t<data>\t<path>\n`
+/// (`f` a file and its sha256, `d` a folder and `-`), sorted by path, hashed together
+pub fn tree_digest(entries: &[(String, Option<String>)]) -> String {
+    let mut lines: Vec<(&str, String)> = entries.iter().map(|(p, sha)| (p.as_str(), match sha { Some(h) => format!("f\t{h}\t{p}\n"), None => format!("d\t-\t{p}\n") })).collect();
+    lines.sort_by(|a, b| a.0.as_bytes().cmp(b.0.as_bytes()));
+    sha256(lines.into_iter().map(|l| l.1).collect::<String>().as_bytes())
+}
 
 // ---- tar ----
 pub enum Entry { Dir, File(Vec<u8>) }

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // pisco: builds, runs and inspects title images (docs/images.md).
-//   pisco build <recipe dir> [--source <installer>] [--out <image dir>] [--cache <dir>] [--compare <installed folder>] [--with NAME=<folder>]...
+//   pisco build <recipe dir> [--input <id>=<path>]... [--source <path>] [--out <image dir>] [--cache <dir>] [--compare <installed folder>]
+//   pisco recipe <recipe dir> [--json | --keys]: the recipe as pisco reads it (JSON, for tools/recipe-gen.py), or the keys schema 1 knows
 //   pisco run <image> [--session <session.json>] [--saves <dir>] [--chrome] [-- app arguments]
 //   pisco census <image | title.exe> [--recipe <recipe dir> | --from base/windows-x86:1 --libraries a,b] [--dll-dir <system32>] [--all]
 //   pisco inspect <image> [--files]
@@ -13,6 +14,7 @@ mod oci;
 mod recipe;
 
 use recipe::R;
+use serde_json::json;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -24,7 +26,7 @@ fn root() -> PathBuf {
     PathBuf::from(".")
 }
 fn usage() -> ! {
-    eprintln!("usage:\n  pisco build <recipe dir> [--source <installer>] [--out <image dir>] [--cache <dir>] [--compare <installed folder>] [--with NAME=<folder>]...\n  pisco run <image> [--session <session.json>] [--saves <dir>] [--chrome] [-- app arguments]\n  pisco census <image | title.exe> [--recipe <recipe dir> | --from <base> --libraries a,b] [--all]\n  pisco inspect <image> [--files]\n  pisco sources <base | recipe dir> [--libraries a,b | --all-libraries]");
+    eprintln!("usage:\n  pisco build <recipe dir> [--input <id>=<path>]... [--source <path>] [--out <image dir>] [--cache <dir>] [--compare <installed folder>]\n  pisco recipe <recipe dir> [--json | --keys]\n  pisco run <image> [--session <session.json>] [--saves <dir>] [--chrome] [-- app arguments]\n  pisco census <image | title.exe> [--recipe <recipe dir> | --from <base> --libraries a,b] [--all]\n  pisco inspect <image> [--files]\n  pisco sources <base | recipe dir> [--libraries a,b | --all-libraries]");
     std::process::exit(2);
 }
 struct Args { pos: Vec<String>, opts: Vec<(String, Option<String>)>, rest: Vec<String> }
@@ -51,10 +53,11 @@ fn main() {
     let Some(cmd) = args.first() else { usage() };
     let root = root();
     let r = match cmd.as_str() {
-        "build" => { let a = parse(&args[1..], &["source", "out", "cache", "compare", "with"]); let Some(p) = a.pos.first() else { usage() };
+        "build" => { let a = parse(&args[1..], &["source", "out", "cache", "compare", "with", "input"]); let Some(p) = a.pos.first() else { usage() };
             build::build(&root, &build::Opts { recipe: p.into(), source: a.get("source"), out: a.get("out"), cache: a.get("cache"), compare: a.get("compare"),
-                with: a.opts.iter().filter(|(n, _)| n == "with").filter_map(|(_, v)| v.as_ref()?.split_once('=').map(|(k, p)| (k.to_string(), PathBuf::from(p)))).collect() }) }
+                with: a.opts.iter().filter(|(n, _)| n == "with" || n == "input").filter_map(|(_, v)| v.as_ref()?.split_once('=').map(|(k, p)| (k.to_string(), PathBuf::from(p)))).collect() }) }
         "run" => run(&root, &parse(&args[1..], &["session", "saves"])),
+        "recipe" => recipe_cmd(&parse(&args[1..], &[])),
         "census" => census(&root, &parse(&args[1..], &["from", "libraries", "recipe", "dll-dir"])),
         "inspect" => inspect(&parse(&args[1..], &[])),
         "sources" => sources(&root, &parse(&args[1..], &["libraries"])),
@@ -76,6 +79,38 @@ fn run(root: &Path, a: &Args) -> R<()> {
     if let Some(s) = a.get("saves") { cmd.env("SW_SAVES", s); }
     let st = cmd.status().map_err(|e| format!("node: {e}"))?;
     std::process::exit(st.code().unwrap_or(1));
+}
+
+/// `pisco recipe <dir> --json`: the recipe as pisco reads it, the one reader of recipes (tools/recipe-gen.py and
+/// tools/build-title.sh take this); `--keys`: what schema 1 knows, for tests/run.sh spec
+fn recipe_cmd(a: &Args) -> R<()> {
+    if a.flag("keys") {
+        for k in recipe::KEYS { println!("key {k}"); }
+        for k in recipe::HINTS { println!("hint {k}"); }
+        for k in recipe::EXTRACT_KINDS { println!("extract-kind {k}"); }
+        for k in recipe::CPU_FEATURES { println!("cpu-feature {k}"); }
+        for k in recipe::DLL_CHOICES { println!("dll-choice {k}"); }
+        for k in recipe::QUIRKS { println!("quirk {k}"); }
+        return Ok(());
+    }
+    let Some(dir) = a.pos.first() else { usage() };
+    let r = recipe::load_recipe(Path::new(dir))?;
+    let pin = |p: &recipe::Pin| match p { recipe::Pin::Sha256(l) => json!({ "sha256": l }), recipe::Pin::BuiltBy(b) => json!({ "built_by": b }), recipe::Pin::Unpinned(w) => json!({ "unpinned": w }) };
+    let j = json!({
+        "schema": 1, "name": r.name, "from": r.from, "platform": r.platform, "libraries": r.libraries,
+        "about": { "display_name": r.display_name, "version": r.version, "revision": r.revision },
+        "inputs": r.inputs.iter().map(|i| json!({ "id": i.id, "kind": if i.folder { "folder" } else { "file" }, "file": i.file, "files": i.files, "pin": pin(&i.pin) })).collect::<Vec<_>>(),
+        "run": { "exe": r.exe, "display": r.display, "args": r.args, "initrd": r.initrd, "cmdline": r.cmdline },
+        "cpu": { "features": r.cpu }, "dll": r.dll, "files": r.files, "quirks": { "heap_fill": r.heap_fill },
+        "registry": r.registry.iter().map(|v| match &v.data {
+            recipe::RegData::Dword(n) => json!({ "key": v.key, "name": v.name, "type": "dword", "value": n }),
+            recipe::RegData::Sz(s) => json!({ "key": v.key, "name": v.name, "type": "sz", "value": s }) }).collect::<Vec<_>>(),
+        "code": { "entries": r.entries.iter().map(|e| format!("{e:x}")).collect::<Vec<_>>(), "base": r.base_address.map(|b| format!("{b:x}")), "load": r.load },
+        "warmup": r.shaders.as_ref().map(|w| json!({ "frames": w.frames, "session": w.session })),
+        "hints": { "pisco": { "split": r.split, "opt": r.opt, "programs": r.programs, "modules": r.modules } },
+    });
+    println!("{}", serde_json::to_string_pretty(&j).map_err(|e| e.to_string())?);
+    Ok(())
 }
 
 fn census(root: &Path, a: &Args) -> R<()> {
