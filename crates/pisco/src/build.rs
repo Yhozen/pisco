@@ -310,13 +310,15 @@ fn compare(ex: &Extracted, other: &Path) -> R<()> {
 }
 
 // ---- 2. lifting ----
-pub struct Lifted { pub dir: PathBuf, pub bits: u32, pub low: u64, pub high: u64, pub linux: bool, pub imports: Vec<String>, pub key: String, pub objects: Vec<PathBuf> }
-fn cflags(t: &Tools, cache: &Path, opt: &str, bits: u32, linux: bool) -> Vec<String> {
+pub struct Lifted { pub dir: PathBuf, pub bits: u32, pub low: u64, pub high: u64, pub linux: bool, pub os: String, pub imports: Vec<String>, pub key: String, pub objects: Vec<PathBuf> }
+fn cflags(t: &Tools, cache: &Path, opt: &str, bits: u32, os: &str) -> Vec<String> {
+    let linux = os == "linux";
     let mut f: Vec<String> = TARGET.iter().map(|s| s.to_string()).collect();
     f.extend(["-mllvm", "-wasm-enable-sjlj", opt, "-fno-strict-aliasing", "-Wno-everything"].map(String::from));
     f.push(format!("-I{}", t.root.join("rt").display()));
     f.push(format!("-DGUEST_BITS={bits}"));
-    if linux { f.push("-DGUEST_LINUX=1".into()); }   // the x87 at its full precision (rt/cpu.h fpx), in the lifted code and the runtime alike
+    if linux { f.push("-DGUEST_LINUX=1".into()); }
+    if os == "microvm" { f.push("-DGUEST_MACHINE=1".into()); f.push("-mtail-call".into()); }   // a machine's image: memory through its MMU (rt/cpu.h)   // the x87 at its full precision (rt/cpu.h fpx), in the lifted code and the runtime alike
     // no path of this machine in what is built: two checkouts give the same bytes
     f.push(format!("-ffile-prefix-map={}=/pisco-cache", cache.display()));
     f.push(format!("-ffile-prefix-map={}=/pisco", t.root.display()));
@@ -340,7 +342,7 @@ fn find_ci(dir: &Path, rel: &str) -> Option<PathBuf> {
     }
     Some(p)
 }
-fn lift(t: &Tools, r: &Recipe, exe: &Path, ex: &Extracted, cache: &Path) -> R<Lifted> {
+fn lift(t: &Tools, r: &Recipe, exe: &Path, ex: &Extracted, cache: &Path, programs: &[PathBuf]) -> R<Lifted> {
     let dir = exe.parent().unwrap();
     // the images the lifter reads: the exe and every DLL beside it that is not builtin, and the DLLs the image puts in
     // C:\WINDOWS\system32 (a [[source.cab]]'s), which it may import too: the lifter looks in their folders
@@ -362,11 +364,14 @@ fn lift(t: &Tools, r: &Recipe, exe: &Path, ex: &Extracted, cache: &Path) -> R<Li
         loads.extend(["--load".into(), format!("{}={rel}", host.display())]);
         images.push((rel.to_ascii_lowercase(), host));
     }
+    for (k, p) in programs.iter().enumerate() { images.push((format!("program {k}"), p.clone())); }   // (a machine's: lifted into its module)
     images.sort(); images.dedup_by(|a, b| a.0 == b.0);
     let mut key = format!("lifter {}\n", t.lifter_hash);
     for (n, p) in &images { key.push_str(&format!("image {n} {}\n", oci::sha256(&io(std::fs::read(p), p)?))); }
     let mut args: Vec<String> = vec!["--split".into(), r.split.to_string()];
     for e in &r.entries { args.extend(["--entry".into(), format!("{e:x}")]); }
+    let mut program_args: Vec<String> = Vec::new();   // not in the key as paths (they differ between machines): their bytes are
+    for p in programs { program_args.extend(["--program".into(), p.display().to_string()]); }
     if let Some(b) = r.base_address { args.extend(["--base".into(), format!("{b:x}")]); }
     for d in r.dll.keys() { args.extend(["--builtin".into(), d.clone()]); }
     if std::env::var_os("PISCO_TRACE_PC").is_some() { args.push("--trace-pc".into()); }   // each block notes its address (debugging a trap)
@@ -383,12 +388,12 @@ fn lift(t: &Tools, r: &Recipe, exe: &Path, ex: &Extracted, cache: &Path) -> R<Li
         say(&format!("lift: cached, lift key {}: not lifted or compiled again", &key[..16]));
     } else {
         let tmp = tmp_name(&out); let _ = std::fs::remove_dir_all(&tmp); io(std::fs::create_dir_all(&tmp), &tmp)?;
-        let o = Command::new(&t.lifter).arg(exe).arg("title.c").args(&args).args(&dll_dirs).args(&loads).current_dir(&tmp).output().map_err(|e| format!("lifter: {e}"))?;
+        let o = Command::new(&t.lifter).arg(exe).arg("title.c").args(&args).args(&dll_dirs).args(&loads).args(&program_args).current_dir(&tmp).output().map_err(|e| format!("lifter: {e}"))?;
         io(std::fs::write(tmp.join("lifter.log"), [&o.stdout[..], &o.stderr[..]].concat()), &tmp)?;
         if !o.status.success() { return Err(format!("the lifter failed: see {}", tmp.join("lifter.log").display())); }
         let lifted_at = time.elapsed().as_secs_f64();
-        let (bits, _, _, linux) = env_of(&tmp)?;
-        let flags = cflags(t, cache, &r.opt, bits, linux);
+        let (bits, _, _, os) = env_of(&tmp)?;
+        let flags = cflags(t, cache, &r.opt, bits, &os);
         let mut jobs = Vec::new();
         for c in c_files(&tmp)? {
             let mut cmd = Command::new(&t.clang);
@@ -401,19 +406,19 @@ fn lift(t: &Tools, r: &Recipe, exe: &Path, ex: &Extracted, cache: &Path) -> R<Li
         publish(&tmp, &out)?;
         say(&format!("lift: lifted in {lifted_at:.1} s, {n} files of C compiled in {:.1} s (lift key {})", time.elapsed().as_secs_f64() - lifted_at, &key[..16]));
     }
-    let (bits, low, high, linux) = env_of(&out)?;
+    let (bits, low, high, os) = env_of(&out)?;
     let objects = c_files(&out)?.into_iter().map(|c| out.join(format!("{c}.o"))).collect();
-    Ok(Lifted { imports: lifted_imports(&out.join("title.c"))?, dir: out, bits, low, high, linux, key, objects })
+    Ok(Lifted { imports: lifted_imports(&out.join("title.c"))?, dir: out, bits, low, high, linux: os == "linux", os, key, objects })
 }
 fn c_files(dir: &Path) -> R<Vec<String>> {
     let mut v: Vec<String> = io(std::fs::read_dir(dir), dir)?.filter_map(|e| e.ok()).map(|e| e.file_name().to_string_lossy().into_owned()).filter(|n| n.starts_with("title") && n.ends_with(".c")).collect();
     v.sort(); Ok(v)
 }
-fn env_of(dir: &Path) -> R<(u32, u64, u64, bool)> {
+fn env_of(dir: &Path) -> R<(u32, u64, u64, String)> {
     let text = io(std::fs::read_to_string(dir.join("title.env")), &dir.join("title.env"))?;
     let get = |k: &str| text.lines().find_map(|l| l.strip_prefix(&format!("{k}="))).map(|v| v.to_string()).unwrap_or_default();
     let hexv = |v: String| u64::from_str_radix(v.trim_start_matches("0x"), 16).unwrap_or(0);
-    Ok((get("GUEST_BITS").parse().unwrap_or(64), hexv(get("IMAGE_LOW")), hexv(get("IMAGE_HIGH")), get("OS") == "linux"))
+    Ok((get("GUEST_BITS").parse().unwrap_or(64), hexv(get("IMAGE_LOW")), hexv(get("IMAGE_HIGH")), get("OS")))
 }
 
 // ---- 3. the runtime ----
@@ -499,7 +504,9 @@ pub fn build(root: &Path, o: &Opts) -> R<()> {
     let mut lifts: Vec<Lifted> = Vec::new(); let mut lift_of: BTreeMap<String, usize> = BTreeMap::new(); let mut by_sha: BTreeMap<String, usize> = BTreeMap::new();
     for (g, h) in &programs {
         let sha = oci::sha256(&io(std::fs::read(h), h)?);
-        let k = match by_sha.get(&sha) { Some(&k) => k, None => { if programs.len() > 1 { say(&format!("program /{g}")); } lifts.push(lift(&t, &r, h, &ex, &cache)?); by_sha.insert(sha, lifts.len() - 1); lifts.len() - 1 } };
+        // a machine's programs (its kernel's initramfs, [lifter] programs): lifted into the kernel's module
+        let with: Vec<PathBuf> = if base.os == "microvm" { r.programs.iter().map(|p| { let g = recipe::drive_path(p)?; ex.files.iter().find(|(f, _)| f.eq_ignore_ascii_case(&g)).map(|x| x.1.clone()).ok_or(format!("[lifter] programs: {p} is not among the title's files")) }).collect::<R<_>>()? } else { vec![] };
+        let k = match by_sha.get(&sha) { Some(&k) => k, None => { if programs.len() > 1 { say(&format!("program /{g}")); } lifts.push(lift(&t, &r, h, &ex, &cache, &with)?); by_sha.insert(sha, lifts.len() - 1); lifts.len() - 1 } };
         lift_of.insert(g.clone(), k);
     }
     let main_lift = lift_of.get(&exe_guest).copied().unwrap_or(0);
@@ -519,8 +526,10 @@ pub fn build(root: &Path, o: &Opts) -> R<()> {
     for l in &r.libraries { sources.extend(base.libraries[l].sources.iter().cloned()); }
     sources.sort(); sources.dedup();   // (two libraries may share a file: the decoders of FMOD 3 and FMOD Ex)
     let deps = rt_deps(root)?;
-    if lifted.linux != (base.os == "linux") { return Err(format!("{}: {} program, but {} is for {}", r.exe, if lifted.linux { "a Linux" } else { "a Windows" }, base.reference(), base.os)); }
-    let rt_flags = cflags(&t, &cache, &base.opt, lifted.bits, lifted.linux);
+    if lifted.linux != (base.os == "linux") || (lifted.os == "microvm") != (base.os == "microvm") {
+        return Err(format!("{}: {} image, but {} is for {}", r.exe, match lifted.os.as_str() { "linux" => "a Linux program's", "microvm" => "a machine's (a kernel's)", _ => "a Windows" }, base.reference(), base.os));
+    }
+    let rt_flags = cflags(&t, &cache, &base.opt, lifted.bits, &lifted.os);
     let items = sources.iter().map(|s| { let p = root.join(s); let c = std::fs::read(&p).map(|d| oci::sha256(&d)).unwrap_or_default(); (s.clone(), p, format!("source {s} {c}\ndeps {deps}")) }).collect();
     let (rt_objs, rt_new) = compile_cached(&t, &cache, "rt", items, &rt_flags)?;
     // the import table and the recipe's CPU (registry values are not built in: they reach the runtime from the config)
@@ -612,7 +621,7 @@ pub fn build(root: &Path, o: &Opts) -> R<()> {
     let registry = recipe::merge_registry(&base.registry, &r.registry);
     let config = json!({
         "architecture": base.architecture, "os": base.os, "base": base.reference(), "title": r.name,
-        "run": { "exe": r.exe, "display": r.display, "args": r.args },
+        "run": { "exe": r.exe, "display": r.display, "args": r.args, "initrd": r.initrd, "cmdline": r.cmdline },
         "guest": { "bits": lifted.bits, "image": [format!("0x{:x}", lifted.low), format!("0x{:x}", lifted.high)] },
         "cpu": { "features": features },
         "dll": r.dll, "libraries": r.libraries,

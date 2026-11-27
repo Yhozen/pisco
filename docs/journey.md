@@ -660,6 +660,16 @@ program's setjmp and longjmp, which a machine does not want, since there the ker
 From Node's start to the exit port takes 2.5 s, about what QEMU's own JIT takes for the same kernel on the same
 machine; ten programs executed take 18 ms, where on the Linux runtime one took about a hundred.
 
+### 3.34 A shell to type into (2026-11-27)
+
+The console now goes both ways: the serial port reads a ring the host writes, a terminal's keys or the page's. Two
+things turned up. Linux's serial driver reads the receiver while it probes, so a pipe written before boot lost its
+first bytes; the machine now hands a byte over only while the driver asks for it. And the shell's first child
+crashed the kernel: the signal frame for SIGCHLD is written with `fxsave` into a copy-on-write page, and the fault
+said it came from address 0, because `fxsave` is a helper of `rt/cpu.h` and saw the file's fallback instruction
+address, not the caller's. With those, `pisco build recipes/linux` makes the image, and the same shell answers in a
+terminal, through a pipe and in the page.
+
 ## 4. Roadblocks
 
 ### Resolved

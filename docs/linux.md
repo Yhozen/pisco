@@ -6,11 +6,12 @@ x86-64 machine (`rt/microvm-x64`, `base/microvm-x64`). The Linux x64 runtime ([f
 kernel one system call at a time; here `fork`, signals, pipes and files are the kernel's own work. Why this route,
 what was measured before taking it and how the machine is designed: [research/kernel-as-a-title.md](research/kernel-as-a-title.md).
 
-**So far (K3) Linux runs, lifted, with its programs.** The kernel and the initramfs's busybox, lifted into one
+**So far (K4) Linux runs, lifted, with its programs, as an image, and can be typed into.** The kernel and the initramfs's busybox, lifted into one
 module, boot on the machine in Node and run `/init` to its end: pipes, a shell in a shell, awk, a 4 MiB file written
 and hashed, a child killed, a signal handled, ten programs executed. They print the 15 lines they print on QEMU,
 the same on every run, in 2.5 s from the start of Node to the exit port. `fork`, `exec`, signals, pipes and files
-are the kernel's own work. The machine was first checked on `fixtures/microvm-hello`, a kernel of about 300 lines
+are the kernel's own work. `pisco build recipes/linux` makes it an image like any other title's, and with `/bin/sh`
+as its first program its shell can be typed into, in a terminal or in the page. The machine was first checked on `fixtures/microvm-hello`, a kernel of about 300 lines
 that does what Linux asks of it, and prints what QEMU prints.
 
 ## The files
@@ -60,6 +61,23 @@ How it works:
 
 ## Build it and run it
 
+The image, and a shell to type into:
+
+```sh
+tools/setup-toolchain.sh wasi musl linux-headers kernel   # (kernel says what to install; it installs nothing)
+tools/build-linux.sh                                      # out/linux: the kernel, the initramfs, out/linux/root
+target/release/pisco build recipes/linux                  # out/images/linux (the kernel and busybox lifted: minutes)
+target/release/pisco run out/images/linux                 # Node: the boot, then /init's programs
+target/release/pisco run out/images/linux --chrome        # the same in headless Chrome
+SW_CMDLINE="$(cat recipes/linux/cmdline) rdinit=/bin/sh" target/release/pisco run out/images/linux
+                                                          # a shell, in this terminal (Ctrl-] ends it)
+node tools/serve.mjs 8000 web out/images/linux            # the page, in a browser of your own:
+# http://127.0.0.1:8000/browser/index.html?image=/files/0/&SW_CMDLINE=console%3DttyS0%20rdinit%3D/bin/sh
+```
+
+In a terminal or in the page the machine's clock is the host's and it waits for keys when idle (`SW_CONSOLE=tty`,
+which both set); fed from a pipe it keeps its virtual clock. The pieces one at a time:
+
 ```sh
 tools/setup-toolchain.sh musl linux-headers kernel qemu   # the last two say what is missing; they install nothing
 tools/build-linux.sh                                      # out/linux: vmlinux, bzImage, initramfs.cpio (minutes)
@@ -77,9 +95,10 @@ target/release/lifter out/linux/vmlinux out/linux/census/title.c --split 16 --ma
 ```
 
 `tests/run.sh kernel` checks the kernel: the lifter must read `vmlinux`; on QEMU the programs must print
-`recipes/linux/traces/programs.txt`, also on a machine without HPET, PIT and 8259; and lifted, in Node, its boot
-must reach `/init`, twice the same, equal to `recipes/linux/traces/boot.txt` (`KERNEL_RECORD=1` records both
-again). It is skipped until `out/linux` is built, and says so when QEMU is missing. `tests/run.sh microvm` (a
+`recipes/linux/traces/programs.txt`, also on a machine without HPET, PIT and 8259; and its image, run by `pisco run`
+in Node, must boot twice the same to `/init` (`traces/boot.txt`), its programs must print what they print on QEMU,
+and a shell typed into through the console (`recipes/linux/console-input.txt`) must answer as `traces/console.txt`
+(`KERNEL_RECORD=1` records the traces again). It is skipped until `out/linux` is built, and says so when QEMU is missing. `tests/run.sh microvm` (a
 default step, in CI) builds and runs the test kernel: it must print `fixtures/microvm-hello/expected.txt`, what QEMU
 prints, and does under QEMU too when QEMU is there; `tests/run.sh chrome` runs it in the page.
 
@@ -169,6 +188,23 @@ The same awk on the Linux runtime took 0.48 s, and twenty processes started ther
 ([research/wamr-unkernel-tabc.md](research/wamr-unkernel-tabc.md)): memory through the MMU costs here, and a
 process costs about a hundredth of what it costs there.
 
+## What it took (K4)
+
+- **The serial port's input**: a ring in the module's memory, written by the host (Node's standard input, raw in a
+  terminal; the page's keys as a terminal sends them, Enter as CR, arrows as escape sequences, Ctrl-C as 0x03) and
+  read by the 16550, with its receive interrupt. A byte is there only while the driver has that interrupt on: Linux's
+  8250 reads the receiver while it probes, and took the first three bytes of a pipe.
+- **Idle that waits**: with someone typing, `hlt` waits on the ring (`memory.atomic.wait32`) until a key or the next
+  timer, on the host's clock.
+- **A bug the shell found**: a signal's frame is written to the user's stack with `fxsave`, and its copy-on-write
+  fault reported `rip 0`, so the kernel found no fix-up and oopsed. The helpers of `rt/cpu.h` that reach memory
+  (`fxsave`, the x87's) saw the file's fallback `ip_` and `tlb_`, not the instruction's; they take them now.
+- **The image**: `pisco build` knows a machine's base: `[lifter] programs` are lifted with the kernel, `[run]
+  initrd` and `cmdline` reach the runtime (`SW_INITRD`, `SW_CMDLINE`) through the image's config. Two builds with
+  empty caches give the same manifest (`sha256:72e36c24…`); a build takes eight minutes on four cores.
+- **`tools/run-chrome.mjs` types**: `TYPE=<text>` sends key presses to the page, which is how typing into the page
+  was checked.
+
 ## Limits
 
 - Only programs lifted with the kernel run, at the addresses they were lifted at: one busybox. Two programs at
@@ -177,7 +213,6 @@ process costs about a hundredth of what it costs there.
   no label: such a program stops the machine (shells and busybox wait in system calls, where it works).
 - Model-specific registers the machine does not know read as 0 where a CPU raises #GP, which some of the kernel's
   `rdmsr_safe` callers would want.
-- No input yet: the serial port only prints.
 - A store that faults between its read and its write (an add to memory whose page must be copied) reads again after
   the fault; with one CPU and no other task in between, the same.
 - On QEMU without the PIT the kernel has no timer interrupt (its emulated CPU has no TSC-deadline timer): `/init`
@@ -193,4 +228,5 @@ process costs about a hundredth of what it costs there.
 | K1 | the machine (`rt/microvm-x64`) on a test kernel of our own: paging, a fault fixed up, the timer, two tasks, a ring-3 task, the serial port, equal under QEMU and PISCO, in Node and Chrome | done |
 | K2 | this kernel lifted: its boot log up to `Run /init as init process`, in Node, the same on every run | done |
 | K3 | busybox lifted with the kernel: `/init`'s programs print `recipes/linux/traces/programs.txt`, what they print on QEMU | done |
-| K4 | a console typed into, in Node and in the page; `pisco build recipes/linux` | next |
+| K4 | a console typed into, in Node and in the page; `pisco build recipes/linux`, two builds the same | done |
+| K5 | virtio block and network devices; a writable disk | next |

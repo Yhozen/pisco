@@ -27,6 +27,10 @@ pub struct Cab { pub cab: String, pub files: Vec<String>, pub to: String }
 pub struct Recipe {
     pub dir: PathBuf, pub name: String, pub from: String, pub libraries: Vec<String>, pub source: Source,
     pub exe: String, pub display: Option<String>, pub args: Vec<String>,
+    /// a machine's title (base/microvm-x64): [run] initrd (its initramfs, on the drive) and cmdline (the kernel's)
+    pub initrd: Option<String>, pub cmdline: Option<String>,
+    /// a machine's title: [lifter] programs, lifted with the kernel at their own addresses (lifter --program)
+    pub programs: Vec<String>,
     pub cpu: Option<Vec<String>>, pub dll: BTreeMap<String, String>, pub registry: Vec<RegValue>,
     pub split: usize, pub entries: Vec<u64>, pub base_address: Option<u64>, pub opt: String,
     /// [lifter] load: DLLs the title loads itself (LoadLibrary) from its folder or below it, lifted with it
@@ -162,6 +166,8 @@ pub fn load_recipe(dir: &Path) -> R<Recipe> {
         exe: s(run, "exe").ok_or("[run] exe")?,
         display: s(run, "display"),
         args: strs(run, "args")?.unwrap_or_default(),
+        initrd: s(run, "initrd"), cmdline: s(run, "cmdline"),
+        programs: strs(&lifter, "programs")?.unwrap_or_default(),
         cpu: match table(&t, "cpu")? { Some(c) => strs(c, "features")?, None => None },
         dll,
         registry: registry(table(&t, "registry")?)?,

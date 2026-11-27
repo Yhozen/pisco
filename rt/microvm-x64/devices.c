@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-// The machine's port devices: a 16550 serial port at 0x3f8 (its output is the title's standard output; no input
-// yet) on the IOAPIC's pin 4, an exit port at 0xf4 as QEMU's isa-debug-exit (a byte written there ends the machine
+// The machine's port devices: a 16550 serial port at 0x3f8 on the IOAPIC's pin 4: its output is the title's
+// standard output, its input what the host writes in the console ring (keys typed in a terminal or the page, or
+// a pipe), an exit port at 0xf4 as QEMU's isa-debug-exit (a byte written there ends the machine
 // with that status), the CMOS clock (ports 0x70 and 0x71: the virtual clock's date, from 2005-01-01 12:00 UTC as
 // rt/clock.c's, in BCD and 24 hours), the keyboard controller's and port 0xcf9's resets (the machine ends with 125, as the oracle
 // says of a machine that did not end at the exit port). There are no 8259s: their ports read as ones, and a
@@ -12,19 +13,33 @@ static char out[4096]; static unsigned out_n;
 void uart_flush(void) { unsigned k = 0; while (k < out_n) { ssize_t w = write(1, out + k, out_n - k); if (w <= 0) break; k += (unsigned)w; } out_n = 0; }
 static void uart_put(u8 ch) { out[out_n++] = (char)ch; if (ch == '\n' || out_n == sizeof out) uart_flush(); }
 
-static u8 lcr, ier, mcr, scr, dll = 1, dlm, thre_pending;
-// the interrupt line: the transmitter empty (until IIR says so or THR is written), when IER asks for it
-static void uart_line(void) { ioapic_line(4, (ier & 2) && thre_pending && (mcr & 8)); }
+static u8 lcr, mcr, scr, dll = 1, dlm, thre_pending;
+ConsoleRing *console;
+HOST("console_open") void host_console_open(u32 ring);   // the host writes the console's input there
+void console_init(void) { console = aligned_alloc(64, sizeof *console); memset(console, 0, sizeof *console); console->cap = sizeof console->data; host_console_open((u32)(uptr)console); }
+// what the host wrote reaches the receiver while a driver asks for its interrupt: the reads a driver makes while
+// it probes and starts (as Linux's 8250 does, its interrupts off) take nothing from a pipe written before it booted
+static u8 ier;
+int console_pending(void) { return console && (ier & 1) && __atomic_load_n(&console->w, __ATOMIC_ACQUIRE) != console->r; }
+static int rx_byte(void) {
+  if (!console_pending()) return -1;
+  u8 b = console->data[console->r % console->cap]; __atomic_store_n(&console->r, console->r + 1, __ATOMIC_RELEASE); return b;
+}
+// the interrupt line: data received, or the transmitter empty (until IIR says so or THR is written), when IER asks
+static void uart_line(void) { ioapic_line(4, (mcr & 8) && (((ier & 1) && console_pending()) || ((ier & 2) && thre_pending))); }
+static u32 seen_w;
+void console_poll(void) { if (console && console->w != seen_w) { seen_w = console->w; uart_line(); } }
 static u32 uart_in(unsigned r) {
   int dlab = lcr & 0x80;
   switch (r) {
-  case 0: return dlab ? dll : 0;
+  case 0: if (dlab) return dll; { int b = rx_byte(); if (mc_trace > 2 && b >= 0) rt_log("uart: RX %02x read (ier %02x)", b, ier); uart_line(); return b < 0 ? 0 : (u32)b; }
   case 1: return dlab ? dlm : ier;
-  case 2: if ((ier & 2) && thre_pending) { thre_pending = 0; uart_line(); return 0xC2; }   // the transmitter is empty: said once
+  case 2: if ((ier & 1) && console_pending()) return 0xC4;                                   // data received
+    if ((ier & 2) && thre_pending) { thre_pending = 0; uart_line(); return 0xC2; }   // the transmitter is empty: said once
     return 0xC1;                       // no interrupt pending; FIFOs on
   case 3: return lcr;
   case 4: return mcr;
-  case 5: return 0x60;                 // the transmitter is empty, nothing received
+  case 5: return 0x60 | (console_pending() ? 1 : 0);   // the transmitter is empty; data received
   case 6: return mcr & 0x10 ? (u32)((mcr & 0xC) << 4 | (mcr & 2) << 3 | (mcr & 1) << 5) : 0xB0;   // loopback, or carrier, DSR, CTS
   default: return scr;
   }
@@ -34,6 +49,7 @@ static void uart_out(unsigned r, u8 v) {
   switch (r) {
   case 0: if (dlab) dll = v; else { if (!(mcr & 0x10)) uart_put(v); thre_pending = 1; uart_line(); } break;   // sent at once: empty again
   case 1: if (dlab) dlm = v; else { if ((v & 2) && !(ier & 2)) thre_pending = 1; ier = v & 0xF; uart_line(); } break;
+  case 2: break;   // FCR: the FIFOs are always on (and reset: nothing is kept in them)
   case 3: lcr = v; break;
   case 4: mcr = v & 0x1F; uart_line(); break;
   case 7: scr = v; break;

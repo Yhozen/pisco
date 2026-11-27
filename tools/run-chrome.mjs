@@ -12,7 +12,9 @@
 //   marks the recording); RELOAD_AT=<s> load the page again then (a new title process, the same browser profile:
 //   what the title stored survives), with KEYS2 for the new page; CHROME_PROFILE=<folder> keep the browser's profile
 //   there (OPFS: what titles stored) and use it again next time, with PORT=<n> for the same origin (OPFS is per origin);
-//   SCREENSHOT=<out.png> the page as it is when the title ends (a title that prints: its text, in the page's colours)
+//   SCREENSHOT=<out.png> the page as it is when the title ends (a title that prints: its text, in the page's colours);
+//   TYPE=<text> typed into the page as key presses after TYPE_AT seconds (default 5), a newline as Enter (a machine's
+//   console, rt/microvm-x64)
 import { spawn } from 'node:child_process'; import path from 'node:path'; import fs from 'node:fs'; import os from 'node:os';
 import { sessionEnv, sessionSteps } from '../web/session.mjs';
 import { isImageDir } from '../web/image.mjs';
@@ -69,6 +71,10 @@ ws.onopen = () => {
   url = `http://127.0.0.1:${port}/browser/index.html?${image ? 'image=/files/0/' : `wasm=/files/0/${path.basename(wasm)}&exe=/files/1/${path.basename(exe)}`}&args=${encodeURIComponent(args.join(' '))}${process.env.SW_TRACE ? `&trace=${process.env.SW_TRACE}` : ''}${capture ? '&capture=1' : ''}${settings.map(([k, v]) => `&${k}=${encodeURIComponent(v)}`).join('')}${process.env.PAGE ? '&' + process.env.PAGE : ''}`;
   send('Page.navigate', { url });
   if (process.env.KEYS) setTimeout(() => send('Runtime.evaluate', { expression: `window.swKeys && window.swKeys(${process.env.KEYS})` }), 3000);
+  if (process.env.TYPE) setTimeout(() => { for (const ch of process.env.TYPE.replace(/\\n/g, '\n')) {
+    const key = ch === '\n' ? 'Enter' : ch, text = ch === '\n' ? '\r' : ch;
+    send('Input.dispatchKeyEvent', { type: 'keyDown', key, text }); send('Input.dispatchKeyEvent', { type: 'keyUp', key });
+  } }, +(process.env.TYPE_AT || 5) * 1000);
   if (process.env.RELOAD_AT) setTimeout(async () => {
     console.log('reloading the page');
     if (capture) await fetch(`http://127.0.0.1:${port}/capture/mark`, { method: 'POST', body: JSON.stringify({ label: 'reload', time: Date.now() }) }).catch(() => {});

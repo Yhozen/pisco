@@ -97,6 +97,7 @@ function run(d) {
     frame_dump: () => {}, // SW_DUMP_RAW is Node's: an offline render writes presented frames (run-node.mjs)
     input_open: (block) => bus.postMessage({ input: block >>> 0 }), // and writes the keyboard and gamepad here
     win32_input_open: (ring) => bus.postMessage({ win32input: ring >>> 0 }), // a desktop title's keyboard and mouse events (rt/windows-x86/input.c)
+    console_open: (ring) => bus.postMessage({ console: ring >>> 0 }), // a machine's console (rt/microvm-x64): the page's keys go there
     exit: (code) => exit(code),
   };
   // a Linux title's process (web/kernel.mjs): the page starts the workers of a fork and of an execve

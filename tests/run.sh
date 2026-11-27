@@ -35,11 +35,13 @@
 #            lifter must read vmlinux as a machine's image (--machine) and say what it does not lift yet. With QEMU
 #            (tools/oracle-qemu; said in one line without it) the kernel must run /init to its end there, and its
 #            programs must print recipes/linux/traces/programs.txt (KERNEL_RECORD=1 records it again), on QEMU's
-#            machine and on one without HPET, PIT and PIC, which is what rt/microvm-x64 will have. Then the kernel
-#            lifted with the initramfs's busybox (tools/build-title.sh: minutes the first time) and booted on
-#            rt/microvm-x64 in Node: its console must be the same twice, its boot up to "Run /init as init process"
-#            recipes/linux/traces/boot.txt (the compiler's name and the kernel's sizes left out), and its programs
-#            what they print on QEMU (programs.txt); KERNEL_RECORD=1 records the traces again
+#            machine and on one without HPET, PIT and PIC, which is what rt/microvm-x64 will have. Then the title's
+#            image (`pisco build recipes/linux`: the kernel and the initramfs's busybox lifted into one module, minutes
+#            the first time) booted by `pisco run` in Node: its console must be the same twice, its boot up to "Run
+#            /init as init process" recipes/linux/traces/boot.txt (the compiler's name and the kernel's sizes left
+#            out), and its programs what they print on QEMU (programs.txt). Then the kernel with /bin/sh as its first
+#            program, typed into through the console (recipes/linux/console-input.txt): what it prints from there must
+#            be traces/console.txt. KERNEL_RECORD=1 records the traces again
 #   changelog  tools/changelog.mjs: every entry in changelog/ (the changelog on GitHub Pages) is well formed
 #   chrome   hello, threads and cxx again in headless Chrome (WebGPU on SwiftShader), the 32-bit titles and linux-hello
 #   nd       Narbacular Drop, when the installed game is there (ND: its folder; default: the oracle's prefix):
@@ -210,10 +212,10 @@ kernel() {
     || { echo "on QEMU without HPET, PIT and PIC the kernel did not run /init to its end ($d/oracle-small.txt):"; tail -4 $d/oracle-small.txt; return 1; }
   ORACLE_RUN=$d/oracle-small tools/oracle-qemu/oracle.sh programs linux | cmp -s - $want || { echo "without HPET, PIT and PIC the programs print otherwise than the recorded trace"; return 1; }
   echo "QEMU: /init ran to its end, $(wc -l < $want) lines from its programs equal the recorded trace, also without HPET, PIT and PIC"
-  # lifted, on the machine: the boot, up to the first program
-  PROGRAMS=$d/build/busybox-1.36.1/busybox_unstripped SPLIT=16 tools/build-title.sh $d/vmlinux $d/wasm > $d/wasm.log 2>&1 || { echo "the lifted kernel does not build ($d/wasm.log)"; tail -3 $d/wasm.log; return 1; }
+  # lifted, on the machine: the title's image, its boot up to the first program, then the programs
+  target/release/pisco build recipes/linux --out out/images/linux > $d/image.log 2>&1 || { echo "pisco build recipes/linux failed ($d/image.log)"; tail -3 $d/image.log; return 1; }
   local boot=recipes/linux/traces/boot.txt k
-  for k in 1 2; do (cd $d && SW_INITRD=initramfs.cpio SW_CMDLINE="$(cat ../../recipes/linux/cmdline)" timeout 600 node ../../web/run-node.mjs wasm/title.wasm vmlinux 2>&1) | tr -d '\r' > $d/boot$k.txt; done
+  for k in 1 2; do timeout 600 target/release/pisco run out/images/linux < /dev/null 2>&1 | tr -d '\r' > $d/boot$k.txt; done
   grep -q '^Run /init as init process' $d/boot1.txt || { echo "the lifted kernel did not reach /init ($d/boot1.txt):"; tail -4 $d/boot1.txt; return 1; }
   cmp -s $d/boot1.txt $d/boot2.txt || { echo "two boots of the lifted kernel differ ($d/boot1.txt, $d/boot2.txt)"; return 1; }
   # the boot up to /init, without the machine's own notes and what depends on the compiler that built the kernel
@@ -222,7 +224,12 @@ kernel() {
   norm $d/boot1.txt | cmp -s - $boot || { echo "the lifted kernel's boot differs from $boot (< now, > recorded):"; diff <(norm $d/boot1.txt) $boot | head -8; return 1; }
   sed -n '/^Run \/init as init process/,$p' $d/boot1.txt | sed 1d | grep -v '^pisco: ' > $d/lifted-programs.txt
   cmp -s $d/lifted-programs.txt $want || { echo "lifted, the programs print otherwise than on QEMU (< lifted, > QEMU):"; diff $d/lifted-programs.txt $want | head -8; return 1; }
-  echo "lifted: $(wc -l < $boot) lines of boot to /init, twice the same, equal to $boot; then /init's programs print what they print on QEMU"
+  # typed into: the shell as the first program, its input from the console
+  local con=recipes/linux/traces/console.txt
+  SW_CMDLINE="$(cat recipes/linux/cmdline) rdinit=/bin/sh" timeout 600 target/release/pisco run out/images/linux < recipes/linux/console-input.txt 2>&1 | tr -d '\r' | sed -n '/^Run \/bin\/sh as init process/,$p' | grep -v '^pisco: ' > $d/console.txt
+  [ -z "${KERNEL_RECORD:-}" ] || cp $d/console.txt $con
+  cmp -s $d/console.txt $con || { echo "typed into, the shell answers otherwise than $con (< now, > recorded):"; diff $d/console.txt $con | head -8; return 1; }
+  echo "lifted (pisco run): $(wc -l < $boot) lines of boot to /init, twice the same, equal to $boot; /init's programs print what they print on QEMU; a shell typed into answers as $con"
 }
 neofetch() {
   local d=out/neofetch want=recipes/neofetch/traces/pipe.txt

@@ -55,6 +55,13 @@ void ioapic_line(int pin, int level);   // a device's interrupt line, high or lo
 
 // ---- devices (devices.c) ----
 void uart_flush(void);
+// the console's input: a ring in this memory that the host writes (keys typed, or a pipe) and the 16550 reads
+typedef struct { volatile u32 w, r, cap, eof; u8 data[4096]; } ConsoleRing;
+extern ConsoleRing *console;
+void console_init(void);
+void console_poll(void);          // new bytes: the 16550's receive interrupt
+int console_pending(void);
+extern int mc_paced;              // someone types (SW_CONSOLE=tty): the clock is the host's, and idle waits for keys
 
 // ---- the tasks' host stacks and the loops that run lifted code (run.c) ----
 typedef struct Level {

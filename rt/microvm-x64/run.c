@@ -183,6 +183,7 @@ int main(void) {
   mc.apic_base = 0xFEE00900; mc.pat = 0x0007040600070406ull;
   load(rt_modules[0].name);
   boot_params();
+  console_init(); mc_paced = (e = getenv("SW_CONSOLE")) && !strcmp(e, "tty");
   Cpu *c = &cpu; c->mxcsr = 0x1F80; c->fcw = 0x037F;
   R[15] = ZERO_PAGE;   // where Linux's common_startup_64 finds the boot parameters (physical)
   Co *boot = co_new(); boot->started = 1; co_cur = boot;

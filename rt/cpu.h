@@ -323,16 +323,36 @@ double log2(double); double exp2(double); double log1p(double); double expm1(dou
 #define ST(i) (c->st[(c->ftop + (i)) & 7])
 static inline void fpush(Cpu *c, fpx v) { c->ftop = (c->ftop - 1) & 7; c->st[c->ftop] = v; }
 static inline void fpop(Cpu *c) { c->ftop = (c->ftop + 1) & 7; }
+// The helpers that reach guest memory take the address of the instruction that runs (a machine's image raises a
+// fault there: MR / MWR use ip_, and tlb_). Called by their names, they get the caller's ip_: in a lifted function
+// of a machine's image its own, elsewhere the fallback.
+#ifdef GUEST_MACHINE
+#define MCTX_P , u64 ip_, TlbEntry *tlb_   // and the TLB of the code's privilege
+#define MCTX_A , ip_, tlb_
+#else
+static const u64 ip_ = 0;
+#define MCTX_P , u64 ip_
+#define MCTX_A , ip_
+#endif
+#define f80_load(c, a) f80_load_((c), (a) MCTX_A)
+#define f80_store(c, a, v) f80_store_((c), (a), (v) MCTX_A)
+#define fstenv(c, a) fstenv_((c), (a) MCTX_A)
+#define fldenv(c, a) fldenv_((c), (a) MCTX_A)
+#define fsave(c, a) fsave_((c), (a) MCTX_A)
+#define frstor(c, a) frstor_((c), (a) MCTX_A)
+#define fxsave(c, a) fxsave_((c), (a) MCTX_A)
+#define fxrstor(c, a) fxrstor_((c), (a) MCTX_A)
+
 #ifdef GUEST_LINUX
 // the 80-bit format and binary128 have the same exponent: the mantissa's bits move (its integer bit is explicit in 80 bits)
-static inline fpx f80_load(Cpu *c, u64 a) {
+static inline fpx f80_load_(Cpu *c, u64 a MCTX_P) {
   unsigned long long m = M64(a); u16 se = M16(a + 8); unsigned e = se & 0x7FFF; fpx v;
   if (e == 0) { v = scalbnl((fpx)m, -16382 - 63); return (se >> 15) ? -v : v; }   // zero, or a denormal
   unsigned __int128 b = ((unsigned __int128)(((unsigned long long)se << 48) | ((m << 1) >> 16)) << 64) | (unsigned long long)((m << 1) << 48);
   __builtin_memcpy(&v, &b, 16);
   return v;
 }
-static inline void f80_store(Cpu *c, u64 a, fpx v) {
+static inline void f80_store_(Cpu *c, u64 a, fpx v MCTX_P) {
   v = fx64(v);
   unsigned __int128 b; __builtin_memcpy(&b, &v, 16);
   unsigned long long hi = (unsigned long long)(b >> 64), lo = (unsigned long long)b; unsigned e = (hi >> 48) & 0x7FFF;
@@ -344,14 +364,14 @@ static inline void f80_store(Cpu *c, u64 a, fpx v) {
 // precision control: a result rounded to 24, 53 or 64 bits
 static inline fpx fxr(struct Cpu *c, fpx v);
 #else
-static inline double f80_load(Cpu *c, u64 a) {
+static inline double f80_load_(Cpu *c, u64 a MCTX_P) {
   u64 m = M64(a); u16 se = M16(a + 8); int e = se & 0x7FFF; int neg = se >> 15; double v;
   if (e == 0 && m == 0) v = 0.0;
   else if (e == 0x7FFF) v = (m << 1) ? __builtin_nan("") : __builtin_inf();
   else v = ldexp((double)m, e - 16383 - 63);
   return neg ? -v : v;
 }
-static inline void f80_store(Cpu *c, u64 a, double v) {
+static inline void f80_store_(Cpu *c, u64 a, double v MCTX_P) {
   u64 bits; __builtin_memcpy(&bits, &v, 8);
   int neg = bits >> 63; int e = (bits >> 52) & 0x7FF; u64 frac = bits & ((1ull << 52) - 1); u64 m; int ee;
   if (e == 0 && frac == 0) { m = 0; ee = 0; }
@@ -445,21 +465,21 @@ static inline void fxtract(Cpu *c) {
 }
 // the 28-byte environment and the 108-byte state of 32-bit protected mode. Which registers are empty is not
 // tracked: the tag word says none is. Instruction and operand pointers are zero.
-static inline void fstenv(Cpu *c, u64 a) {
+static inline void fstenv_(Cpu *c, u64 a MCTX_P) {
   MW32(a, 0xFFFF0000u | c->fcw); MW32(a + 4, 0xFFFF0000u | fstsw(c)); MW32(a + 8, 0xFFFF0000u);
   MW32(a + 12, 0); MW32(a + 16, 0); MW32(a + 20, 0); MW32(a + 24, 0xFFFF0000u);
 }
-static inline void fldenv(Cpu *c, u64 a) { u16 sw = M16(a + 4); c->fcw = M16(a); c->fsw = sw & ~0x3800; c->ftop = (sw >> 11) & 7; }
-static inline void fsave(Cpu *c, u64 a) { fstenv(c, a); for (int i = 0; i < 8; i++) f80_store(c, a + 28 + 10 * i, ST(i)); c->ftop = 0; c->fcw = 0x37F; c->fsw = 0; }
-static inline void frstor(Cpu *c, u64 a) { fldenv(c, a); for (int i = 0; i < 8; i++) ST(i) = f80_load(c, a + 28 + 10 * i); }
+static inline void fldenv_(Cpu *c, u64 a MCTX_P) { u16 sw = M16(a + 4); c->fcw = M16(a); c->fsw = sw & ~0x3800; c->ftop = (sw >> 11) & 7; }
+static inline void fsave_(Cpu *c, u64 a MCTX_P) { fstenv(c, a); for (int i = 0; i < 8; i++) f80_store(c, a + 28 + 10 * i, ST(i)); c->ftop = 0; c->fcw = 0x37F; c->fsw = 0; }
+static inline void frstor_(Cpu *c, u64 a MCTX_P) { fldenv(c, a); for (int i = 0; i < 8; i++) ST(i) = f80_load(c, a + 28 + 10 * i); }
 // fxsave / fxrstor (64-bit layout): the x87 and SSE state in 512 bytes (the tag word abridged: all registers valid)
-static inline void fxsave(Cpu *c, u64 a) {
+static inline void fxsave_(Cpu *c, u64 a MCTX_P) {
   MW16(a, c->fcw); MW16(a + 2, fstsw(c)); MW16(a + 4, 0xFF); MW16(a + 6, 0); MW64(a + 8, 0); MW64(a + 16, 0);
   MW32(a + 24, c->mxcsr); MW32(a + 28, 0xFFFF);
   for (int i = 0; i < 8; i++) { f80_store(c, a + 32 + 16 * i, ST(i)); MW16(a + 42 + 16 * i, 0); MW32(a + 44 + 16 * i, 0); }
   for (int i = 0; i < 16; i++) MWV(a + 160 + 16 * i, c->x[i]);
 }
-static inline void fxrstor(Cpu *c, u64 a) {
+static inline void fxrstor_(Cpu *c, u64 a MCTX_P) {
   c->fcw = M16(a); u16 sw = M16(a + 2); c->fsw = sw & ~0x3800; c->ftop = (sw >> 11) & 7; c->mxcsr = M32(a + 24);
   for (int i = 0; i < 8; i++) ST(i) = f80_load(c, a + 32 + 16 * i);
   for (int i = 0; i < 16; i++) c->x[i] = MV(a + 160 + 16 * i);
