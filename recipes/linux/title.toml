@@ -19,3 +19,5 @@ cmdline = "console=ttyS0,115200 earlyprintk=serial,ttyS0,115200 panic=-1 no_time
 [lifter]
 split = 16
 programs = ["/busybox", "/hello", "/fastfetch", "/perl"]
+# each in a wasm module of its own, not linked with the kernel: bash's licence (GPL-3.0-or-later) is not the kernel's
+modules = ["/bash"]

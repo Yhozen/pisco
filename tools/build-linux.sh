@@ -53,6 +53,8 @@ MUSL=${MUSL:-$HOME/tools/musl-1.2.5} "$root/fixtures/linux-hello/build.sh" "$out
 ff=$root/out/fastfetch/fastfetch; [ -x "$ff" ] || "$root/tools/build-fastfetch.sh" > /dev/null
 # cowsay 3.8.4 on perl 5.44.0 (tools/build-cowsay.sh): perl, the modules cowsay loads (perl names them: %INC), the cows
 cr=$root/out/cowsay/root; [ -x "$cr/usr/bin/perl" ] || "$root/tools/build-cowsay.sh" > /dev/null
+# bash 5.2.37 (GPL-3.0-or-later; tools/build-bash.sh): a program in a module of its own, not linked with the kernel
+bash_=$("$root/tools/build-bash.sh" "$out")
 mods=$(cd "$cr" && PERL5LIB=$cr/usr/lib/perl5/5.44.0/x86_64-linux:$cr/usr/lib/perl5/5.44.0 COWPATH=$cr/usr/share/cowsay/cows ./usr/bin/perl \
   -e 'BEGIN { @ARGV = ("moo") } open STDOUT, ">", "/dev/null"; do "./usr/bin/cowsay"; print STDERR "$_\n" for sort values %INC' 2>&1 >/dev/null | grep "^$cr/usr/lib/" | sed "s|^$cr/||")
 { echo "dir /bin 755 0 0"; for d in dev proc sys tmp etc root; do echo "dir /$d 755 0 0"; done
@@ -60,6 +62,7 @@ mods=$(cd "$cr" && PERL5LIB=$cr/usr/lib/perl5/5.44.0/x86_64-linux:$cr/usr/lib/pe
   echo "file /bin/busybox $bb 755 0 0"
   echo "file /bin/hello $hello 755 0 0"
   echo "file /bin/fastfetch $ff 755 0 0"
+  echo "file /bin/bash $bash_ 755 0 0"
   for d in usr usr/bin usr/lib usr/share usr/share/cowsay usr/share/cowsay/cows; do echo "dir /$d 755 0 0"; done
   echo "file /usr/bin/perl $cr/usr/bin/perl 755 0 0"; echo "file /usr/bin/cowsay $cr/usr/bin/cowsay 755 0 0"; echo "slink /usr/bin/env /bin/busybox 777 0 0"
   for c in "$cr"/usr/share/cowsay/cows/*.cow; do echo "file /usr/share/cowsay/cows/$(basename "$c") $c 644 0 0"; done
@@ -68,5 +71,5 @@ mods=$(cd "$cr" && PERL5LIB=$cr/usr/lib/perl5/5.44.0/x86_64-linux:$cr/usr/lib/pe
   for a in $("$bb" --list); do echo "slink /bin/$a busybox 777 0 0"; done
   echo "file /init $root/recipes/linux/init 755 0 0"; } > "$out/initramfs.list"
 "$obj/usr/gen_init_cpio" -t 0 "$out/initramfs.list" > "$out/initramfs.cpio"
-rm -rf "$out/root"; mkdir -p "$out/root"; cp "$out/vmlinux" "$out/initramfs.cpio" "$out/root/"; cp "$bb" "$out/root/busybox"; cp "$hello" "$out/root/hello"; cp "$ff" "$out/root/fastfetch"; cp "$cr/usr/bin/perl" "$out/root/perl"
+rm -rf "$out/root"; mkdir -p "$out/root"; cp "$out/vmlinux" "$out/initramfs.cpio" "$out/root/"; cp "$bb" "$out/root/busybox"; cp "$hello" "$out/root/hello"; cp "$ff" "$out/root/fastfetch"; cp "$cr/usr/bin/perl" "$out/root/perl"; cp "$bash_" "$out/root/bash"
 echo "$out: vmlinux ($(stat -c %s "$out/vmlinux") bytes), bzImage, initramfs.cpio ($(stat -c %s "$out/initramfs.cpio") bytes), root/"

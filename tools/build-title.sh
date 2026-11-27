@@ -53,6 +53,18 @@ for p in ${PROGRAMS:-}; do
 done
 [ -z "$progs" ] || printf '#include "cpu.h"\n%s\nconst ProgramDef *const rt_programs[] = {%s};\nconst unsigned rt_program_count = %d;\n' "$decl" "$list" "$(echo $progs | wc -w)" > "$out/programs.gen.c"
 [ -n "$progs" ] || rm -f "$out/programs.gen.c" "$out/programs.gen.o"
+# SIDE_PROGRAMS="<elf>...": a machine's programs each in a module of its own (<out>/<name>.wasm, a wasm side module:
+# position-independent, it imports this module's memory, table and functions; the host loads it, SW_PROGRAMS). The
+# title's module exports what they import
+side_exports=""
+for p in ${SIDE_PROGRAMS:-}; do
+  n=$(basename "$p" | tr -c 'a-zA-Z0-9_\n' '_' | sed 's/^\([0-9]\)/_\1/'); sd="$out/side-$n"; mkdir -p "$sd"
+  "$root/target/release/lifter" "$p" "$sd/title.c" --split "${SPLIT:-8}" --user "$n" > "$sd/lifter.log" 2>&1 || { echo "build-title.sh: the lifter failed on $p ($sd/lifter.log)" >&2; exit 1; }
+  for f in "$sd"/title*.c; do [ "$f.o" -nt "$f" ] && [ "$f.o" -nt "$root/rt/cpu.h" ] || echo "$f"; done | xargs -r -P "$JOBS" -I{} sh -c '"$0"/clang $1 -fPIC -ffreestanding -c "{}" -o "{}.o"' "$W" "$CF"
+  "$W/wasm-ld" -shared --experimental-pic --shared-memory --export="${n}_program" --unresolved-symbols=import-dynamic -o "$out/$n.wasm" "$sd"/title*.c.o
+  side_exports="$side_exports $(node -e 'const m = new WebAssembly.Module(require("fs").readFileSync(process.argv[1])); console.log(WebAssembly.Module.imports(m).filter((i) => (i.module === "env" && i.kind === "function") || i.module === "GOT.mem").map((i) => i.name).join(" "))' "$out/$n.wasm")"
+done
+SIDE_LINK=""; [ -z "${SIDE_PROGRAMS:-}" ] || SIDE_LINK="-Wl,--export-table,--growable-table,--export=__stack_pointer$(for x in $(echo $side_exports | tr ' ' '\n' | sort -u); do printf ',--export=%s' "$x"; done)"
 # lifted code: freestanding, no libc
 for f in "$out"/title*.c $(for d in $progs; do ls "$d"/title*.c; done); do [ "$f.o" -nt "$f" ] && [ "$f.o" -nt "$root/rt/cpu.h" ] || echo "$f"; done | xargs -r -P "$JOBS" -I{} sh -c '"$0"/clang $1 -ffreestanding -c "{}" -o "{}.o"' "$W" "$CF"
 # XMA2 / Opus decoding: FFmpeg's decoders when tools/build-ffmpeg-audio.sh has built them (else silent voices)
@@ -68,4 +80,4 @@ for f in $RT_FILES; do b=$(echo "${f#$root/rt/}" | tr / _ | sed "s/\.c$//"); X="
 wait
 "$W/clang" $TARGET -pthread "$out"/title*.c.o $(for d in $progs; do ls "$d"/title*.c.o; done) $([ -f "$out/programs.gen.o" ] && echo "$out/programs.gen.o") "$out"/rt_*.o "$out/imports.gen.o" "$out/recipe.gen.o" $AUDIO_LIBS -o "$out/title.wasm" -mllvm -wasm-enable-sjlj -lsetjmp \
   -Wl,--import-memory,--shared-memory,--initial-memory=67108864,--max-memory=4294967296,--export=wasi_thread_start,--export=rt_last_pc,$LAYOUT \
-  -Wl,--export=__heap_base
+  -Wl,--export=__heap_base $SIDE_LINK

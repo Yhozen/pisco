@@ -31,6 +31,8 @@ pub struct Recipe {
     pub initrd: Option<String>, pub cmdline: Option<String>,
     /// a machine's title: [lifter] programs, lifted with the kernel at their own addresses (lifter --program)
     pub programs: Vec<String>,
+    /// a machine's title: [lifter] modules, programs each in a wasm module of its own (a side module the host loads)
+    pub modules: Vec<String>,
     pub cpu: Option<Vec<String>>, pub dll: BTreeMap<String, String>, pub registry: Vec<RegValue>,
     pub split: usize, pub entries: Vec<u64>, pub base_address: Option<u64>, pub opt: String,
     /// [lifter] load: DLLs the title loads itself (LoadLibrary) from its folder or below it, lifted with it
@@ -168,6 +170,7 @@ pub fn load_recipe(dir: &Path) -> R<Recipe> {
         args: strs(run, "args")?.unwrap_or_default(),
         initrd: s(run, "initrd"), cmdline: s(run, "cmdline"),
         programs: strs(&lifter, "programs")?.unwrap_or_default(),
+        modules: strs(&lifter, "modules")?.unwrap_or_default(),
         cpu: match table(&t, "cpu")? { Some(c) => strs(c, "features")?, None => None },
         dll,
         registry: registry(table(&t, "registry")?)?,

@@ -2,6 +2,7 @@
 // One guest thread. Output and exit go through a BroadcastChannel: the page reads it, whichever worker writes.
 // The title's files come from its folder's URL (`dir`), or for a title image from its drive (`drive`: the file layers,
 // served by tools/serve.mjs) where its folder is `folder` (web/image.mjs).
+import { loadSide } from '../side.mjs';
 import { driveName } from '../image.mjs';
 import { processImports } from '../kernel.mjs';
 const bus = new BroadcastChannel('pisco');
@@ -19,7 +20,7 @@ onmessage = (e) => {
   } else run(e.data);
 };
 function run(d) {
-  const { module, memory, dir, drive = null, folder = null, tids, tid, args, env, start, pool, store = [], t0 = 0, kernel = null, programs = null, pid = 1, mode = 'start' } = d;
+  const { module, memory, dir, drive = null, folder = null, tids, tid, args, env, start, pool, store = [], t0 = 0, kernel = null, programs = null, side = [], pid = 1, mode = 'start' } = d;
   // one monotonic clock for every thread: each worker's performance.now() counts from its own start
   const clock = () => performance.timeOrigin + performance.now() - t0;
   const u8 = () => new Uint8Array(memory.buffer), dv = () => new DataView(memory.buffer);
@@ -131,6 +132,7 @@ function run(d) {
   const instance = new WebAssembly.Instance(module, { env: { memory }, wasi_snapshot_preview1: wasi, wasi: { 'thread-spawn': spawn }, host });
   if (machine) {
     coEntry = WebAssembly.promising(instance.exports.rt_co_entry);
+    for (const [n, bytes] of side) loadSide(bytes, instance, memory, n);   // its programs in modules of their own
     WebAssembly.promising(instance.exports._start)().then(() => exit(0), (err) => { bus.postMessage({ out: `pisco: ${err && err.stack || err}\n` }); exit(123); });
     return;
   }

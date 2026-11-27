@@ -264,10 +264,25 @@ Memory: 17.16 MiB / 244.25 MiB (7%)
 Disk (/): 3.57 MiB / 118.45 MiB (3%) - rootfs
 ```
 
+## What it took (K9): a program in a module of its own
+
+bash is GPL-3.0-or-later and cannot be linked into the GPL-2.0-only kernel's module, so it is a module of its own:
+
+- **A wasm side module**: the lifted program compiled position-independent (`-fPIC`) and linked by `wasm-ld -shared`
+  (the `dylink.0` convention). It imports the title's memory, its function table, its C stack pointer, the machine's
+  functions (`mmu_read`, `rt_poll`, `rt_syscall_m`...) and compiler-rt's, and two of its data's addresses; it exports
+  its `ProgramDef`.
+- **Loaded by the host** (`web/side.mjs`, in Node and the page's worker), as a dynamic linker loads a library: its
+  memory taken from the machine (`rt_side_alloc`), its functions added to the table, its relocations applied, then
+  registered with the machine (`rt_program_register`); from there it is found by its code pages like any program.
+- **`pisco build`**: `[lifter] modules = ["/bash"]` makes it a layer of the image, named in the config's `side`; the
+  title's module exports what the side modules import (`pisco` reads their import sections).
+- `/init` runs bash as it runs on QEMU, in Node and in headless Chrome.
+
 ## Limits
 
-- Only programs lifted with the kernel run (busybox and linux-hello). Programs under other licences than
-  GPL-2.0-compatible ones (bash) need a module of their own.
+- Only programs lifted when the image is built run: busybox, linux-hello, fastfetch and perl in the kernel's module,
+  bash in a module of its own.
 - Model-specific registers the machine does not know read as 0 where a CPU raises #GP, which some of the kernel's
   `rdmsr_safe` callers would want.
 - A store that faults between its read and its write (an add to memory whose page must be copied) reads again after
@@ -290,4 +305,5 @@ Disk (/): 3.57 MiB / 118.45 MiB (3%) - rootfs
 | K6 | programs at the same addresses, found by the hash of their code pages: busybox and linux-hello | done |
 | K7 | signals delivered anywhere (on the way back from a fault or an interrupt); tasks' stacks freed when they end | done |
 | K8 | real programs on it: fastfetch, and cowsay on perl, as on QEMU | done |
-| K9 | a module per program (bash beside the kernel), a network, snapshots | next |
+| K9 | a program in a module of its own: bash (GPL-3.0) beside the kernel, as on QEMU | done |
+| K10 | a network, programs lifted when they are first run, snapshots | next |

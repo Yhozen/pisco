@@ -278,7 +278,9 @@ reasoning and the measurements: [research/kernel-as-a-title.md](research/kernel-
   interrupted code goes on after `sigreturn`); a task's stacks freed when it ends: 4,000 programs in a row.
 - **K8, done**: fastfetch and cowsay on perl run on the lifted Linux beside busybox, as on QEMU; fastfetch reads the
   kernel's own `/proc`.
-- **Next**: a module per program (so bash, GPL-3.0, can run beside the GPL-2.0 kernel), a network, snapshots.
+- **K9, done**: bash (GPL-3.0) in a wasm module of its own, loaded by the host beside the kernel's
+  (`web/side.mjs`, `[lifter] modules`), runs as on QEMU.
+- **Next**: a network, programs lifted when they are first run, snapshots.
 
 ## Known limits
 

@@ -16,7 +16,7 @@ last_pfn = 0x10000 max_arch_pfn = 0x400000000
 x86/PAT: PAT support disabled because CONFIG_X86_PAT is disabled in the kernel.
 x86/PAT: Configuration [0-7]: WB  WT  UC- UC  WB  WT  UC- UC  
 found SMP MP-table at [mem 0x0009fc00-0x0009fc0f]
-RAMDISK: [mem 0x0f700000-0x0ffabfff]
+RAMDISK: [mem 0x0f600000-0x0ffb9fff]
 Intel MultiProcessor Specification v1.4
 MPTABLE: OEM ID: PISCO   
 MPTABLE: Product ID: microvm-x64 
@@ -95,11 +95,11 @@ Unpacking initramfs...
 workingset: timestamp_bits=62 max_order=16 bucket_order=0
 io scheduler mq-deadline registered
 io scheduler kyber registered
-Freeing initrd memory: 8880K
+Freeing initrd memory: 9960K
 Serial: 8250/16550 driver, 1 ports, IRQ sharing disabled
 serial8250: ttyS0 at I/O 0x3f8 (irq = 4, base_baud = 115200) is a 16550A
 microcode: Current revision: 0xffffffff
-sched_clock: Marking stable (44002136, 269224)->(47592212, -3320852)
+sched_clock: Marking stable (44002016, 269820)->(47592688, -3320852)
 Freeing unused kernel image (initmem) memory: 580K
 Write protecting the kernel read-only data: 8192k
 Freeing unused kernel image (text/rodata gap) memory: 1764K

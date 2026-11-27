@@ -11,7 +11,7 @@ use crate::census::Census;
 use crate::oci::{self, Layout, Tree, LAYER, LOCAL, MODULE, ROLE, TITLE};
 use crate::recipe::{self, Base, RegData, Recipe, R};
 use serde_json::json;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Instant;
@@ -344,7 +344,9 @@ fn find_ci(dir: &Path, rel: &str) -> Option<PathBuf> {
     Some(p)
 }
 /// `user`: a machine's program (lifter --user <name>), lifted on its own under that name
-fn lift(t: &Tools, r: &Recipe, exe: &Path, ex: &Extracted, cache: &Path, user: Option<&str>) -> R<Lifted> {
+fn lift(t: &Tools, r: &Recipe, exe: &Path, ex: &Extracted, cache: &Path, user: Option<&str>) -> R<Lifted> { lift_as(t, r, exe, ex, cache, user, false) }
+/// `pic`: compiled position-independent, for a side module (a program in a module of its own)
+fn lift_as(t: &Tools, r: &Recipe, exe: &Path, ex: &Extracted, cache: &Path, user: Option<&str>, pic: bool) -> R<Lifted> {
     let dir = exe.parent().unwrap();
     // the images the lifter reads: the exe and every DLL beside it that is not builtin, and the DLLs the image puts in
     // C:\WINDOWS\system32 (a [[source.cab]]'s), which it may import too: the lifter looks in their folders
@@ -372,6 +374,7 @@ fn lift(t: &Tools, r: &Recipe, exe: &Path, ex: &Extracted, cache: &Path, user: O
     let mut args: Vec<String> = vec!["--split".into(), r.split.to_string()];
     for e in &r.entries { args.extend(["--entry".into(), format!("{e:x}")]); }
     if let Some(u) = user { args.extend(["--user".into(), u.to_string()]); }
+    if pic { key.push_str("position-independent\n"); }
     if let Some(b) = r.base_address { args.extend(["--base".into(), format!("{b:x}")]); }
     for d in r.dll.keys() { args.extend(["--builtin".into(), d.clone()]); }
     if std::env::var_os("PISCO_TRACE_PC").is_some() { args.push("--trace-pc".into()); }   // each block notes its address (debugging a trap)
@@ -393,7 +396,7 @@ fn lift(t: &Tools, r: &Recipe, exe: &Path, ex: &Extracted, cache: &Path, user: O
         if !o.status.success() { return Err(format!("the lifter failed: see {}", tmp.join("lifter.log").display())); }
         let lifted_at = time.elapsed().as_secs_f64();
         let (bits, _, _, os) = env_of(&tmp)?;
-        let flags = cflags(t, cache, &r.opt, bits, &os);
+        let mut flags = cflags(t, cache, &r.opt, bits, &os); if pic { flags.push("-fPIC".into()); }
         let mut jobs = Vec::new();
         for c in c_files(&tmp)? {
             let mut cmd = Command::new(&t.clang);
@@ -409,7 +412,7 @@ fn lift(t: &Tools, r: &Recipe, exe: &Path, ex: &Extracted, cache: &Path, user: O
     }
     let (bits, low, high, os) = env_of(&out)?;
     // the objects were compiled with these flags: when they change (they are not in the key), compiled again
-    let flags = cflags(t, cache, &r.opt, bits, &os);
+    let mut flags = cflags(t, cache, &r.opt, bits, &os); if pic { flags.push("-fPIC".into()); }
     let had = std::fs::read_to_string(out.join("cflags")).unwrap_or_default();
     if had != flags.join(" ") {
         if !had.is_empty() || !out.join("cflags").exists() { say("lift: compiled with other flags than these: the lifted C compiled again"); }
@@ -532,6 +535,19 @@ pub fn build(root: &Path, o: &Opts) -> R<()> {
             user_lifts.push((name.clone(), lift(&t, &r, &h, &ex, &cache, Some(&name))?));
         }
     }
+    // a machine's programs in modules of their own ([lifter] modules): lifted position-independent, each linked as a
+    // wasm side module (web/side.mjs loads it); the title's module exports what they import
+    let mut side_lifts: Vec<(String, Lifted)> = Vec::new();
+    if base.os == "microvm" {
+        for p in &r.modules {
+            let g = recipe::drive_path(p)?;
+            let h = ex.files.iter().find(|(f, _)| f.eq_ignore_ascii_case(&g)).map(|x| x.1.clone()).ok_or(format!("[lifter] modules: {p} is not among the title's files"))?;
+            let name: String = g.rsplit('/').next().unwrap().chars().map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '_' }).collect();
+            let name = if name.starts_with(|ch: char| ch.is_ascii_digit()) { format!("_{name}") } else { name };
+            say(&format!("module {p} ({name})"));
+            side_lifts.push((name.clone(), lift_as(&t, &r, &h, &ex, &cache, Some(&name), true)?));
+        }
+    }
     let main_lift = lift_of.get(&exe_guest).copied().unwrap_or(0);
     let lifted = &lifts[main_lift];
     // the imports against what the base and the libraries answer for
@@ -586,7 +602,21 @@ pub fn build(root: &Path, o: &Opts) -> R<()> {
     let (gen_objs, _) = compile_cached(&t, &cache, "gen", gen_items, &rt_flags)?;
     say(&format!("runtime: {} sources, {rt_new} compiled, {} cached ({:.1} s)", sources.len(), sources.len() - rt_new, t3.elapsed().as_secs_f64()));
 
-    // 4. the modules
+    // 4. the modules: a machine's side modules first (what they import, the title's module exports)
+    let wasm_ld = t.clang.parent().unwrap().join("wasm-ld");
+    let mut side_wasms: Vec<(String, PathBuf)> = Vec::new(); let mut side_needs: BTreeSet<String> = BTreeSet::new();
+    for (n, l) in &side_lifts {
+        let mut key = format!("side 1\nname {n}\n"); for o in &l.objects { key.push_str(&format!("{}\n", oci::sha256(&io(std::fs::read(o), o)?))); }
+        let key = oci::sha256(key.as_bytes()); let w = cache.join("link").join(format!("{key}-{n}.wasm"));
+        if !w.is_file() {
+            io(std::fs::create_dir_all(cache.join("link")), &cache)?;
+            let o = Command::new(&wasm_ld).args(["-shared", "--experimental-pic", "--shared-memory", &format!("--export={n}_program"), "--unresolved-symbols=import-dynamic", "-o"]).arg(&w).args(&l.objects).output().map_err(|e| e.to_string())?;
+            if !o.status.success() { return Err(format!("linking {n}'s module failed: {}", String::from_utf8_lossy(&o.stderr).lines().take(6).collect::<Vec<_>>().join("\n"))); }
+            say(&format!("link: {n}'s module ({} objects)", l.objects.len()));
+        }
+        for (m, f) in wasm_imports(&io(std::fs::read(&w), &w)?)? { if m == "env:function" || m == "GOT.mem" { side_needs.insert(f); } }
+        side_wasms.push((n.clone(), w));
+    }
     let link_module = |lifted: &Lifted| -> R<PathBuf> {
     let mut layout_flags = String::from("--stack-first,-z,stack-size=8388608");
     // (a Linux program that is not position-independent loads low too: 0x400000 unless its link said otherwise)
@@ -599,7 +629,9 @@ pub fn build(root: &Path, o: &Opts) -> R<()> {
     link.push("-pthread".into());
     let objects: Vec<&PathBuf> = lifted.objects.iter().chain(user_lifts.iter().flat_map(|(_, l)| l.objects.iter())).chain(&rt_objs).chain(&gen_objs).collect();
     let tail = ["-mllvm".to_string(), "-wasm-enable-sjlj".into(), "-lsetjmp".into(),
-        format!("-Wl,--import-memory,--shared-memory,--initial-memory=67108864,--max-memory=4294967296,--export=wasi_thread_start,--export=rt_last_pc,{layout_flags}"), "-Wl,--export=__heap_base".into()];
+        format!("-Wl,--import-memory,--shared-memory,--initial-memory=67108864,--max-memory=4294967296,--export=wasi_thread_start,--export=rt_last_pc,{layout_flags}"), "-Wl,--export=__heap_base".into(),
+        if side_needs.is_empty() { String::new() } else { format!("-Wl,--export-table,--growable-table,--export=__stack_pointer{}", side_needs.iter().map(|f| format!(",--export={f}")).collect::<String>()) }];
+    let tail: Vec<String> = tail.into_iter().filter(|s| !s.is_empty()).collect();
     let mut key = format!("link 2 (as title.wasm)\nclang {}\nflags {} {}\n", t.clang_version, link.join(" "), tail.join(" "));
     for o in &objects { key.push_str(&format!("{}\n", oci::sha256(&io(std::fs::read(o), o)?))); }
     let key = oci::sha256(key.as_bytes());
@@ -647,6 +679,12 @@ pub fn build(root: &Path, o: &Opts) -> R<()> {
         let b = lay.put(MODULE, &io(std::fs::read(w), w)?, &[(ROLE, "program"), (TITLE, &name), (LOCAL, "true")])?;
         digest_of.insert(k, format!("sha256:{}", b.digest)); program_layers.push(b);
     }
+    // a machine's side modules: a layer each, named in the config's `side`
+    let mut side_map: BTreeMap<String, String> = BTreeMap::new();
+    for (n, w) in &side_wasms {
+        let b = lay.put(MODULE, &io(std::fs::read(w), w)?, &[(ROLE, "program"), (TITLE, n), (LOCAL, "true")])?;
+        side_map.insert(n.clone(), format!("sha256:{}", b.digest)); program_layers.push(b);
+    }
     let program_map: BTreeMap<String, String> = if base.os == "linux" { lift_of.iter().map(|(g, k)| (format!("/{g}"), digest_of[k].clone())).collect() } else { BTreeMap::new() };
     let registry = recipe::merge_registry(&base.registry, &r.registry);
     let config = json!({
@@ -660,6 +698,7 @@ pub fn build(root: &Path, o: &Opts) -> R<()> {
             RegData::Sz(s) => json!({ "key": v.key, "name": v.name, "type": "sz", "value": s }) }).collect::<Vec<_>>(),
         "imports": lifted.imports,
         "programs": if program_map.is_empty() { serde_json::Value::Null } else { json!(program_map) },
+        "side": if side_map.is_empty() { serde_json::Value::Null } else { json!(side_map) },
         "source": { "sha256": sha, "extract": r.source.extract, "added": ex.added },
         "build": { "lift": lifted.key, "lifter": t.lifter_hash, "clang": t.clang_version, "opt": r.opt, "runtime_opt": base.opt,
             "programs": if user_lifts.is_empty() { serde_json::Value::Null } else { json!(user_lifts.iter().map(|(n, l)| (n.clone(), l.key.clone())).collect::<BTreeMap<_, _>>()) } },
@@ -795,4 +834,29 @@ mod tests {
         assert!(!d.join("evil.txt").exists());
         std::fs::remove_dir_all(&d).unwrap();
     }
+}
+
+/// The imports of a wasm module, as ("<module>:<kind>" or the module, name): what a side module needs of the title's
+/// (kinds: function, table, memory, global; GOT.mem's and GOT.func's are named by their module alone)
+fn wasm_imports(b: &[u8]) -> R<Vec<(String, String)>> {
+    let leb = |b: &[u8], at: &mut usize| -> R<u64> { let (mut v, mut s) = (0u64, 0); loop { let x = *b.get(*at).ok_or("a truncated module")?; *at += 1; v |= u64::from(x & 0x7f) << s; s += 7; if x & 0x80 == 0 { return Ok(v); } } };
+    let name = |b: &[u8], at: &mut usize| -> R<String> { let n = leb(b, at)? as usize; let s = String::from_utf8_lossy(b.get(*at..*at + n).ok_or("a truncated module")?).into_owned(); *at += n; Ok(s) };
+    if b.len() < 8 || &b[..4] != b"\0asm" { return Err("not a wasm module".into()); }
+    let mut at = 8; let mut out = Vec::new();
+    while at < b.len() {
+        let id = b[at]; at += 1; let len = leb(b, &mut at)? as usize; let end = at + len;
+        if id == 2 {
+            let n = leb(b, &mut at)?;
+            for _ in 0..n {
+                let m = name(b, &mut at)?; let f = name(b, &mut at)?; let kind = b[at]; at += 1;
+                match kind { 0 => { leb(b, &mut at)?; } 1 => { at += 1; let fl = leb(b, &mut at)?; leb(b, &mut at)?; if fl & 1 != 0 { leb(b, &mut at)?; } }
+                    2 => { let fl = leb(b, &mut at)?; leb(b, &mut at)?; if fl & 1 != 0 { leb(b, &mut at)?; } } 3 => { at += 2; } 4 => { at += 1; leb(b, &mut at)?; } _ => return Err(format!("an import of kind {kind}")) }
+                let k = ["function", "table", "memory", "global", "tag"].get(kind as usize).unwrap_or(&"?");
+                out.push((if m.starts_with("GOT.") { m.clone() } else { format!("{m}:{k}") }, f));
+            }
+            return Ok(out);
+        }
+        at = end;
+    }
+    Ok(out)
 }

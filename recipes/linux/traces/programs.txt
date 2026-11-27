@@ -21,6 +21,7 @@ async: USR2 caught while counting
 async: counted to 30000
 fastfetch: Kernel: Linux 6.18.65
 fastfetch: Locale: C
+bash: 5.2.37, 42, 6 parts of a version
  _____________________________
 < Hello from the lifted Linux >
  -----------------------------

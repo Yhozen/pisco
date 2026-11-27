@@ -332,7 +332,9 @@ else {
   try { store = await openStore(image ? `image:${image.settings.title}` : new URL(q.get('exe'), location.href).pathname); if (store.length) console.log(`storage: ${store.length} file(s) from earlier sessions`); } catch (e) { log(`storage: ${e.message} (saves will not survive a reload)`); }
   // a Linux title: its processes (web/kernel.mjs), each a worker this page starts (the first, a fork's, an execve's)
   const kernel = WebAssembly.Module.exports(module).some((e) => e.name === 'rt_fork_resume') ? createKernel() : null, programs = image?.config.programs || null;
-  boot = { module, memory, dir, drive, folder, tids, args, env, store, t0: performance.timeOrigin, kernel, programs };
+  // a machine's programs in modules of their own (rt/microvm-x64): fetched here, loaded by the worker (web/side.mjs)
+  const side = image?.config.side ? await Promise.all(Object.entries(image.config.side).map(async ([n, d]) => [n, await (await fetch(image.url + blobPath(d))).arrayBuffer()])) : [];
+  boot = { module, memory, dir, drive, folder, tids, args, env, store, t0: performance.timeOrigin, kernel, programs, side };
   for (let i = 0; i < POOL; i++) startPooled(i);
   const compiled = new Map();
   const moduleOf = (digest) => { if (!compiled.has(digest)) compiled.set(digest, fetch(image.url + blobPath(digest)).then((r) => r.arrayBuffer()).then((b) => WebAssembly.compile(b))); return compiled.get(digest); };

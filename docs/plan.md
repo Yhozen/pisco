@@ -88,3 +88,4 @@ A new runtime is a new folder and a new base; a new title of an existing runtime
 | K6 | programs at the same addresses (busybox and linux-hello), each lifted on its own and found by the hash of its code pages | done ([linux.md](linux.md#progress)) |
 | K7 | signals delivered anywhere (nested runs for code sent elsewhere), tasks' stacks freed when they end: 4,000 programs in a row | done ([linux.md](linux.md#progress)) |
 | K8 | real programs on the lifted Linux: fastfetch and cowsay on perl, beside busybox, as on QEMU | done ([linux.md](linux.md#progress)) |
+| K9 | a program in a module of its own (a wasm side module the host loads): bash beside the GPL-2.0 kernel | done ([linux.md](linux.md#progress)) |

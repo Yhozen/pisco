@@ -50,6 +50,15 @@ void rt_check_return(Cpu *c, u64 call, u64 next, u64 sp) {
 // fetches an instruction: the kernel's page fault handler maps it.
 __attribute__((weak)) extern const ProgramDef *const rt_programs[];
 __attribute__((weak)) extern const unsigned rt_program_count;
+// programs in modules of their own (a side module each: the host loads it into this memory and this table, then
+// registers it here), beside those linked into this module
+static const ProgramDef *side[256]; static unsigned n_side;
+__attribute__((export_name("rt_program_register"))) void rt_program_register(const ProgramDef *p) {
+  if (n_side == 256) rt_fatal("machine: more than 256 programs in modules of their own");
+  side[n_side++] = p; if (mc_trace) rt_log("machine: program %s, a module of its own", p->name);
+}
+// the memory a side module's data and C stack frames need: the host asks for it before it instantiates the module
+__attribute__((export_name("rt_side_alloc"))) u32 rt_side_alloc(u32 size, u32 align) { void *p = aligned_alloc(align < 16 ? 16 : align, (size + 15) & ~15u); if (!p) rt_fatal("machine: no memory for a program's module"); memset(p, 0, size); return (u32)(uptr)p; }
 static const ProgramDef *prog_cur;
 void machine_programs_forget(void) { prog_cur = 0; }
 static u64 code_hash(Cpu *c, u64 pc, u64 lo, u64 hi) {
@@ -61,15 +70,18 @@ static u64 code_hash(Cpu *c, u64 pc, u64 lo, u64 hi) {
   u64 h = 0xcbf29ce484222325ull; for (u64 k = 0; k < to - from; k++) h = (h ^ b[k]) * 0x100000001b3ull; return h;
 }
 static const ProgramDef *program_at(Cpu *c, u64 pc) {
-  if (!&rt_program_count || !rt_program_count) return 0;
+  unsigned linked = &rt_program_count ? rt_program_count : 0;
+  if (!linked && !n_side) return 0;
   if (prog_cur && pc >= prog_cur->lo && pc < prog_cur->hi) return prog_cur;
   prog_cur = 0;
-  for (unsigned i = 0; i < rt_program_count; i++) {
-    const ProgramDef *p = rt_programs[i];
+  for (unsigned i = 0; i < linked + n_side; i++) {
+    const ProgramDef *p = i < linked ? rt_programs[i] : side[i - linked];
     if (pc < p->lo || pc >= p->hi) continue;
     if (code_hash(c, pc, p->lo, p->hi) == p->page_hashes[((pc & ~0xFFFull) - (p->lo & ~0xFFFull)) >> 12]) { prog_cur = p; break; }
   }
   if (mc_trace && prog_cur) rt_log("machine: user code at 0x%llx is %s's", pc, prog_cur->name);
+  if (mc_trace && !prog_cur) for (unsigned i = 0; i < linked + n_side; i++) { const ProgramDef *p = i < linked ? rt_programs[i] : side[i - linked];
+    rt_log("machine: user code at 0x%llx: not %s's (0x%llx to 0x%llx, page hash 0x%llx here, 0x%llx there)", pc, p->name, p->lo, p->hi, code_hash(c, pc, p->lo, p->hi), pc >= p->lo && pc < p->hi ? p->page_hashes[((pc & ~0xFFFull) - (p->lo & ~0xFFFull)) >> 12] : 0); }
   return prog_cur;
 }
 

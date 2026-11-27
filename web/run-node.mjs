@@ -15,6 +15,7 @@ import { Worker, isMainThread, workerData, parentPort } from 'node:worker_thread
 import { sessionEnv, sessionSteps } from './session.mjs';
 import { isImageDir, openImageDir, driveName, blobPath } from './image.mjs';
 import { createKernel, processImports } from './kernel.mjs';
+import { loadSide } from './side.mjs';
 
 const EXIT = new BroadcastChannel('pisco-exit');
 const GPU_OPEN = new BroadcastChannel('pisco-gpu'); // a title thread opened the GPU ring: the supervisor runs the null back end
@@ -35,6 +36,7 @@ if (isMainThread) {
   // a Linux title: its processes (web/kernel.mjs), each in a worker of its own
   const kernel = WebAssembly.Module.exports(module).some((e) => e.name === 'rt_fork_resume') ? createKernel() : null;
   const programs = image?.config.programs || null;   // a title image's other programs: path -> module blob
+  const side = image?.config.side || null;           // a machine's programs in modules of their own: name -> blob
   const memory = new WebAssembly.Memory({ initial: 1024, maximum: 65536, shared: true });
   const tids = new Int32Array(new SharedArrayBuffer(4)); tids[0] = 1;
   // SW_SAVES=<folder>: what the title keeps between runs (rt/vfs.c) lives there: its persistent storage (S:\) at the
@@ -74,7 +76,7 @@ if (isMainThread) {
     process.stdin.on('end', () => { Atomics.store(u32, 3, 1); Atomics.notify(i32, 0); });
   };
   const startProcess = (data) => {
-    const w = new Worker(new URL(import.meta.url), { workerData: { t0: performance.timeOrigin, dir, imageDir, folder, saves, store, kernel, programs, tid: 0, ...data },
+    const w = new Worker(new URL(import.meta.url), { workerData: { t0: performance.timeOrigin, dir, imageDir, folder, saves, store, kernel, programs, side, tid: 0, ...data },
       resourceLimits: { stackSizeMb: STACK_MB } });
     w.on('error', (e) => { console.error(e); process.exit(121); });
     w.on('message', async (m) => {
@@ -90,7 +92,7 @@ if (isMainThread) {
   };
   startProcess({ module, memory, tids, args, env, pid: 1, mode: 'start' });
 } else {
-  const { module, memory, dir, imageDir, folder, tids, tid, args, env, saves, store, t0, kernel, programs, pid = 1, mode = 'start' } = workerData;
+  const { module, memory, dir, imageDir, folder, tids, tid, args, env, saves, store, t0, kernel, programs, side = null, pid = 1, mode = 'start' } = workerData;
   // a title image: its drive, read from the layers (the main thread has checked their digests)
   const drive = imageDir ? (await openImageDir(imageDir, { verify: false, wasm: false })).drive : null;
   const clock = () => performance.timeOrigin + performance.now() - t0; // one monotonic clock for every thread
@@ -252,7 +254,16 @@ if (isMainThread) {
   }
   const instance = new WebAssembly.Instance(module, { env: { memory }, wasi_snapshot_preview1: wasi, wasi: { 'thread-spawn': spawn }, host });
   try {
-    if (machine) { coEntry = WebAssembly.promising(instance.exports.rt_co_entry); await WebAssembly.promising(instance.exports._start)(); exit(0); }
+    if (machine) {
+      coEntry = WebAssembly.promising(instance.exports.rt_co_entry);
+      // its programs in modules of their own: its image's (config.side), and SW_PROGRAMS's (<name>.wasm files here)
+      for (const [n, digest] of Object.entries(side || {})) loadSide(fs.readFileSync(path.join(imageDir, blobPath(digest))), instance, memory, n);
+      for (const f of (env.SW_PROGRAMS || '').split(/\s+/).filter(Boolean)) {
+        const bytes = drive ? drive.read(driveName(f, folder), 0, Infinity) : fs.readFileSync(path.resolve(f));
+        loadSide(bytes, instance, memory, path.basename(f, '.wasm').replace(/[^A-Za-z0-9_]/g, '_').replace(/^(\d)/, '_$1'));
+      }
+      await WebAssembly.promising(instance.exports._start)(); exit(0);
+    }
     else if (tid === 0 && mode === 'fork') { instance.exports.rt_fork_resume(); exit(0); }
     else if (tid === 0) { instance.exports._start(); exit(0); }
     else instance.exports.wasi_thread_start(tid, workerData.start);
