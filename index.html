@@ -16,6 +16,31 @@ Videos: <a href="https://github.com/Yhozen/pisco/releases">releases</a></p>
 <h2>Changelog</h2>
 <!-- changelog:start -->
 
+<h3>Libraries on the lifted Linux, linked and opened <span class="d">2026-11-27</span><span class="tag">PR #64</span></h3>
+<p>A program's own shared libraries now run on the lifted Linux: one it is linked against, and one it opens itself with <code>dlopen</code> and calls by name. Each is lifted into a module of its own when its code is first met, and prints what it prints on QEMU (<code>fixtures/linux-dyn</code>, on Alpine's musl).</p>
+<ul>
+<li><b>Found from the code</b>: a library's code is met in the middle of a run (its constructor, or a call into it), where no auxiliary vector says what it is. The <code>microvm-x64</code> machine takes the nearest ELF header below the code whose executable segments hold it, and the image as its loader has relocated it.</li>
+<li><b>Where it was met is a function</b>: a constructor no symbol names is a function start the lifter is told of.</li>
+</ul>
+<p>Still missing: a network, snapshots.</p>
+
+<h3>A distribution's program on the lifted Linux: Alpine's busybox <span class="d">2026-11-27</span><span class="tag">PR #64</span></h3>
+<p>The lifted Linux runs Alpine 3.24.4's busybox as Alpine ships it: position-independent and dynamically linked, on musl's loader. Both the loader and the program are lifted when they first run, each into a module of its own, and they print what they print on QEMU.</p>
+<ul>
+<li><b>The loader is taken first</b>: the kernel starts it, at the address its auxiliary vector gives (<code>AT_BASE</code>), and the program after it, at its entry point. The <code>microvm-x64</code> machine rebuilds each as a program at the addresses it was loaded at, applying the loader's relocations to the copy, as the loader would.</li>
+<li><b>Functions found by name</b>: the loader calls some of its own functions through pointers it looks up in its symbol table, so the machine passes the lifter every function its dynamic symbols name.</li>
+<li><b>The same addresses each time</b> (<code>norandmaps</code>), so the images, and the lift cache, are the same from one run to the next.</li>
+</ul>
+<p>Still missing: shared libraries the loader opens beside musl's.</p>
+
+<h3>Programs from anywhere, lifted from memory, on the lifted Linux <span class="d">2026-11-27</span><span class="tag">PR #64</span></h3>
+<p>A program met for the first time is now lifted from its image in memory, not from a file the host has to find. At a program's entry point, its stack's auxiliary vector says where its headers are, and its segments are as the kernel loaded them. The <code>microvm-x64</code> machine rebuilds the ELF from that and hands it to the host, which lifts it, caches it and loads it. A static program can therefore run from the initramfs, the disk or anywhere: <code>/init</code> copies a program to the disk and runs it from there.</p>
+<ul>
+<li><b>An image from memory has no symbols</b>, so the lifter now also takes function addresses from immediates (<code>mov $f, %eax</code>, as musl's start does).</li>
+<li><b><code>tests/run.sh kernel</code></b> checks a program run from the disk.</li>
+</ul>
+<p>Still missing: position-independent and dynamically linked programs, which are somewhere else each time.</p>
+
 <h3>Programs lifted when they first run, on the lifted Linux <span class="d">2026-11-27</span><span class="tag">PR #60</span></h3>
 <p>A program that no build lifted can now run on the lifted Linux kernel, in Node. When the <code>microvm-x64</code> machine meets user code it has no lifted program for, it hands the page to the host. The host finds the initramfs program whose code page there is the same, lifts it into a module of its own, caches it by its sha256, loads it, and the machine goes on. <code>/init</code> runs <code>fixtures/linux-proc</code> that way: lifted in 2.7 s the first time, from the cache after, printing what it prints on QEMU.</p>
 <ul>
