@@ -16,7 +16,101 @@ Videos: <a href="https://github.com/Yhozen/pisco/releases">releases</a></p>
 <h2>Changelog</h2>
 <!-- changelog:start -->
 
-<h3>Linux itself as a title, the groundwork <span class="d">2026-11-27</span><span class="tag">PR #44</span></h3>
+<h3>Programs lifted when they first run, on the lifted Linux <span class="d">2026-11-27</span><span class="tag">PR #60</span></h3>
+<p>A program that no build lifted can now run on the lifted Linux kernel, in Node. When the <code>microvm-x64</code> machine meets user code it has no lifted program for, it hands the page to the host. The host finds the initramfs program whose code page there is the same, lifts it into a module of its own, caches it by its sha256, loads it, and the machine goes on. <code>/init</code> runs <code>fixtures/linux-proc</code> that way: lifted in 2.7 s the first time, from the cache after, printing what it prints on QEMU.</p>
+<ul>
+<li><b><code>web/lift.mjs</code></b> (Node) reads the initramfs, compares code pages, and runs <b><code>tools/build-side.sh</code></b> (the lifter, wasi-sdk, <code>wasm-ld -shared</code>).</li>
+<li><b>A machine's title exports what any lifted program may import</b> (<code>rt/microvm-x64/side-exports.txt</code>), not only what its build's programs import.</li>
+</ul>
+<p>Still missing: the page cannot lift (no lifter there), and programs on the disk or written while the machine runs are not found yet.</p>
+
+<h3>bash on the lifted Linux, in a module of its own <span class="d">2026-11-27</span><span class="tag">PR #60</span></h3>
+<p>A program can now be a wasm module of its own, loaded by the host beside the kernel's. bash, whose GPL-3.0 licence keeps it out of a module linked with the GPL-2.0-only kernel, runs that way on the lifted Linux: <code>/init</code> prints what it prints on QEMU, in Node and in headless Chrome.</p>
+<ul>
+<li><b>A side module:</b> the lifted program compiled position-independent and linked by <code>wasm-ld -shared</code>. It imports the title's memory, table, C stack pointer and the machine's functions.</li>
+<li><b><code>web/side.mjs</code> loads it</b> as a dynamic linker loads a library: its memory taken from the machine, its functions added to the table, its relocations applied, then it is registered with the machine, which finds it by its code pages like any program.</li>
+<li><b><code>pisco build</code>:</b> <code>[lifter] modules</code> makes each one a layer of the image; the title's module exports what they import.</li>
+<li><b><code>LICENSING.md</code></b> says how a machine's programs are licensed, and what this does and does not settle.</li>
+</ul>
+
+<h3>fastfetch and cowsay on the lifted Linux <span class="d">2026-11-27</span><span class="tag">PR #60</span></h3>
+<p>Real programs run on the lifted Linux kernel. fastfetch 2.71.0 and cowsay 3.8.4 on perl 5.44.0 are in its initramfs beside busybox, all static at the same addresses, each lifted on its own into the kernel's module. <code>/init</code> prints fastfetch's lines and cowsay's cow exactly as on QEMU.</p>
+<ul>
+<li><b>fastfetch reads the kernel's own <code>/proc</code> and <code>/sys</code></b>: the machine's CPU (<code>pisco microvm-x64 (lifted) @ 1.00 GHz</code>), its 244 MiB of memory, the root file system's use.</li>
+<li><b><code>tools/build-linux.sh</code></b> builds both programs and copies only the perl modules cowsay loads, as perl itself names them.</li>
+</ul>
+<p>Still missing: bash (its GPL-3.0 keeps it out of a module linked with the kernel), a network.</p>
+
+<h3>Signals anywhere, and thousands of processes, on the lifted Linux <span class="d">2026-11-27</span><span class="tag">PR #60</span></h3>
+<p>Two gaps in the <code>microvm-x64</code> machine are closed. A program can now take a signal at any point, not only in a system call. And processes that end give back their stacks, so a shell running 500 programs one after another is part of the tests; 4,000 took 5.2 s.</p>
+<ul>
+<li><b>Handlers run on top:</b> when the kernel sends a program elsewhere (a signal's handler) on the way back from a fault, an interrupt or a system call, the handler runs above the interrupted code, and the interrupted code goes on when <code>sigreturn</code> comes back to it. A copy-on-write fault that returned with SIGCHLD pending used to stop the machine there.</li>
+<li><b>Interrupts in loops are taken on the jump back, at its target:</b> an interrupted loop goes on at its next iteration.</li>
+<li><b>Tasks that end</b> (<code>do_task_dead</code>) give back their C stack, their slot and their wasm stack. A new task whose kernel stack had a dead task's stack pointer used to resume the dead one.</li>
+<li><b><code>/init</code></b> catches a signal sent into a busy shell loop, as on QEMU.</li>
+</ul>
+
+<h3>Programs at the same addresses on the lifted Linux <span class="d">2026-11-27</span><span class="tag">PR #60</span></h3>
+<p>The lifted Linux kernel can now run several programs linked at the same addresses. busybox and our own <code>fixtures/linux-hello</code>, both static at <code>0x400000</code>, run interleaved in <code>/init</code> and print the same 22 lines as on QEMU.</p>
+<ul>
+<li><b><code>lifter --user &lt;name&gt;</code></b> lifts a program on its own, its functions and tables under its name, with the hash of each page of its code. <code>tools/build-title.sh</code> (<code>PROGRAMS</code>) and <code>pisco build</code> (<code>[lifter] programs</code>) lift each and link them with their list.</li>
+<li><b>The machine finds which program runs by its bytes:</b> after a change of CR3 it hashes the code page it is about to run, reading it first as an instruction fetch would, so the kernel maps it. Then it takes the program whose page matches.</li>
+<li><b>A machine's code runs the x87 at its full precision</b>, so musl's <code>printf</code> of a <code>double</code> prints what it prints on a CPU.</li>
+<li><b><code>pisco build</code></b> compiles a cached lift again when the compiler's flags change.</li>
+</ul>
+<p>Still missing: bash, whose licence (GPL-3.0) keeps it out of a module linked with the GPL-2.0-only kernel; that needs a module per program.</p>
+
+<h3>A disk for the lifted Linux <span class="d">2026-11-27</span><span class="tag">PR #60</span></h3>
+<p>The <code>microvm-x64</code> machine has a disk: virtio's block device on its MMIO transport. With <code>SW_DISK=16M</code> (zeros) or <code>SW_DISK=&lt;file&gt;</code>, the lifted Linux finds <code>/dev/vda</code>. <code>/init</code> formats it as ext2 with busybox, writes 1,000 lines, mounts it again and reads them back. It worked on its first run.</p>
+<ul>
+<li><b><code>rt/microvm-x64/virtio.c</code>:</b> virtio 1.2's MMIO registers, one queue, reads, writes, flush and the disk's id, interrupts through the IOAPIC's pin 5. The runtime announces the device on the kernel's command line.</li>
+<li><b>The kernel</b> gains virtio's MMIO transport, its block driver and ext2. Without a disk, <code>/init</code> still prints what it prints on QEMU.</li>
+<li><b><code>tests/run.sh kernel</code></b> checks the disk too.</li>
+</ul>
+<p>Still missing: the disk's writes are kept in memory, not in its file; there is no network.</p>
+
+<h3>A Linux shell to type into, and a Linux image <span class="d">2026-11-27</span><span class="tag">PR #60</span></h3>
+<p>The lifted Linux kernel's console now takes input, so its busybox shell can be typed into: in a terminal (<code>pisco run</code>), in the page (keys as a terminal sends them), or through a pipe. And <code>pisco build recipes/linux</code> makes it an image like any other title's. Two builds with empty caches give the same manifest, and <code>pisco run</code> boots it in Node and in headless Chrome.</p>
+<ul>
+<li><b>The 16550 receives:</b> a ring in the module's memory, written by the host and read by the serial port with its receive interrupt. A byte is handed over only while the driver asks for it, because Linux's driver reads the receiver while it probes.</li>
+<li><b>Idle waits:</b> when someone types, <code>hlt</code> waits for a key or the next timer on the host's clock; from a pipe the virtual clock stays.</li>
+<li><b>A kernel oops fixed:</b> a signal frame written with <code>fxsave</code> into a copy-on-write page reported its fault at address 0, because <code>rt/cpu.h</code>'s helpers that reach memory saw a fallback instruction address. They now take the caller's, for every title.</li>
+<li><b><code>pisco build</code> for a machine:</b> <code>[lifter] programs</code> are lifted with the kernel; <code>[run] initrd</code> and <code>cmdline</code> reach the runtime through the image's config.</li>
+<li><b><code>tools/run-chrome.mjs</code></b> can type (<code>TYPE=&lt;text&gt;</code>). <code>tests/run.sh kernel</code> checks the image, its programs against QEMU, and a typed shell session.</li>
+</ul>
+<p>Still missing: disks and a network (virtio), programs at the same addresses as one another, and more than one CPU.</p>
+
+<h3>Linux runs its programs <span class="d">2026-11-27</span><span class="tag">PR #60</span></h3>
+<p>The lifted Linux kernel now runs programs: busybox, lifted into the same module, runs the initramfs's <code>/init</code> to its end on the <code>microvm-x64</code> machine in Node. That covers pipes, a shell in a shell, awk, a 4 MiB file written and hashed, a child killed, a signal handled, ten programs executed. It prints the same 15 lines it prints on QEMU, the same on every run, in 2.5 s from Node's start to the exit port. <code>fork</code>, <code>exec</code>, signals, pipes and files are the kernel's own work, not an imitation of it.</p>
+<ul>
+<li><b><code>lifter --program &lt;elf&gt;</code></b> (<code>PROGRAMS</code> for <code>tools/build-title.sh</code>) lifts static programs with a kernel, at the addresses the kernel loads them at.</li>
+<li><b>A program's <code>longjmp</code></b> is its own: an indirect jump to a return address enters the code there.</li>
+<li><b>About QEMU's speed:</b> with its CPU emulated in software on the same machine, QEMU takes 1.15 s to <code>/init</code> where the lifted kernel takes 0.83 s; awk 0.78 s against 0.86 s; ten <code>exec</code>s 16 ms against 18 ms.</li>
+<li><b><code>tests/run.sh kernel</code></b> checks the programs' output against QEMU's.</li>
+</ul>
+<p>Still missing: typing into the console, <code>pisco build</code> of the Linux title, and programs at the same addresses as one another (bash and busybox).</p>
+
+<h3>Linux boots, lifted <span class="d">2026-11-27</span><span class="tag">PR #60</span></h3>
+<p>Linux 6.18 runs on PISCO: the whole kernel, lifted ahead of time into one 42 MB module, boots on the <code>microvm-x64</code> machine in Node to <code>Run /init as init process</code> in 0.9 s, printing the same boot log on every run. No program runs yet: <code>/init</code> is busybox, which is not lifted with the kernel yet; that is next.</p>
+<ul>
+<li><b>The code the kernel rewrites while it boots:</b> its runtime constants (the dentry hash table's address and shift, <code>USER_PTR_MAX</code>, listed in <code>runtime_ptr_*</code> and <code>runtime_shift_*</code>) are read from memory, where the kernel wrote them. Its static-call trampolines are decoded as it has rewritten them. Its alternatives stay as the file has them, which is correct on any CPU.</li>
+<li><b>Where the kernel goes back into its code:</b> the fix-ups of its exception table, its entry stubs at computed addresses, the byte after an <code>int3</code> and five bytes on (its self-test emulates a call there). A call may come back on a stack the callee moved on purpose (<code>error_entry</code>), as long as it returns through its own address.</li>
+<li><b>The machine grew</b> the boot protocol (the zero page, its memory map, the command line, the initramfs), an MP table, the IOAPIC, the 16550's interrupt, a CMOS clock on the virtual clock's date, SERIALIZE in CPUID, and <code>fxsave</code>, <code>fxrstor</code> and <code>cmpxchg16b</code> in the lifter.</li>
+<li><b><code>tests/run.sh kernel</code></b> builds the lifted kernel and checks its boot against <code>recipes/linux/traces/boot.txt</code>, twice.</li>
+</ul>
+
+<h3>A sixth runtime, a small x86-64 machine <span class="d">2026-11-27</span><span class="tag">PR #60</span></h3>
+<p>The machine Linux will run on, <code>rt/microvm-x64</code> (<code>base/microvm-x64</code>): one x86-64 CPU in long mode, a software MMU over the kernel's own page tables, a local APIC and its timer, a serial port and an exit port. It is checked on a test kernel of our own, <code>fixtures/microvm-hello</code>. That kernel pages, takes a page fault and returns, has a fault fixed up, handles <code>int3</code> and <code>ud2</code>, waits for the timer, switches between two tasks, and drops to a ring-3 task that makes system calls until the timer preempts it. Lifted, it prints on its serial port the 20 lines QEMU prints, in Node and in headless Chrome. Linux itself does not run yet; that is next (<code>docs/linux.md</code>).</p>
+<ul>
+<li><b>The lifter's machine mode:</b> in a kernel's image (<code>--machine</code>, or any image in the upper half of the address space), the system's instructions are calls of the machine. Every load and store goes through its TLB with the instruction's address, interrupts are taken at each function's start and each jump back, and a call checks that it comes back with the stack it was made with. With it, 56 of Linux's 602,001 instructions are not lifted yet.</li>
+<li><b>Faults, interrupts and system calls are nested runs</b> of the kernel's handler: when it returns where it was raised, the lifted function goes on; when it returns elsewhere (a fix-up, a preempted program sent elsewhere), the code there is entered by its address.</li>
+<li><b>A host stack for each kernel task:</b> the stack switch in <code>__switch_to_asm</code> suspends one wasm stack and resumes or starts another (JSPI), in <code>web/run-node.mjs</code> and the page's worker.</li>
+<li><b>The clock is virtual:</b> it moves a few nanoseconds at each poll and jumps to the next timer when the CPU halts, so a run prints the same every time.</li>
+<li><b><code>tests/run.sh microvm</code></b> is a default step and runs in CI; it checks QEMU's output too when QEMU is there, and <code>tests/run.sh chrome</code> runs the kernel in the page.</li>
+</ul>
+<p>Still missing: Linux's alternatives and static calls, <code>fxsave</code> and <code>xsave</code>, the IOAPIC, the serial port's interrupt and input.</p>
+
+<h3>Linux itself as a title, the groundwork <span class="d">2026-11-27</span><span class="tag">PR #60</span></h3>
 <p>The plan to run a real Linux kernel on PISCO: lifted ahead of time like any other title, on a runtime that imitates a small x86-64 machine. Nothing of the kernel runs under PISCO yet. This first step builds the kernel, makes the lifter read it, sets up QEMU as the reference, and measures the three things the design stands on. The reasoning and the numbers are in <code>docs/research/kernel-as-a-title.md</code>; the title's page is <code>docs/linux.md</code>.</p>
 <ul>
 <li><b><code>tools/build-linux.sh</code></b> fetches Linux 6.18.65 from kernel.org (checked by SHA-256) and builds it with <code>recipes/linux/kernel.config</code> on top of the kernel's <code>tinyconfig</code>: one CPU, no jump labels, no mitigations, no modules, no ACPI, no PCI. It stops at a line the kernel did not take. With busybox (<code>tools/build-busybox.sh</code>, shared with neofetch's build) and <code>recipes/linux/init</code> it packs an initramfs. Two builds give the same files.</li>
