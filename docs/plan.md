@@ -12,8 +12,9 @@ packages  Doom as a console title, XCL's   Stockfish, SimpleTriangleDesktop,    
 
 - **The recompiler** turns a title's x86 or x86-64 code into C, once per build (`crates/lifter`, both widths; a
   Windows PE, a static Linux ELF or a native PS5 executable).
-- **Packages**: `pisco build` reads a recipe (`recipes/<title>/title.toml`) and the user's own copy of the title, and
-  writes a title image (an OCI image layout, [images.md](images.md)) `FROM` one base.
+- **Packages**: `pisco build` reads a recipe (`recipes/<app>/recipe.toml`) and the user's own copy of the app, and
+  writes the app's image (an OCI image layout) `FROM` one base. What a recipe, a base and an image mean, apart from
+  `pisco`, is the specification: [spec/](spec/README.md).
 - **Runtimes** are peers. Each imitates one system and is one base (`bases/<runtime>/1/base.toml`), which lists its
   files: the core (`rt/*.c`) every Windows and console title links, plus its own folder (and `rt/gdk/`, which the two
   64-bit Windows-family runtimes share). The Linux runtime links only the core's files that imitate no system
@@ -52,6 +53,9 @@ A new runtime is a new folder and a new base; a new title of an existing runtime
 6. **One pull request per milestone, none straight to `main`;** the docs (this file, `status.md`, `journey.md`, the
    title's page, the progress map) change in the same pull request as the code, and so does its entry in the
    changelog (`changelog/README.md`): a file there, a video only as a release.
+7. **The specification changes with what it describes.** A new recipe key, config field, layer role, base key, host
+   function or `SW_*` variable lands with its text in [spec/](spec/README.md), in the same pull request
+   (`tests/run.sh spec` checks the lists). What an app depends on is written as the spec's, not as `pisco`'s.
 
 ## Now (2026-11-27)
 

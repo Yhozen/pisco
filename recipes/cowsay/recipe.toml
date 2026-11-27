@@ -2,18 +2,30 @@
 # cowsay 3.8.4 (https://github.com/cowsay-org/cowsay, GPL-3.0 or Artistic), a Perl script, on perl 5.44.0, both static
 # x86-64 programs built by tools/build-cowsay.sh into out/cowsay/root, the title's root (docs/cowsay.md). Nothing of
 # them is in the repository. Every ELF there (perl, busybox for /usr/bin/env) is lifted into a module of its own.
+schema = 1
 name = "cowsay"
 from = "base/linux-x64:1"
 
-[source]
+[about]
+display_name = "cowsay"
+version = "3.8.4"
+revision = 1
+
+[[input]]
 # built on this machine from checked sources: their bytes depend on the compiler's, so no sha256 here
+id = "root"
+kind = "folder"
 file = "../../out/cowsay/root"
-extract = "folder"
+built_by = "tools/build-cowsay.sh"
+
+[[extract]]
+kind = "folder"
+input = "root"
 app = "/"
 
 [run]
 exe = "/usr/bin/cowsay"
 args = ["Hello from PISCO"]
 
-[lifter]
+[hints.pisco]
 split = 16

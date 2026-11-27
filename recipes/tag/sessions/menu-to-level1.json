@@ -1,5 +1,6 @@
 {
- "title": "tag",
+ "schema": 1,
+ "app": "tag",
  "about": "From the start to the main menu, Start Game, and into level 1 (an alley with the goal at its end), with its two tooltips. The game's own cursor (a spray can, moved by relative mouse motion) starts at about (528,215) of the 1024x768 client area; Start Game is at about (513,360). A click is held for 600 ms: under Wine with a software renderer the game runs at a few frames a second, and a shorter press can fall between two of its frames.",
  "steps": [
   {"wait": 40000},

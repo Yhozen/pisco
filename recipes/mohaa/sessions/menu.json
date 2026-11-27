@@ -1,5 +1,6 @@
 {
- "title": "mohaa",
+ "schema": 1,
+ "app": "mohaa",
  "about": "From the start to the main menu, with no input: the 2015 and EA logos (RoQ videos with MP3 sound) play out, then the menu over its 3D room. The shot is the menu once nothing on it moves but the room's fan and lamp.",
  "steps": [
   {"wait": 45000},

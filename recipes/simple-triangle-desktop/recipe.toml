@@ -2,12 +2,23 @@
 # Microsoft's SimpleTriangleDesktop (Xbox-GDK-Samples, MIT), a Windows x64 desktop title, as the user builds it
 # (tools/build-gdk-sample.sh) and tests/gfx/st.sh stages it with the MSVC runtime DLLs beside it (out/st-game/local).
 # Nothing of Microsoft's is in this repository: the folder is the user's.
+schema = 1
 name = "simple-triangle-desktop"
 from = "base/windows-x64:1"
 
-[source]
+[about]
+display_name = "SimpleTriangleDesktop (Microsoft's Xbox-GDK-Samples)"
+revision = 1
+
+[[input]]
+id = "root"
+kind = "folder"
 file = "../../out/st-game/local"
-extract = "folder"
+built_by = "tools/build-gdk-sample.sh, staged by tests/gfx/st.sh"
+
+[[extract]]
+kind = "folder"
+input = "root"
 
 [run]
 exe = 'C:\Program Files\SimpleTriangleDesktop\SimpleTriangleDesktop.exe'

@@ -1,5 +1,6 @@
 {
- "title": "tag",
+ "schema": 1,
+ "app": "tag",
  "about": "menu-to-level1's steps into level 1, which has no paint gun (level1.xml has no gun pickup; the first is in level 2): walk forward into the goal at the alley's end, through the loading screen into level 2, forward onto the green (jump) gun's pedestal, which gives the gun, then paint: a shot at the floor beyond the fence (left button), a turn to the left and a shot at the wall, then the right button at the same place (erase). Each shot is a second or more after the last motion (the oracle's clock is the wall's, ours is virtual).",
  "steps": [
   {"wait": 40000},

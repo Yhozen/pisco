@@ -9,20 +9,31 @@ use std::path::{Path, PathBuf};
 
 pub const MANIFEST: &str = "application/vnd.oci.image.manifest.v1+json";
 pub const INDEX: &str = "application/vnd.oci.image.index.v1+json";
-pub const ARTIFACT: &str = "application/vnd.pisco.title.v1";
-pub const CONFIG: &str = "application/vnd.pisco.title.config.v1+json";
+pub const ARTIFACT: &str = "application/vnd.pisco.app.v1";
+pub const CONFIG: &str = "application/vnd.pisco.app.config.v1+json";
 pub const LAYER: &str = "application/vnd.pisco.layer.v1.tar";
 pub const MODULE: &str = "application/vnd.pisco.module.v1.wasm";
 pub const ROLE: &str = "org.pisco.layer.role";
 pub const TITLE: &str = "org.opencontainers.image.title";
 pub const REF: &str = "org.opencontainers.image.ref.name";
 pub const LOCAL: &str = "org.pisco.local-only";
+/// The host interface the modules are built for (docs/spec/host.md)
+pub const ABI: &str = "pisco.host/0";
 
 pub fn sha256(data: &[u8]) -> String { hex(&Sha256::digest(data)) }
 pub fn hex(b: &[u8]) -> String { b.iter().map(|x| format!("{x:02x}")).collect() }
+/// A file tree's digest (docs/spec/image.md#the-tree-digest), in hex: one line per entry, `<type>\t<data>\t<path>\n`
+/// (`d` a folder and `-`; `f`, or `x` executable, a file and its sha256; `l` a symbolic link and its target), sorted
+/// by path, hashed together. Entries are (path, type, data)
+pub fn tree_digest(entries: &[(String, char, String)]) -> String {
+    let mut lines: Vec<(&str, String)> = entries.iter().map(|(p, t, d)| (p.as_str(), format!("{t}\t{d}\t{p}\n"))).collect();
+    lines.sort_by(|a, b| a.0.as_bytes().cmp(b.0.as_bytes()));
+    sha256(lines.into_iter().map(|l| l.1).collect::<String>().as_bytes())
+}
 
 // ---- tar ----
-pub enum Entry { Dir, File(Vec<u8>) }
+/// A folder; a file (and whether it is executable: only on a platform with modes); a symbolic link and its target
+pub enum Entry { Dir, File(Vec<u8>, bool), Link(String) }
 /// A layer's files: paths relative to C:\ with '/' separators, as the title's file system shows them (case kept).
 #[derive(Default)]
 pub struct Tree { pub entries: BTreeMap<String, Entry> }
@@ -37,23 +48,41 @@ impl Tree {
     }
     pub fn file(&mut self, path: &str, data: Vec<u8>) {
         if let Some((d, _)) = path.rsplit_once('/') { self.dir(d); }
-        self.entries.insert(path.to_string(), Entry::File(data));
+        self.entries.insert(path.to_string(), Entry::File(data, false));
     }
-    /// The tar: ustar headers (a pax header first when a name does not fit), directories "name/" mode 0755, files
-    /// mode 0644, mtime, uid and gid 0, two zero blocks at the end.
+    /// A file with its mode (a Linux drive's), or a symbolic link
+    pub fn file_mode(&mut self, path: &str, data: Vec<u8>, exec: bool) {
+        if let Some((d, _)) = path.rsplit_once('/') { self.dir(d); }
+        self.entries.insert(path.to_string(), Entry::File(data, exec));
+    }
+    pub fn link(&mut self, path: &str, target: &str) {
+        if let Some((d, _)) = path.rsplit_once('/') { self.dir(d); }
+        self.entries.insert(path.to_string(), Entry::Link(target.to_string()));
+    }
+    /// The tree digest of these entries (docs/spec/image.md#the-tree-digest), in hex, and how many files they hold
+    pub fn digest(&self) -> (String, usize) {
+        let e: Vec<(String, char, String)> = self.entries.iter().map(|(p, e)| match e {
+            Entry::Dir => (p.clone(), 'd', "-".into()), Entry::File(d, x) => (p.clone(), if *x { 'x' } else { 'f' }, sha256(d)), Entry::Link(t) => (p.clone(), 'l', t.clone()) }).collect();
+        (tree_digest(&e), e.iter().filter(|x| x.1 != 'd').count())
+    }
+    /// The tar: ustar headers (a pax header first when a name or a link's target does not fit), directories "name/"
+    /// mode 0755, files mode 0644 (0755 executable), links mode 0777, mtime, uid and gid 0, two zero blocks at the end.
     pub fn tar(&self) -> Vec<u8> {
         let mut out = Vec::new();
         for (name, e) in &self.entries {
-            let (full, size, kind, mode) = match e { Entry::Dir => (format!("{name}/"), 0, b'5', 0o755), Entry::File(d) => (name.clone(), d.len(), b'0', 0o644) };
+            let (full, size, kind, mode) = match e { Entry::Dir => (format!("{name}/"), 0, b'5', 0o755), Entry::File(d, x) => (name.clone(), d.len(), b'0', if *x { 0o755 } else { 0o644 }), Entry::Link(_) => (name.clone(), 0, b'2', 0o777) };
             let (prefix, short) = split_name(&full);
-            if short.is_none() {
-                let rec = pax_record("path", &full);
-                header(&mut out, "PaxHeaders/entry", "", rec.len(), b'x', 0o644);
+            let target = if let Entry::Link(t) = e { t.as_str() } else { "" };
+            if short.is_none() || target.len() > 100 {
+                let mut rec = String::new();
+                if short.is_none() { rec.push_str(&pax_record("path", &full)); }
+                if target.len() > 100 { rec.push_str(&pax_record("linkpath", target)); }
+                header(&mut out, "PaxHeaders/entry", "", rec.len(), b'x', 0o644, "");
                 out.extend_from_slice(rec.as_bytes()); pad(&mut out);
             }
             let (p, n) = match short { Some(n) => (prefix, n), None => ("", "long-name") };
-            header(&mut out, n, p, size, kind, mode);
-            if let Entry::File(d) = e { out.extend_from_slice(d); pad(&mut out); }
+            header(&mut out, n, p, size, kind, mode, if target.len() <= 100 { target } else { "" });
+            if let Entry::File(d, _) = e { out.extend_from_slice(d); pad(&mut out); }
         }
         out.extend_from_slice(&[0u8; 1024]);
         out
@@ -76,7 +105,7 @@ fn pax_record(key: &str, value: &str) -> String {
     while format!("{n}{body}").len() != n { n += 1; }
     format!("{n}{body}")
 }
-fn header(out: &mut Vec<u8>, name: &str, prefix: &str, size: usize, kind: u8, mode: u32) {
+fn header(out: &mut Vec<u8>, name: &str, prefix: &str, size: usize, kind: u8, mode: u32, link: &str) {
     let mut h = [0u8; 512];
     let put = |h: &mut [u8; 512], at: usize, s: &[u8]| h[at..at + s.len()].copy_from_slice(s);
     put(&mut h, 0, &name.as_bytes()[..name.len().min(100)]);
@@ -86,6 +115,7 @@ fn header(out: &mut Vec<u8>, name: &str, prefix: &str, size: usize, kind: u8, mo
     put(&mut h, 124, format!("{size:011o}\0").as_bytes());
     put(&mut h, 136, b"00000000000\0");
     h[156] = kind;
+    put(&mut h, 157, link.as_bytes());
     put(&mut h, 257, b"ustar\x0000");
     put(&mut h, 345, prefix.as_bytes());
     h[148..156].copy_from_slice(b"        ");
@@ -167,7 +197,7 @@ pub fn open(dir: &Path) -> Result<Image, String> {
     let m = index["manifests"].as_array().and_then(|a| a.first()).ok_or("index.json has no manifest")?;
     let digest = m["digest"].as_str().ok_or("manifest without a digest")?.to_string();
     let manifest: Value = serde_json::from_slice(&blob(dir, &digest)?).map_err(|e| e.to_string())?;
-    if manifest["artifactType"] != ARTIFACT { return Err(format!("{}: not a pisco title image (artifactType {})", dir.display(), manifest["artifactType"])); }
+    if manifest["artifactType"] != ARTIFACT { return Err(format!("{}: not a pisco app image (artifactType {}{})", dir.display(), manifest["artifactType"], if manifest["artifactType"] == "application/vnd.pisco.title.v1" { ": an image of an older pisco, build it again" } else { "" })); }
     let config: Value = serde_json::from_slice(&blob(dir, manifest["config"]["digest"].as_str().ok_or("no config")?)?).map_err(|e| e.to_string())?;
     Ok(Image { dir: dir.to_path_buf(), manifest_digest: digest, manifest, config })
 }

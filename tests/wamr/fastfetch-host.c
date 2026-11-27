@@ -59,6 +59,10 @@ static uint32_t read_elf(wasm_exec_env_t env, const char *p, uint32_t len,
     return got < 0 ? 0 : (uint32_t)got;
 }
 
+// a Linux drive's links and executable bits (rt/linux-x64/fs.c): this drive has no links, and its one program runs
+static int32_t file_link(wasm_exec_env_t env, const char *p, uint32_t len, char *dst, uint32_t cap) { return -1; }
+static int32_t file_exec(wasm_exec_env_t env, const char *p, uint32_t len) { return is_elf(p, len) ? 1 : -1; }
+
 static void log_msg(wasm_exec_env_t env, const char *msg, uint32_t len) {
     fwrite(msg, 1, len, stderr);
     fputc('\n', stderr);
@@ -73,6 +77,7 @@ static void title_exit(wasm_exec_env_t env, uint32_t status) { exit(status); }
 
 static NativeSymbol imports[] = {
     {"stat", file_stat, "(*~)I", NULL}, {"list", file_list, "(*~*~)i", NULL},
+    {"link", file_link, "(*~*~)i", NULL}, {"exec", file_exec, "(*~)i", NULL},
     {"read_file", read_elf, "(*~III)i", NULL}, {"log", log_msg, "(*~)", NULL},
     {"fault", fault, "(iI)", NULL}, {"exit", title_exit, "(i)", NULL},
 };

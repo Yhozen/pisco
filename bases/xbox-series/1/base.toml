@@ -4,13 +4,18 @@
 # (rt/xbox-series/: kernelx, XMem, D3D12.X's additions, XG, DirectStorage). Its title's drives are the game's folder.
 name = "base/xbox-series"
 version = 1
+platform = "xbox-series"
+stability = "stable"
 architecture = "amd64"   # the console's CPU: x86-64 (Zen 2)
 os = "windows"           # OCI's nearest: the console runs a Windows kernel
+# the DLLs this base answers for without a library (docs/spec/base.md): tests/run.sh layout checks the list
+provides = ["advapi32.dll", "d3d12.dll", "d3d12_xs.dll", "d3dcompiler_47.dll", "dwmapi.dll", "dxgi.dll", "gameinput.dll", "kernel32.dll", "kernelx.dll", "mfplat.dll", "msvcrt.dll", "ntdll.dll", "oleaut32.dll", "shell32.dll", "ucrtbase.dll", "user32.dll", "xaudio2_9.dll", "xcrdapi.dll", "xg_xs.dll", "xgameruntime.dll", "xmem.dll"]
 
 [cpu]
 features = ["fpu", "tsc", "cx8", "cmov", "mmx", "fxsr", "sse", "sse2", "sse3", "ssse3", "sse4.1", "sse4.2", "popcnt", "cx16", "pclmul"]
 
-[runtime]
+[impl]
+# pisco's: the runtime's sources (paths from the repository's root, `*` within a file name) and their level
 sources = ["rt/*.c", "rt/gdk/*.c", "rt/xbox-series/*.c"]
 opt = "-O2"
 

@@ -9,6 +9,13 @@ from Xlib import X, XK, display
 from Xlib.ext import xtest
 
 d = display.Display(sys.argv[1]); session = json.load(open(sys.argv[2])); out = sys.argv[3]
+# schema 1 (docs/spec/sessions.md), as web/session.mjs reads it too
+STEPS = {'wait': [], 'focus': [], 'move': ['ms'], 'click': ['ms'], 'button': ['down'], 'key': ['ms', 'down'], 'shot': []}
+if session.get('schema') != 1: raise SystemExit(f"play.py: schema {session.get('schema')!r}: this player reads sessions of schema 1")
+if set(session) - {'schema', 'app', 'about', 'steps', 'random'}: raise SystemExit(f'play.py: not keys of a session: {sorted(set(session) - {"schema", "app", "about", "steps", "random"})}')
+for i, step in enumerate(session['steps']):
+    acts = [k for k in step if k in STEPS]
+    if len(acts) != 1 or set(step) - {acts[0], *STEPS[acts[0]]}: raise SystemExit(f'play.py: step {i + 1} {step}: not a step of schema 1')
 root = d.screen().root
 # No pointer acceleration: X would otherwise scale each motion event of more than 4 pixels, and the title would see
 # other deltas than the session gives (our runtime's session player passes them on unchanged)

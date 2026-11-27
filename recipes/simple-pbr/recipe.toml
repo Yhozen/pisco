@@ -2,12 +2,23 @@
 # Microsoft's SimplePBR (Xbox-GDK-Samples, MIT; DirectXTK12), a Windows x64 desktop title, as the user builds it
 # (tools/build-gdk-sample-pbr.sh) and tests/gfx/pbr.sh stages it with the MSVC runtime DLLs (out/pbr-game).
 # Nothing of Microsoft's is in this repository: the folder is the user's.
+schema = 1
 name = "simple-pbr"
 from = "base/windows-x64:1"
 
-[source]
+[about]
+display_name = "SimplePBR (Microsoft's Xbox-GDK-Samples)"
+revision = 1
+
+[[input]]
+id = "root"
+kind = "folder"
 file = "../../out/pbr-game"
-extract = "folder"
+built_by = "tools/build-gdk-sample-pbr.sh, staged by tests/gfx/pbr.sh"
+
+[[extract]]
+kind = "folder"
+input = "root"
 
 [run]
 exe = 'C:\Program Files\SimplePBR\SimplePBR.exe'

@@ -1,5 +1,6 @@
 {
- "title": "mohaa",
+ "schema": 1,
+ "app": "mohaa",
  "about": "The level session, then a little play: forward, a turn, three shots, reload, the pistol, a step left, a jump, a crouch, F5, and the in-game menu opened and closed.",
  "steps": [
   {

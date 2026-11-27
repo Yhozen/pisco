@@ -1,5 +1,6 @@
 {
- "title": "mohaa",
+ "schema": 1,
+ "app": "mohaa",
  "about": "From the start into the demo's level (m3l3) through the menu: the logos play out, the cursor (at the top left) goes to the big map, which opens the difficulty menu, then to Easy (difficultyeasy; spmap m3l3); the level loads behind its briefing, and Continue starts it (the cursor is first pushed to the top left corner, where the engine stops it). The level opens under the demo's help screen; Esc takes it away. The last shot is the level's first view, before any other input.",
  "steps": [
   {

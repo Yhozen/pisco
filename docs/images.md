@@ -1,7 +1,8 @@
-# Title images
+# Images: the guide to `pisco`
 
-A Windows PC title is built from a **recipe** into a **title image**: a folder in the OCI image layout holding the
-title's files, the runtime's files, the compiled module and a config. `pisco` (`crates/pisco`) builds, runs and inspects
+An app is built from a **recipe** into an **image**: a folder in the OCI image layout holding the app's files, the
+runtime's files, the compiled module and a config. What a recipe, a base and an image mean, for any builder or host,
+is the specification ([spec/](spec/README.md)); this page is how `pisco` does it. `pisco` (`crates/pisco`) builds, runs and inspects
 images; the hosts read them through one module, [`web/image.mjs`](../web/image.mjs).
 
 ```sh
@@ -19,74 +20,28 @@ The model is OCI's, with three differences:
    with a fixed vocabulary: extract the installer, place its files, set registry values.
 2. **Code is layered at build time.** A title is one statically linked wasm module. A base's "libraries" are sets of
    runtime sources (with cached objects); the image carries only the linked module.
-3. **Game layers are never published.** The base and library layers and the recipe can be shared; the game layer
+3. **App layers are never published.** The base and library layers and the recipe can be shared; the app layer
    and the module are built locally from the user's own installer, checked by its sha256. They are marked
    `org.pisco.local-only` in the manifest. Nothing of them is ever committed (`out/` is ignored).
 
 ## The format
 
-An image is a directory in the [OCI image layout](https://github.com/opencontainers/image-spec/blob/main/image-layout.md):
+The image's layout, media types, layer roles (`base`, `library`, `app`, `shaders`, `module`, `program`), its file
+semantics, the tree digest and every field of the config are the specification's: [spec/image.md](spec/image.md),
+with the config's JSON Schema in [spec/config.schema.json](spec/config.schema.json) (`tools/check-config.mjs <image>`
+checks one). What is `pisco`'s own:
 
-```
-oci-layout                {"imageLayoutVersion":"1.0.0"}
-index.json                an image index with one manifest, its org.opencontainers.image.ref.name = the title's name
-blobs/sha256/<digest>     the manifest, the config, the layers and the module, each named by its sha256
-```
-
-The manifest is an ordinary `application/vnd.oci.image.manifest.v1+json` with an `artifactType`, a config and
-layers of our own media types:
-
-| Media type | What it is |
-|---|---|
-| `application/vnd.pisco.title.v1` | the manifest's `artifactType`: a PISCO title |
-| `application/vnd.pisco.title.config.v1+json` | the config (below) |
-| `application/vnd.pisco.layer.v1.tar` | a file layer: an uncompressed tar of files on the title's C: drive (paths relative to `C:\`) |
-| `application/vnd.pisco.module.v1.wasm` | the title's module: lifted code, runtime and import tables, linked (`title.wasm`) |
-
-The file layers come in this order, each with the annotation `org.pisco.layer.role`:
-
-| Role | Content | Shared |
-|---|---|---|
-| `base` | the base's C: drive: `C:\WINDOWS` (`win.ini`, `system.ini`, `Temp`, the fonts gdi32 draws with), the user's folders, and a placeholder in `C:\WINDOWS\system32` for every DLL the base's runtime answers for | by every title FROM the base |
-| `library` | one per library the recipe names: a placeholder for each DLL it answers for | by every title that names it |
-| `game` | the files the installer installs, where it installs them | never (local only) |
-
-then the module, also local only. A later layer's file replaces an earlier one's, and an entry `.wh.<name>`
-removes `<name>` from the layers below (OCI's whiteouts; no layer we build uses them yet).
-
-Layers are uncompressed so a host reads a file at its offset in the blob. They are deterministic: entries sorted,
-directories before what they hold, every mtime, uid and gid 0, mode 0755 for directories and 0644 for files, a pax
-`path` record for a name ustar cannot hold. All JSON documents are written with sorted keys and no white space,
-and nothing in them depends on the time or the machine, so the same inputs give the same digests.
-
-### The config
-
-```json
-{
-  "architecture": "386", "os": "windows", "base": "base/windows-x86:1", "title": "narbacular-drop",
-  "run": { "exe": "C:\\Program Files\\Narbacular Drop\\Narbacular Drop.exe", "display": "640x480", "args": [] },
-  "guest": { "bits": 32, "image": ["0x400000", "0x57c000"] },
-  "cpu": { "features": ["fpu", "tsc", "cx8"] },
-  "dll": { "fmod.dll": "builtin" },
-  "libraries": ["d3d9", "dinput8", "fmod3"],
-  "registry": [{ "key": "HKEY_LOCAL_MACHINE\\Software\\Microsoft\\Direct3D", "name": "DisableMMX", "type": "dword", "value": 1 }, ...],
-  "imports": ["advapi32.dll!RegCloseKey", ...],
-  "source": { "sha256": "0966948f...", "extract": "innosetup" },
-  "build": { "lift": "<lift key>", "lifter": "<hash of the lifter's sources>", "clang": "...", "opt": "-O1", "runtime_opt": "-O2" }
-}
-```
-
-A Linux title's config says `"os": "linux"`, and when its files hold more than one program (an ELF each:
-`recipes/neofetch`) it has `"programs": { "/bin/bash": "sha256:...", "/bin/busybox": "sha256:..." }`: each program
-is lifted into a module of its own, a layer of the manifest after the first module (role `program`), and `execve`
-starts the one its path names ([neofetch.md](neofetch.md)). Its `run.exe` may be a script: the first process starts
-in the first module and runs it through its `#!`. A recipe whose folder is the title's root says `app = "/"`. Arguments given when an image is run (`pisco run <image> -- ...`, the
-page's `&args=`) replace the config's `run.args`, as a container's command replaces its image's.
-
-The CPU features are built into the module (`rt_cpu_features`, by `tools/recipe-gen.py`); the registry is not:
-the host hands the config's values to the runtime at start (`SW_REGISTRY`, one value a line:
-`<key>\t<name>\tdword|sz\t<value>`), and `rt/windows-x86/advapi32.c` reads them. So a registry change leaves the module
-as it was. `imports` is the title's import table, for `pisco census`.
+- **One module per program.** The lifted code, the runtime and the import tables are linked into one module
+  (`title.wasm`); a Linux app's other programs are a module each (role `program`, named in the config's `programs`),
+  a machine's are in the kernel's module or in side modules (`side`).
+- **The CPU features are built into the module** (`rt_cpu_features`, by `tools/recipe-gen.py`); **the registry is
+  not**: the host hands the config's values to the runtime at start (`SW_REGISTRY`, one value a line:
+  `<key>\t<name>\tdword|sz\t<value>`), and `rt/windows-x86/advapi32.c` reads them. So a registry change leaves
+  the module as it was.
+- **`build`** in the config: the lift key, a hash of the lifter's sources, clang's version and levels, and the
+  versions of the extractors a recipe's steps ran (`tools`).
+- **The lock**: `pisco build --lock` writes `recipe.lock` (the tree digest of the app's files) for a recipe whose
+  inputs are all pinned; a build that finds one stops when its files differ.
 
 ### How hosts read an image
 
@@ -102,75 +57,56 @@ The old invocation keeps working: `node web/run-node.mjs title.wasm <the title's
 
 ## Recipes
 
-`recipes/<title>/title.toml`:
+A recipe is `recipes/<app>/recipe.toml`, schema 1: [spec/recipe.md](spec/recipe.md) has every key. In short:
 
 ```toml
+schema = 1
 name = "narbacular-drop"
 from = "base/windows-x86:1"                 # bases/windows-x86/1/base.toml
-libraries = ["d3d9", "dinput8", "fmod3"]  # the base's libraries this title links; checked against its imports
+libraries = ["d3d9", "dinput8", "fmod3"]    # the base's libraries the app links; checked against its imports
 
-[source]
-file = "narbacular_drop_setup.exe"        # looked for beside the recipe unless `pisco build --source` names it
-sha256 = "0966948f..."                    # checked before anything else; without it the build says so and goes on
-extract = "innosetup"                     # innoextract (tools/setup-toolchain.sh innoextract); or "file": the source is the exe;
-                                          # or "folder": the source is a folder (a title the user built), copied to {app};
-                                          # or "zip": the archive's files (stored or deflated) to {app} (recipes/desire);
-                                          # or "wise": a Wise installer (or a zip around one), read without running it:
-                                          # its files under %MAINDIR% to {app} (crates/pisco/src/installers.rs)
-# root = "Game-v1"                        # zip: only the files under this folder of the archive, without it
-# app = 'C:\Program Files\Narbacular Drop'  where {app} goes (default: the exe's folder)
-# map = { commonappdata = 'C:\Documents and Settings\All Users\Application Data' }  the installer's other folders
+[[input]]                                   # what the user supplies, known by its sha256
+id = "installer"
+file = "narbacular_drop_setup.exe"          # looked for beside the recipe unless `pisco build --input installer=<path>`
+sha256 = "0966948f..."                      # (or built_by = "<script>": made here; or unpinned = "why")
 
-[source.installshield.groups]             # "wise" only: the installer carries an InstallShield 5 / 6 setup
-"Program Executable Files" = ''           # (data1.hdr, data<N>.cab), which is read instead: each file group goes
-"Data Files Minimal" = 'main'             # to this folder under {app} ('-': not installed). Every group must be
-"<Support>English Files" = '-'            # named (recipes/mohaa); the setup's own script, which says it, is not read
-
-[[source.cab]]                            # files the installer carries in a cabinet (cabextract on the builder's
-cab = 'C:\Program Files\Tag\DirectX\AUG2007_d3dx9_35_x86.cab'   # machine: tools/setup-toolchain.sh cabextract,
-files = ["d3dx9_35.dll"]                  # or CABEXTRACT=<path>), taken out into a folder of C: (recipes/tag)
-to = 'C:\WINDOWS\system32'
-
-[[source.add]]                            # files of the user's the title needs and its download leaves to the system
-from = "REDIST"                           # their folder: `pisco build --with REDIST=<folder>`, or $REDIST
-files = ["msvcp140.dll", "vcruntime140.dll", "vcruntime140_1.dll"]   # found without regard to case
-to = 'C:\Games\Desire'                    # in {app} or under it: DLLs there are lifted with the title (recipes/desire)
+[[extract]]                                 # in order: innosetup, zip, wise, file or folder first; then
+kind = "innosetup"                          # installshield (after wise), cab and copy
+input = "installer"
 
 [run]
-exe = 'C:\Program Files\Narbacular Drop\Narbacular Drop.exe'   # a Linux title: a path from the root, "/usr/bin/fastfetch"
+exe = 'C:\Program Files\Narbacular Drop\Narbacular Drop.exe'
 display = "640x480"
-# args = ["-windowed"]
 
 [cpu]
-features = ["fpu", "tsc", "cx8"]          # the virtual CPU (cpuid, IsProcessorFeaturePresent); default: the base's
-
+features = ["fpu", "tsc", "cx8"]            # the virtual CPU; default: the base's
 [dll]
-"fmod.dll" = "builtin"                    # a shipped DLL that is not lifted: the runtime (a library) answers for it
-
-[registry]                                # REG_DWORD from numbers, REG_SZ from strings; added to the base's, and wins
-'HKLM\Software\Microsoft\Direct3D' = { DisableMMX = 1, DisablePSGP = 1, DisableD3DXPSGP = 1 }
-
-[lifter]
-split = 16                                # the lifted C in that many files (compiled in parallel); default 8
-entries = []                              # extra function entries (hex), as runs report them
-# base = "400000"                         # where the exe goes, if not where it was linked
-
-[build]
-opt = "-O1"                               # clang's level for the lifted C (default -O2; the runtime has the base's)
-
+"fmod.dll" = "builtin"                      # the base answers for this shipped DLL
 [quirks]
-heap_fill = 0xCD                          # what a heap block the title did not ask to be zeroed holds (default: whatever
-                                          # the runtime's allocator left); Narbacular Drop depends on it being non-zero
-
-[shaders]                                 # HLSL the title compiles at run time (D3DCompile), compiled by the build:
-frames = 30                               # the image is run in Node until this many presents (SW_EXIT_FRAMES), with
-# session = "sessions/start.json"         # D3DCompile logging each source (SW_HLSL_CAPTURE=1); tools/hlsl-prep.mjs
-                                          # compiles them (dxc: DXC, or ~/tools/dxc/dxc under Wine) and translates
-                                          # them (dxil2spv, naga): the image's "shaders" layer, in the title's folder
+heap_fill = 0xCD
+[registry]
+'HKLM\Software\Microsoft\Direct3D' = { DisableMMX = 1 }
+[hints.pisco]                               # pisco's own: the lifted C in 16 files, clang's level for it
+split = 16
+opt = "-O1"
 ```
 
-`tools/build-title.sh` reads the same recipe (`RECIPE=...`: `[cpu]`, `[registry]` built into the module, `[dll]`,
-`[quirks]`, and the base and libraries for the runtime's files).
+`pisco build <recipe> --input <id>=<path>` names an input (`--source <path>`: the one the first step reads; `--with
+<ID>=<folder>` as before). `pisco recipe <recipe> --json` prints the recipe as `pisco` reads it: `tools/build-title.sh`
+(`RECIPE=...`) and `tools/recipe-gen.py` take that, so `pisco` is the one reader of recipes.
+
+What the steps do here:
+
+- `innosetup`: `innoextract` (tools/setup-toolchain.sh innoextract, or INNOEXTRACT); every folder of the installer's
+  other than `{app}` must have a place in `map`.
+- `zip`: read by `pisco` (stored or deflated); `wise` and `installshield`: read by `pisco` too
+  (`crates/pisco/src/installers.rs`), without running either installer.
+- `cab`: `cabextract` on the builder's machine (tools/setup-toolchain.sh cabextract, or CABEXTRACT).
+- `copy`: from a folder input (`--input <id>=<folder>`, or the environment variable `<ID>`), into the app's folder
+  or below it, where the lifter finds the DLLs beside the exe.
+- `[warmup]`: the image is run in Node until `frames` presents (SW_EXIT_FRAMES), D3DCompile logging each source
+  (SW_HLSL_CAPTURE=1); `tools/hlsl-prep.mjs` compiles them (dxc: DXC, or ~/tools/dxc/dxc under Wine) and translates
+  them (dxil2spv, naga): the image's `shaders` layer, in the app's folder.
 
 ## Bases and libraries
 
@@ -184,16 +120,13 @@ layout` checks that no other list exists and that every file is in a base):
 | `base/windows-x64:1` | Windows x64 | `rt/*.c`, `rt/gdk/*.c`, `rt/windows-x64/*.c` | hello64, SimpleTriangleDesktop, SimplePBR (folders the user built), Desire (a zip) |
 | `base/xbox-series:1` | Xbox Series | `rt/*.c`, `rt/gdk/*.c`, `rt/xbox-series/*.c` | Doom (`out/doom/game`, built by tests/gfx/doom.sh) |
 
-`base/windows-x86:1` has:
-
-- `[cpu] features`: the default virtual CPU (every feature the lifter supports);
-- `[runtime]`: the core runtime sources (`rt/*.c`, `rt/windows-x86/*.c` less the libraries'),
-  and their optimisation level;
-- `[registry]`: the defaults every title sees (Windows XP SP3's version values, `ProgramFilesDir`);
-- `[files]`: the layer: `files/` (C:\ at its top), empty folders, the fonts, the `system32` placeholders;
-- `[libraries.<name>]`: `d3d9` (`rt/windows-x86/d3d9*.c`), `dinput8`, `fmod3` (`fmod3.c`, `audio_decode.c`). The DLLs a
-  library answers for are the `IMP(dll, ...)` in its sources. `pisco build` refuses a title that imports from a
-  library its recipe does not name, and says which ones a title needs (`pisco census <exe>`).
+What a base promises its apps (`platform`, `stability`, `provides`, `[cpu]`, `[registry]`, `[files]`, each
+library's `provides`) is the specification's: [spec/base.md](spec/base.md). `[impl]` is `pisco`'s: the runtime's
+sources (`rt/*.c`, `rt/windows-x86/*.c` less the libraries'), their optimisation level, and each library's sources
+(`[impl.libraries.d3d9] sources = ["rt/windows-x86/d3d9*.c"]`). `pisco base <base>` prints what a base promises;
+`pisco base <base> --check` (in `tests/run.sh layout`) checks each `provides` against the `IMP(dll, ...)` of its
+sources. `pisco build` refuses an app that imports from a library its recipe does not name, and says which ones it
+needs (`pisco census <exe>`); it says so when a base is experimental.
 
 ## The build and its cache
 
@@ -203,9 +136,9 @@ manifest digest is the last line on stdout):
 1. **the source**: its sha256 against the recipe's;
 2. **extraction**: `innoextract` into `<cache>/extract/<sha256>-innosetup`, once per installer. `--compare <folder>`
    sets the extracted `{app}` against another installation (a Wine prefix's) and prints the differences. Each
-   `[[source.cab]]` is taken out of its cabinet with `cabextract`, once per cabinet and list of files, into
+   `cab` step is taken out of its cabinet with `cabextract`, once per cabinet and list of files, into
    `<cache>/extract/<sha256>-innosetup-cab-<key>`; a missing `cabextract` stops the build and says how to get it.
-   A zip is read by `pisco` itself (`<cache>/extract/<sha256>-zip`). `[[source.add]]` files are copied into the
+   A zip is read by `pisco` itself (`<cache>/extract/<sha256>-zip`). `copy` step's files are copied into the
    extraction, whose folder then ends in `-add-<key>`, the key being their names and sha256s;
 3. **lifting**: the lifter and clang on the lifted C, once per **lift key**: the sha256 of the images the lifter
    reads (the exe and every shipped DLL that is not `builtin`), the lifter (its version and a hash of its sources

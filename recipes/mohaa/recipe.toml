@@ -1,19 +1,31 @@
 # The recipe for the Medal of Honor: Allied Assault single-player demo (2001, 2015 Inc. / Electronic Arts; id Tech 3,
 # OpenGL): `pisco build recipes/mohaa --source mohaaspdemo.zip` makes its image (docs/images.md). What is known of the
 # title: docs/mohaa.md.
+schema = 1
 name = "mohaa"
 from = "base/windows-x86:1"
 libraries = ["opengl32", "dsound"]   # both loaded at run time (LoadLibrary: the engine and Miles): the census does not see them
 
-[source]
+[about]
+display_name = "Medal of Honor: Allied Assault (single-player demo)"
+revision = 1
+
+[[input]]
 # the user's own copy of the demo's download: a zip around a Wise installer, which carries an InstallShield 6 setup.
 # Never stored in the repository, nor in any image that leaves the machine
+id = "installer"
 file = "mohaaspdemo.zip"
 sha256 = "236e23d9bcf07ac9a6b5a862a4b6f25f5566ceeab4072278b54407e9ffc22197"
-extract = "wise"
+where = "the demo's download, mohaaspdemo.zip (docs/mohaa.md)"
+
+[[extract]]
+kind = "wise"
+input = "installer"
 app = 'C:\Program Files\EA GAMES\MOHAADemo'
 
-[source.installshield.groups]
+[[extract]]
+kind = "installshield"
+[extract.groups]
 # where the setup's file groups go below the title's folder, as the setup puts them under Wine ('-': not installed;
 # the <Engine>, <Support> and <Disk1> groups are the setup's own files)
 "Program Executable Files" = ''
@@ -107,8 +119,7 @@ seta r_ext_compressed_textures 1
 # own code and Miles' mixer use when the processor has them. Not 3DNow!, an AMD processor's, which they would also use
 features = ["fpu", "tsc", "cx8", "cmov", "mmx", "fxsr", "sse"]
 
-[lifter]
-split = 16
+[code]
 # function starts the lifter's discovery does not find: Mss32.dll's MSSMIXER routine at 0x2113d047 as linked
 # (0x213d047 where the lift places it), handed out by AIL_get_preference's table of mixer routines
 entries = [0x213d047]
@@ -116,3 +127,6 @@ entries = [0x213d047]
 # the plugins it finds beside it (snddrivers\)
 load = ['main\gamex86.dll', 'main\cgamex86.dll', 'main\ffx86.dll', 'snddrivers\Mss32.dll', 'snddrivers\Mssfast.m3d', 'snddrivers\Mp3dec.asi',
   'snddrivers\Reverb3.flt', 'snddrivers\Lowpass.flt']
+
+[hints.pisco]
+split = 16

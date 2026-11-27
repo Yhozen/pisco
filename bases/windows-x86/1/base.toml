@@ -4,15 +4,19 @@
 # recipe can add: runtime sources for a DLL a title imports, each with a layer of its own.
 name = "base/windows-x86"
 version = 1
+platform = "windows-x86"
+stability = "stable"
 architecture = "386"     # as OCI names it: 32-bit x86
 os = "windows"
+# the DLLs this base answers for without a library (docs/spec/base.md): tests/run.sh layout checks the list
+provides = ["advapi32.dll", "ddraw.dll", "gdi32.dll", "kernel32.dll", "msvcrt.dll", "ntdll.dll", "ole32.dll", "oleaut32.dll", "shell32.dll", "ucrtbase.dll", "user32.dll", "winmm.dll", "ws2_32.dll"]
 
 [cpu]
 # what a recipe without [cpu] gets: every feature the lifter supports
 features = ["fpu", "tsc", "cx8", "cmov", "mmx", "fxsr", "sse", "sse2", "sse3", "ssse3", "sse4.1", "sse4.2", "popcnt", "cx16", "pclmul"]
 
-[runtime]
-# the core (rt/*.c) and the Windows x86 runtime's folder (the profile `win32` of tools/build-title.sh), less the
+[impl]
+# pisco's: the core (rt/*.c) and the Windows x86 runtime's folder (the profile `win32` of tools/build-title.sh), less the
 # libraries below; paths from the repository's root, `*` within a file name
 sources = ["rt/*.c", "rt/windows-x86/*.c"]
 opt = "-O2"
@@ -35,24 +39,38 @@ system32 = 'WINDOWS\system32'
 # the title's imports. `sources` leave the core; the DLLs a library answers for are the IMP(dll, ...) in them.
 [libraries.d3d9]
 description = "Direct3D 9 on the GPU ring's explicit records (WebGPU): the fixed-function pipeline; d3d9_sm.c translates vs/ps 1.1 to 2.x to WGSL, not yet drawn with"
-sources = ["rt/windows-x86/d3d9*.c"]
+provides = ["d3d9.dll"]
 
 [libraries.dinput8]
 description = "DirectInput 8: the keyboard and the mouse from the host's input ring"
-sources = ["rt/windows-x86/dinput8.c"]
+provides = ["dinput8.dll"]
 
 [libraries.fmod3]
 description = "FMOD 3 (fmod.dll's FSOUND_ functions) on the runtime's mixer, with WAV, Ogg Vorbis and MP3 decoders"
-sources = ["rt/windows-x86/fmod3.c", "rt/windows-x86/audio_decode.c"]
+provides = ["fmod.dll"]
 
 [libraries.fmodex]
 description = "FMOD Ex (fmodex.dll's System, Sound and Channel methods) on the runtime's mixer, with WAV, Ogg Vorbis and MP3 decoders"
-sources = ["rt/windows-x86/fmodex.c", "rt/windows-x86/audio_decode.c"]
+provides = ["fmodex.dll"]
 
 [libraries.opengl32]
 description = "OpenGL 1.1 (with GL_ARB_multitexture, GL_EXT_compiled_vertex_array, GL_EXT_texture_env_add) on the GPU ring's explicit records (WebGPU): the fixed-function stages as WGSL from gl_ffp.c"
-sources = ["rt/windows-x86/opengl32.c", "rt/windows-x86/gl_ffp.c"]
+provides = ["opengl32.dll"]
 
 [libraries.dsound]
 description = "DirectSound: buffers in guest memory mixed in software into the runtime's mixer (no hardware buffers, no 3D)"
+provides = ["dsound.dll"]
+
+# ---- pisco's: each library's sources (they leave the core's)
+[impl.libraries.d3d9]
+sources = ["rt/windows-x86/d3d9*.c"]
+[impl.libraries.dinput8]
+sources = ["rt/windows-x86/dinput8.c"]
+[impl.libraries.fmod3]
+sources = ["rt/windows-x86/fmod3.c", "rt/windows-x86/audio_decode.c"]
+[impl.libraries.fmodex]
+sources = ["rt/windows-x86/fmodex.c", "rt/windows-x86/audio_decode.c"]
+[impl.libraries.opengl32]
+sources = ["rt/windows-x86/opengl32.c", "rt/windows-x86/gl_ffp.c"]
+[impl.libraries.dsound]
 sources = ["rt/windows-x86/dsound.c"]

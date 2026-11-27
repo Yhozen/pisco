@@ -4,6 +4,7 @@
 #   build    pisco's unit tests; hello, threads, bench (cargo) and cxx, dll (llvm-mingw), where tests/regress.sh looks for them;
 #            the 32-bit titles: hello again for i686, and fixtures/x87
 #   layout   tests/layout.sh: the runtime's files are listed only by the bases, and every one is in some base
+#   spec     tests/spec.sh: the specification (docs/spec/) lists what pisco knows, and pisco refuses what it does not
 #   node     tests/regress.sh: every title in Node (XCL's title and Stockfish too when their files are there)
 #   bench    the benchmark title's checksums against the same work built natively
 #   win32    the 32-bit titles in Node: hello, and the x87 and crt32 titles against what they printed under Wine
@@ -12,7 +13,8 @@
 #            skipped without it): what it prints of its C library must be what it prints when run here, on Linux,
 #            and what it prints of the machine must be the machine rt/linux-x64/ describes (expected.txt). Then
 #            fixtures/linux-proc (fork, pipes, execve, a script, wait4, a longjmp across a fork) must print what it
-#            prints run here
+#            prints run here. Then fixtures/linux-files, as an image: two names that differ by case, links, a script
+#            without its executable bit, as on this machine
 #   neofetch neofetch (docs/neofetch.md), when tools/build-neofetch.sh has built its root into out/neofetch: its image
 #            built by `pisco build`, run by `pisco run` in strict mode on the virtual clock, its output as for a pipe;
 #            it must print recipes/neofetch/traces/pipe.txt (NEOFETCH_RECORD=1 records it again), and the same in
@@ -100,7 +102,7 @@
 #            screens close to the oracle's screenshots (needs out/img-desire: the desireplay step; half an hour)
 #   xcl      tests/gfx/xcl.sh: XCL's console test title in Chrome, when it has been built into out/xcltitle-game
 #   audio    tests/audio/run.sh: the XMA2 / Opus decoders (builds FFmpeg's the first time)
-# Default: build layout node bench win32 linux microvm avx ffp glffp sm gdi changelog. Needs tools/setup-toolchain.sh to have run. Exit status 1 if a step fails.
+# Default: build layout spec node bench win32 linux microvm avx ffp glffp sm gdi changelog. Needs tools/setup-toolchain.sh to have run. Exit status 1 if a step fails.
 set -uo pipefail
 root=$(cd "$(dirname "$0")/.." && pwd); cd "$root"; mkdir -p out
 MINGW=${MINGW:-$HOME/tools/llvm-mingw-20261117-ucrt-ubuntu-22.04-x86_64}; CXX=$MINGW/bin/x86_64-w64-mingw32-clang++
@@ -180,6 +182,15 @@ linux() {
   SW_STRICT=1 SW_ROOT=$p/root SW_EXE=/bin/proc timeout 120 node web/run-node.mjs $p/root/bin/proc.wasm $p/root/bin/proc /bin/script > $p/got.txt 2>&1
   cmp -s $p/got.txt $p/native.txt || { echo "linux-proc differs from its run on this machine (< ours, > native):"; diff $p/got.txt $p/native.txt | head -12; return 1; }
   echo "linux-proc: $(wc -l < $p/native.txt) lines (fork, pipes, execve, a script, wait4, longjmp) equal its run on this machine"
+  # a Linux drive (docs/spec/image.md#files): names by case, links, executable bits, in an image built by pisco
+  local f=out/linux-files
+  MUSL=$MUSL fixtures/linux-files/build.sh $f/root > /dev/null || { echo "linux-files: does not compile"; return 1; }
+  mkdir -p $f/recipe && printf '# written by tests/run.sh linux: fixtures/linux-files as an image\nschema = 1\nname = "linux-files"\nfrom = "base/linux-x64:1"\n[[input]]\nid = "root"\nkind = "folder"\nfile = "../root"\nbuilt_by = "fixtures/linux-files/build.sh"\n[[extract]]\nkind = "folder"\ninput = "root"\napp = "/"\n[run]\nexe = "/files"\n' > $f/recipe/recipe.toml
+  target/release/pisco build $f/recipe --out $f/image > $f/build.log 2>&1 || { echo "linux-files: pisco build failed ($f/build.log)"; return 1; }
+  (cd $f/root && ./files) > $f/native.txt 2>&1
+  SW_STRICT=1 timeout 120 target/release/pisco run $f/image > $f/got.txt 2>&1
+  cmp -s $f/got.txt $f/native.txt || { echo "linux-files differs from its run on this machine (< ours, > native):"; diff $f/got.txt $f/native.txt | head -12; return 1; }
+  echo "linux-files: $(wc -l < $f/native.txt) lines (Makefile and makefile, links, a script without its bit) equal its run on this machine"
 }
 microvm() {
   local d=out/microvm-hello want=fixtures/microvm-hello/expected.txt
@@ -332,7 +343,7 @@ chrome() {
   return $ok
 }
 nd() {
-  RECIPE=recipes/narbacular-drop/title.toml SPLIT=16 OPT=-O1 tools/build-title.sh "$ND/Narbacular Drop.exe" out/nd > out/nd.build.log 2>&1 || { echo "build failed (out/nd.build.log)"; return 1; }
+  RECIPE=recipes/narbacular-drop/recipe.toml SPLIT=16 OPT=-O1 tools/build-title.sh "$ND/Narbacular Drop.exe" out/nd > out/nd.build.log 2>&1 || { echo "build failed (out/nd.build.log)"; return 1; }
   # start-up, every call traced: a session of one empty step ends the run when the first frame has been presented
   SW_STRICT=1 SW_TRACE=2 SW_SESSION_STEPS='wait 0' timeout 300 node web/run-node.mjs out/nd/title.wasm "$ND/Narbacular Drop.exe" > out/nd.run.log 2>&1
   grep -q 'Direct3DCreate9' out/nd.run.log || { echo "did not reach Direct3DCreate9:"; tail -3 out/nd.run.log; return 1; }
@@ -375,9 +386,10 @@ ND=${ND:-$HOME/.pisco/oracle/prefix-narbacular-drop/drive_c/Program Files (x86)/
 D3DX_DLL=${D3DX_DLL:-$HOME/untrusted/tag/cab/d3dx9_35.dll}
 REDIST=${REDIST:-$HOME/untrusted/vcredist/x/Contents/VC/Redist/MSVC/14.44.35112/x64/Microsoft.VC143.CRT}; export REDIST
 WINSDK=${WINSDK:-$HOME/winsdk}
-for s in ${*:-build layout node bench win32 linux microvm avx ffp glffp sm gdi changelog}; do case $s in
+for s in ${*:-build layout spec node bench win32 linux microvm avx ffp glffp sm gdi changelog}; do case $s in
   build)  step build build ;;
   layout) step layout tests/layout.sh ;;
+  spec) step spec tests/spec.sh ;;
   node)   LINES_SHOWN=8 step node tests/regress.sh ;;
   bench)  step bench bench ;;
   win32)  LINES_SHOWN=4 step win32 win32 ;;

@@ -5,12 +5,17 @@
 # runtime (rt/ps5/: the start of the process, libkernel, the C library, VideoOut, Pad, AudioOut).
 name = "base/ps5"
 version = 1
+platform = "ps5"
+stability = "experimental"
 architecture = "amd64"
 os = "ps5"
+# the system libraries this base answers for (as the import table names them: docs/spec/base.md); tests/run.sh layout checks the list
+provides = ["libkernel.dll", "libsceaudioout.dll", "libscelibcinternal.dll", "libscepad.dll", "libscesystemservice.dll", "libsceuserservice.dll", "libscevideoout.dll"]
 
 [cpu]
 features = ["fpu", "tsc", "cx8", "cmov", "mmx", "fxsr", "sse", "sse2", "sse3", "ssse3", "sse4.1", "sse4.2", "popcnt", "cx16", "pclmul"]
 
-[runtime]
+[impl]
+# pisco's: the runtime's sources (paths from the repository's root, `*` within a file name) and their level
 sources = ["rt/builtins.c", "rt/core.c", "rt/clock.c", "rt/gpu_ring.c", "rt/mixer.c", "rt/ps5/*.c"]
 opt = "-O2"

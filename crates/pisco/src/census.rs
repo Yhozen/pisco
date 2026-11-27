@@ -29,7 +29,7 @@ impl Census {
             let (dll, name) = imp.split_once('!').unwrap_or((imp, ""));
             let dll = dll.to_ascii_lowercase();
             let full = format!("{dll}!{name}");
-            if self.shipped.contains(&dll) { *by.entry("lifted with the title".into()).or_default() += 1; lines.push(format!("lifted   {imp}")); continue; }
+            if self.shipped.contains(&dll) { *by.entry("lifted with the app".into()).or_default() += 1; lines.push(format!("lifted   {imp}")); continue; }
             // as the runtime's find_import (rt/process.c) looks for it: API sets and the C runtimes by the DLL behind
             // them, and a DLL's decorated stdcall name (fmod.dll's `_FSOUND_Init@12`) without its decoration
             let mut names = vec![full.clone()];

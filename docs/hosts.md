@@ -128,8 +128,7 @@ wamrc --enable-multi-thread -o out/bench/exnref.aot out/bench/exnref.wasm  # sam
    - direct files, Metal / Vulkan / D3D12 through wgpu, real threads, the module compiled ahead of time at build;
    - wgpu's native-only features cover two of O3's gaps: arrays of textures (bindless) and 64-bit integers (mesh
      shaders unconfirmed);
-   - reuses the WGSL the runtime and the translators already write, and a small contract: 16 `host` functions,
-     about 20 WASI ones, and the GPU, audio and input rings (`rt/gpu_ring.c`, `rt/mixer.c`);
+   - reuses the WGSL the runtime and the translators already write, and a small contract, written down in [spec/host.md](spec/host.md) (version 0): 32 `host` functions, 14 WASI ones, and the GPU, audio and input rings;
    - costs: porting `web/gpu/backend.js`, `explicit.js` and the worker (about 1,500 lines of JS) to Rust; building
      with the standard exception instructions (or converting with binaryen); a third host to keep equal with Node
      and Chrome in `tests/run.sh`; no URL. Risk: wasmtime's threads are tier 2, with known gaps for shared memory.

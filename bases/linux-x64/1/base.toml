@@ -4,6 +4,8 @@
 # runtime (rt/linux-x64/: the start of a process, its system calls, the files it finds).
 name = "base/linux-x64"
 version = 1
+platform = "linux-x64"
+stability = "stable"
 architecture = "amd64"   # as OCI names it: x86-64
 os = "linux"
 
@@ -11,7 +13,7 @@ os = "linux"
 # what a recipe without [cpu] gets: every feature the lifter supports
 features = ["fpu", "tsc", "cx8", "cmov", "mmx", "fxsr", "sse", "sse2", "sse3", "ssse3", "sse4.1", "sse4.2", "popcnt", "cx16", "pclmul"]
 
-[runtime]
-# paths from the repository's root, `*` within a file name
+[impl]
+# pisco's: the runtime's sources, paths from the repository's root, `*` within a file name
 sources = ["rt/builtins.c", "rt/core.c", "rt/clock.c", "rt/linux-x64/*.c"]
 opt = "-O2"

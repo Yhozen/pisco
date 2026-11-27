@@ -17,7 +17,7 @@
 set -uo pipefail
 root=$(cd "$(dirname "$0")/../.." && pwd); cd "$root"
 zip=${DESIRE_ZIP:-$HOME/games/DESI-Re-v0.1-Windows-x64.zip}
-target/release/pisco build recipes/desire --source "$zip" --with REDIST="$REDIST" --out out/img-desire --cache out/pc-desire > out/img-desire.log 2>&1 || { echo "pisco build failed:"; grep -v '^pisco:   ' out/img-desire.log | tail -4; exit 1; }
+target/release/pisco build recipes/desire --source "$zip" --input redist="$REDIST" --out out/img-desire --cache out/pc-desire > out/img-desire.log 2>&1 || { echo "pisco build failed:"; grep -v '^pisco:   ' out/img-desire.log | tail -4; exit 1; }
 grep -E '^pisco: (imports|shaders):' out/img-desire.log | sed 's/^pisco: //' | tr '\n' ';' | sed 's/;$/\n/'
 SW_STRICT=1 SW_TRACE=2 SW_EXIT_FRAMES=120 SW_PACE=off target/release/pisco run out/img-desire > out/desire.start.log 2>&1 || { echo "the start ended with exit code $?:"; grep -v '^pisco: \[' out/desire.start.log | tail -4 | cut -c1-300; exit 1; }
 grep -q 'exit after 120 frames' out/desire.start.log || { echo "the run did not reach its 120th frame"; exit 1; }
@@ -36,15 +36,15 @@ done < recipes/desire/traces/mazes.txt
 echo "mazes: $n of $n are Wine's, byte for byte, from Wine's seeds"
 # 4. MSVC's FH4: an asset taken away makes the engine throw and catch (C++ exceptions whose tables are FH4's); under
 #    Wine its title becomes "Scene error (Visual Studio Output) | Esc: Quit" and it keeps running. Here too: an image
-#    built from a copy of the zip without Textures/WallBrick.png (its recipe without the sha256)
+#    built from a copy of the zip without Textures/WallBrick.png (its recipe with the input unpinned)
 m=out/desire-missing; rm -rf "$m"; mkdir -p "$m"
 python3 -I -c 'import sys, zipfile
 src, dst = zipfile.ZipFile(sys.argv[1]), zipfile.ZipFile(sys.argv[2], "w", zipfile.ZIP_DEFLATED)
 for i in src.infolist():
     if not i.filename.endswith("/Textures/WallBrick.png"): dst.writestr(i, src.read(i))
 dst.close()' "$zip" "$m/missing.zip"
-grep -v '^sha256 = ' recipes/desire/title.toml | sed 's/^name = "desire"/name = "desire-missing"/' > "$m/title.toml"
-target/release/pisco build "$m" --source "$m/missing.zip" --with REDIST="$REDIST" --out "$m/img" --cache out/pc-desire > "$m/build.log" 2>&1 || { echo "pisco build of the image without WallBrick.png failed:"; tail -3 "$m/build.log"; exit 1; }
+sed 's|^sha256 = .*|unpinned = "a copy without WallBrick.png (tests/gfx/desireplay.sh)"|; s|^name = "desire"|name = "desire-missing"|' recipes/desire/recipe.toml > "$m/recipe.toml"
+target/release/pisco build "$m" --source "$m/missing.zip" --input redist="$REDIST" --out "$m/img" --cache out/pc-desire > "$m/build.log" 2>&1 || { echo "pisco build of the image without WallBrick.png failed:"; tail -3 "$m/build.log"; exit 1; }
 SW_STRICT=1 SW_CLOCK=16667 SW_EXIT_FRAMES=600 target/release/pisco run "$m/img" > "$m/run.log" 2>&1 || { echo "without WallBrick.png the run ended with exit code $?:"; grep -v 'window title' "$m/run.log" | tail -3 | cut -c1-300; exit 1; }
 grep -q '^pisco: window title: DESI:Re | Scene error (Visual Studio Output) | Esc: Quit' "$m/run.log" || { echo "without WallBrick.png the game did not show its scene error"; exit 1; }
 echo "FH4: without WallBrick.png the game throws, catches, says 'Scene error' as under Wine, and runs on to its 600th frame"

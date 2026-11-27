@@ -200,7 +200,7 @@ process costs about a hundredth of what it costs there.
 - **A bug the shell found**: a signal's frame is written to the user's stack with `fxsave`, and its copy-on-write
   fault reported `rip 0`, so the kernel found no fix-up and oopsed. The helpers of `rt/cpu.h` that reach memory
   (`fxsave`, the x87's) saw the file's fallback `ip_` and `tlb_`, not the instruction's; they take them now.
-- **The image**: `pisco build` knows a machine's base: `[lifter] programs` are lifted with the kernel, `[run]
+- **The image**: `pisco build` knows a machine's base: `[hints.pisco] programs` are lifted with the kernel, `[run]
   initrd` and `cmdline` reach the runtime (`SW_INITRD`, `SW_CMDLINE`) through the image's config. Two builds with
   empty caches give the same manifest (`sha256:72e36c24…`); a build takes eight minutes on four cores.
 - **`tools/run-chrome.mjs` types**: `TYPE=<text>` sends key presses to the page, which is how typing into the page
@@ -275,7 +275,7 @@ bash is GPL-3.0-or-later and cannot be linked into the GPL-2.0-only kernel's mod
 - **Loaded by the host** (`web/side.mjs`, in Node and the page's worker), as a dynamic linker loads a library: its
   memory taken from the machine (`rt_side_alloc`), its functions added to the table, its relocations applied, then
   registered with the machine (`rt_program_register`); from there it is found by its code pages like any program.
-- **`pisco build`**: `[lifter] modules = ["/bash"]` makes it a layer of the image, named in the config's `side`; the
+- **`pisco build`**: `[hints.pisco] modules = ["/bash"]` makes it a layer of the image, named in the config's `side`; the
   title's module exports what the side modules import (`pisco` reads their import sections).
 - `/init` runs bash as it runs on QEMU, in Node and in headless Chrome.
 

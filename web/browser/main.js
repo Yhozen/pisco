@@ -310,7 +310,7 @@ else {
   const image = q.get('image') ? await fetchImage(new URL(q.get('image'), location.href).href).catch((e) => { log(`image: ${e.message}`); return null; }) : null;
   if (q.get('image') && !image) { console.log('pisco exit 125'); throw new Error('no image'); }
   const module = await WebAssembly.compile(image ? image.wasm : await (await fetch(q.get('wasm'))).arrayBuffer());
-  if (image) { drive = image.drive; folder = image.settings.folder; dir = drive + folder.split('/').map(encodeURIComponent).join('/') + '/'; console.log(`image: ${image.settings.title} (manifest ${image.digest})`); }
+  if (image) { drive = image.drive; folder = image.settings.folder; dir = drive + folder.split('/').map(encodeURIComponent).join('/') + '/'; console.log(`image: ${image.settings.name} (manifest ${image.digest})`); }
   else dir = new URL(q.get('exe'), location.href).href.replace(/[^/]*$/, ''); // the title's folder
   memory = new WebAssembly.Memory({ initial: 1024, maximum: 65536, shared: true });
   const tids = new Int32Array(new SharedArrayBuffer(4)); tids[0] = 1;
@@ -329,7 +329,7 @@ else {
   if (q.get('pace') === 'off') env.SW_PACE = 'off';
   if (env.SW_CONSOLE === undefined) env.SW_CONSOLE = 'tty';   // a machine's console: someone may type (rt/microvm-x64)
   let store = [];
-  try { store = await openStore(image ? `image:${image.settings.title}` : new URL(q.get('exe'), location.href).pathname); if (store.length) console.log(`storage: ${store.length} file(s) from earlier sessions`); } catch (e) { log(`storage: ${e.message} (saves will not survive a reload)`); }
+  try { store = await openStore(image ? `image:${image.settings.name}` : new URL(q.get('exe'), location.href).pathname); if (store.length) console.log(`storage: ${store.length} file(s) from earlier sessions`); } catch (e) { log(`storage: ${e.message} (saves will not survive a reload)`); }
   // a Linux title: its processes (web/kernel.mjs), each a worker this page starts (the first, a fork's, an execve's)
   const kernel = WebAssembly.Module.exports(module).some((e) => e.name === 'rt_fork_resume') ? createKernel() : null, programs = image?.config.programs || null;
   // a machine's programs in modules of their own (rt/microvm-x64): fetched here, loaded by the worker (web/side.mjs)

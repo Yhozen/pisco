@@ -162,6 +162,8 @@ if (isMainThread) {
     read_file: (name, nlen, off, len, dst) => { const b = drive.read(driveName(text(name, nlen), folder), Number(off), Number(len)); if (!b) return 0; u8().set(b, Number(dst)); return b.length; },
     stat: (name, nlen) => BigInt(drive.stat(driveName(text(name, nlen), folder))),
     list: (name, nlen, buf, cap) => { const l = drive.list(driveName(text(name, nlen), folder)); if (l === null) return 0; const b = Buffer.from(l); if (buf && cap >= b.length) u8().set(b, buf); return b.length; },
+    link: (name, nlen, buf, cap) => { const t = drive.link(driveName(text(name, nlen), folder)); if (t === null) return -1; const b = Buffer.from(t); if (b.length > cap) return -1; u8().set(b, buf); return b.length; },
+    exec: (name, nlen) => drive.exec(driveName(text(name, nlen), folder)),
   };
   // SW_KEYS=<json>: [[ms, code, keyCode, down], ...] times in milliseconds on the virtual clock (SW_CLOCK)
   // (the same list tools/run-chrome.mjs sends the page). Applied to the input block just after each flip, for the next frame.
@@ -193,6 +195,9 @@ if (isMainThread) {
       return got;
     },
     stat: (name, nlen) => { const real = resolve(text(name, nlen)); if (!real) return -1n; try { const st = fs.statSync(real); return st.isDirectory() ? -2n : BigInt(st.size); } catch { return -1n; } },
+    // a folder of this machine's: its links and executable bits as they are here
+    link: (name, nlen, buf, cap) => { const real = resolve(text(name, nlen)); if (!real) return -1; try { if (!fs.lstatSync(real).isSymbolicLink()) return -1; const b = Buffer.from(fs.readlinkSync(real)); if (b.length > cap) return -1; u8().set(b, buf); return b.length; } catch { return -1; } },
+    exec: (name, nlen) => { const real = resolve(text(name, nlen)); if (!real) return -1; try { const st = fs.statSync(real); return st.isDirectory() ? -1 : (st.mode & 0o100 ? 1 : 0); } catch { return -1; } },
     list: (name, nlen, buf, cap) => {
       const real = resolve(text(name, nlen)); if (!real) return 0;
       let out = ''; try { for (const e of fs.readdirSync(real, { withFileTypes: true })) out += e.name + (e.isDirectory() ? '/' : '') + '\n'; } catch { return 0; }

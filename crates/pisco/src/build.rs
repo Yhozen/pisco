@@ -9,7 +9,7 @@
 // The cache is out/pisco-cache (--cache): what is in it only saves time, an image never depends on it.
 use crate::census::Census;
 use crate::oci::{self, Layout, Tree, LAYER, LOCAL, MODULE, ROLE, TITLE};
-use crate::recipe::{self, Base, RegData, Recipe, R};
+use crate::recipe::{self, Base, Pin, RegData, Recipe, R};
 use serde_json::json;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -17,7 +17,49 @@ use std::process::Command;
 use std::time::Instant;
 
 pub struct Opts { pub recipe: PathBuf, pub source: Option<PathBuf>, pub out: Option<PathBuf>, pub cache: Option<PathBuf>, pub compare: Option<PathBuf>,
+    /// --lock: write the recipe's lock (recipe.lock) from this build
+    pub lock: bool,
+    /// inputs named on the command line: --input <id>=<path> (and --with <ID>=<folder>), matched without regard to case
     pub with: Vec<(String, PathBuf)> }
+/// What a file of the builder's machine is on a drive with modes and links (`modes`: a Linux drive) or without:
+/// its target if it is a link, else its bytes and whether it is executable
+pub enum Found { Link(String), File(Vec<u8>, bool) }
+pub fn found(p: &Path, modes: bool) -> R<Found> {
+    use std::os::unix::fs::PermissionsExt;
+    let m = io(std::fs::symlink_metadata(p), p)?;
+    if modes && m.file_type().is_symlink() { return Ok(Found::Link(io(std::fs::read_link(p), p)?.to_string_lossy().into_owned())); }
+    let exec = modes && io(std::fs::metadata(p), p)?.permissions().mode() & 0o100 != 0;
+    Ok(Found::File(io(std::fs::read(p), p)?, exec))
+}
+fn digest_line(rel: &str, p: &Path, modes: bool) -> R<(String, char, String)> {
+    Ok(match found(p, modes)? { Found::Link(t) => (rel.to_string(), 'l', t), Found::File(d, x) => (rel.to_string(), if x { 'x' } else { 'f' }, oci::sha256(&d)) })
+}
+/// A folder's tree digest (docs/spec/image.md#the-tree-digest), over `only` of its files when they are named; with
+/// `modes`, its links and executable bits count (a Linux drive)
+pub fn folder_digest(dir: &Path, only: Option<&[String]>, modes: bool) -> R<String> {
+    let (mut fs, mut ds) = (Vec::new(), Vec::new()); walk_as(dir, "", &mut fs, &mut ds, modes)?;
+    let mut e: Vec<(String, char, String)> = Vec::new();
+    match only {
+        Some(names) => for n in names {
+            let (rel, p) = fs.iter().find(|(r, _)| r.eq_ignore_ascii_case(n)).ok_or(format!("{}: has no {n}", dir.display()))?;
+            e.push(digest_line(rel, p, modes)?);
+        },
+        None => { for d in ds { e.push((d, 'd', "-".into())); } for (rel, p) in fs { e.push(digest_line(&rel, &p, modes)?); } }
+    }
+    Ok(oci::tree_digest(&e))
+}
+/// Whether an input's sha256 is one the recipe accepts; what to say if it is not pinned
+fn check_pin(pin: &Pin, sha: &str, what: &str) -> R<()> {
+    match pin {
+        Pin::Sha256(l) if !l.iter().any(|w| w == sha) => Err(format!("{what}: sha256 {sha}, the recipe wants {}: not the input the recipe is for", l.join(" or "))),
+        Pin::Sha256(_) => { say(&format!("input: {what} has the recipe's sha256")); Ok(()) }
+        Pin::BuiltBy(b) => { say(&format!("input: {what} is built here by {b} (it has {sha}): not pinned")); Ok(()) }
+        Pin::Unpinned(why) => { say(&format!("input: {what} is not pinned ({why}); it has {sha}")); Ok(()) }
+    }
+}
+/// Whether the app's drive has modes and links (a Linux drive: docs/spec/image.md#files)
+fn modes(r: &Recipe) -> bool { matches!(r.platform.as_str(), "linux-x64" | "microvm-x64" | "ps5") }
+fn bound<'a>(with: &'a [(String, PathBuf)], id: &str) -> Option<&'a PathBuf> { with.iter().find(|(n, _)| n.eq_ignore_ascii_case(id)).map(|x| &x.1) }
 
 pub fn say(s: &str) { eprintln!("pisco: {s}"); }
 fn io<T>(r: std::io::Result<T>, what: &Path) -> R<T> { r.map_err(|e| format!("{}: {e}", what.display())) }
@@ -81,13 +123,16 @@ fn innoextract() -> PathBuf {
     let p = home().join("tools/innoextract/bin/amd64/innoextract");
     if p.is_file() { p } else { "innoextract".into() }
 }
-fn walk(dir: &Path, rel: &str, files: &mut Vec<(String, PathBuf)>, dirs: &mut Vec<String>) -> R<()> {
+fn walk(dir: &Path, rel: &str, files: &mut Vec<(String, PathBuf)>, dirs: &mut Vec<String>) -> R<()> { walk_as(dir, rel, files, dirs, false) }
+/// With `links`, a symbolic link is an entry of its own (a Linux drive's), not what it points to
+fn walk_as(dir: &Path, rel: &str, files: &mut Vec<(String, PathBuf)>, dirs: &mut Vec<String>, links: bool) -> R<()> {
     let mut es: Vec<_> = io(std::fs::read_dir(dir), dir)?.filter_map(|e| e.ok()).collect();
     es.sort_by_key(|e| e.file_name());
     for e in es {
         let name = e.file_name().to_string_lossy().into_owned();
         let r = if rel.is_empty() { name.clone() } else { format!("{rel}/{name}") };
-        if e.path().is_dir() { dirs.push(r.clone()); walk(&e.path(), &r, files, dirs)?; } else { files.push((r, e.path())); }
+        let link = links && e.file_type().map(|t| t.is_symlink()).unwrap_or(false);
+        if !link && e.path().is_dir() { dirs.push(r.clone()); walk_as(&e.path(), &r, files, dirs, links)?; } else { files.push((r, e.path())); }
     }
     Ok(())
 }
@@ -130,7 +175,7 @@ fn unzip(src: &Path, root: Option<&str>, to: &Path) -> R<()> {
     Ok(())
 }
 /// extract = "wise": a Wise installer (or a zip around one: its one .exe), its files to the title's folder; with
-/// [source.installshield], the InstallShield setup among them is read instead and its file groups go where the
+/// [[extract]] installshield, the InstallShield setup among them is read instead and its file groups go where the
 /// recipe says
 fn unwise(r: &Recipe, src: &Path, tmp: &Path) -> R<()> {
     let mut exe = io(std::fs::read(src), src)?;
@@ -139,7 +184,7 @@ fn unwise(r: &Recipe, src: &Path, tmp: &Path) -> R<()> {
         unzip(src, None, &z)?;
         let (mut fs, mut ds) = (Vec::new(), Vec::new()); walk(&z, "", &mut fs, &mut ds)?;
         let exes: Vec<_> = fs.iter().filter(|(n, _)| n.to_ascii_lowercase().ends_with(".exe")).collect();
-        if exes.len() != 1 { return Err(format!("{}: extract = \"wise\" wants a zip with one .exe in it ({} found)", src.display(), exes.len())); }
+        if exes.len() != 1 { return Err(format!("{}: [[extract]] wise wants a zip with one .exe in it ({} found)", src.display(), exes.len())); }
         exe = io(std::fs::read(&exes[0].1), &exes[0].1)?;
         io(std::fs::remove_dir_all(&z), &z)?;
     }
@@ -156,7 +201,7 @@ fn unwise(r: &Recipe, src: &Path, tmp: &Path) -> R<()> {
         return Ok(());
     };
     let find = |n: &str| files.iter().find(|(rel, _)| rel.eq_ignore_ascii_case(n)).map(|(_, d)| d);
-    let hdr = find("data1.hdr").ok_or(format!("{}: [source.installshield], but the installer has no data1.hdr", src.display()))?;
+    let hdr = find("data1.hdr").ok_or(format!("{}: [[extract]] installshield, but the installer has no data1.hdr", src.display()))?;
     let vol = |n: u16| -> R<Vec<u8>> { find(&format!("data{n}.cab")).cloned().ok_or(format!("the installer has no data{n}.cab")) };
     let loose = |n: &str, size: usize| -> R<Vec<u8>> {
         // by name: the size the file table gives such a file is not always the size of the file the setup finds
@@ -176,23 +221,26 @@ fn unwise(r: &Recipe, src: &Path, tmp: &Path) -> R<()> {
         let mut rel = to.replace('\\', "/");
         for part in [f.dir.as_str(), f.name.as_str()] { if part.is_empty() { continue; } if !rel.is_empty() { rel.push('/'); } rel.push_str(part); }
         let rel = rel.replace('\\', "/");
-        if rel.split('/').any(|p| p.is_empty() || p == ".." || p == "." || p.contains(':')) { return Err(format!("InstallShield: {}: a path that leaves the title's folder", f.name)); }
+        if rel.split('/').any(|p| p.is_empty() || p == ".." || p == "." || p.contains(':')) { return Err(format!("InstallShield: {}: a path that leaves the app's folder", f.name)); }
         write(&rel, &f.data)?;
     }
-    if !unknown.is_empty() { return Err(format!("{}: InstallShield file groups the recipe does not place: {} (say where each goes in [source.installshield] groups, \"-\" for none)", src.display(), unknown.into_iter().map(|g| format!("\"{g}\"")).collect::<Vec<_>>().join(", "))); }
+    if !unknown.is_empty() { return Err(format!("{}: InstallShield file groups the recipe does not place: {} (say where each goes in the installshield step's groups, \"-\" for none)", src.display(), unknown.into_iter().map(|g| format!("\"{g}\"")).collect::<Vec<_>>().join(", "))); }
     Ok(())
 }
-/// [[source.add]]: each file from its folder (--with NAME=<folder>, or $NAME), found without regard to case;
+/// [[extract]] copy: each file from its folder input (--input <id>=<folder>, or $<ID>), found without regard to case;
 /// returns (where it goes on C:, its path here) and the material of the cache key (names and sha256s)
 fn added(r: &Recipe, with: &[(String, PathBuf)]) -> R<(Vec<(String, PathBuf)>, String)> {
     let (mut out, mut key) = (Vec::new(), String::new());
     for a in &r.source.adds {
-        let dir = with.iter().find(|(n, _)| *n == a.from).map(|x| x.1.clone()).or_else(|| std::env::var_os(&a.from).map(PathBuf::from))
-            .ok_or(format!("[[source.add]] from = \"{0}\": say where its files are: pisco build --with {0}=<folder> (or the environment variable {0})", a.from))?;
+        let var = a.from.to_ascii_uppercase().replace('-', "_");
+        let file = r.inputs.iter().find(|i| i.id == a.from).map(|i| r.dir.join(&i.file)).filter(|p| p.is_dir());
+        let dir = bound(with, &a.from).cloned().or_else(|| std::env::var_os(&var).map(PathBuf::from)).or(file)
+            .ok_or(format!("input {0}: say where its folder is: pisco build --input {0}=<folder> (or the environment variable {var})", a.from))?;
+        check_pin(&a.pin, &folder_digest(&dir, Some(&a.files), modes(r))?, &format!("{} ({})", dir.display(), a.from))?;
         let to = recipe::drive_path(&a.to)?;
         let list: Vec<_> = io(std::fs::read_dir(&dir), &dir)?.filter_map(|e| e.ok()).collect();
         for f in &a.files {
-            let p = list.iter().find(|e| e.file_name().to_string_lossy().eq_ignore_ascii_case(f)).map(|e| e.path()).ok_or(format!("[[source.add]] {f}: not in {} ({})", dir.display(), a.from))?;
+            let p = list.iter().find(|e| e.file_name().to_string_lossy().eq_ignore_ascii_case(f)).map(|e| e.path()).ok_or(format!("[[extract]] copy {f}: not in {} (input {})", dir.display(), a.from))?;
             key.push_str(&format!("{to}/{f} {}\n", oci::sha256(&io(std::fs::read(&p), &p)?)));
             out.push((format!("{to}/{f}"), p));
         }
@@ -222,15 +270,19 @@ fn extract(r: &Recipe, src: &Path, sha: &str, cache: &Path, with: &[(String, Pat
                 io(std::fs::copy(src, tmp.join("app").join(name)), src)?;
             }
             "folder" => { // the folder's files go to the exe's folder ({app}), as they are
-                if !src.is_dir() { return Err(format!("{}: extract = \"folder\" wants a folder", src.display())); }
-                let (mut fs, mut ds) = (Vec::new(), Vec::new()); walk(src, "", &mut fs, &mut ds)?;
+                if !src.is_dir() { return Err(format!("{}: [[extract]] folder wants a folder", src.display())); }
+                let (mut fs, mut ds) = (Vec::new(), Vec::new()); walk_as(src, "", &mut fs, &mut ds, modes(r))?;
                 for d in ds { io(std::fs::create_dir_all(tmp.join("app").join(&d)), &tmp)?; }
                 io(std::fs::create_dir_all(tmp.join("app")), &tmp)?;
-                for (rel, p) in fs { io(std::fs::copy(&p, tmp.join("app").join(&rel)), &p)?; }
+                for (rel, p) in fs {
+                    let dst = tmp.join("app").join(&rel);
+                    // a link stays a link on a Linux drive (its target as written); a file keeps its mode (std::fs::copy)
+                    match found(&p, modes(r))? { Found::Link(t) => io(std::os::unix::fs::symlink(&t, &dst), &dst)?, Found::File(..) => { io(std::fs::copy(&p, &dst), &p)?; } }
+                }
             }
             "zip" => unzip(src, r.source.root.as_deref(), &tmp.join("app"))?,
             "wise" => unwise(r, src, &tmp)?,
-            x => return Err(format!("[source] extract = \"{x}\": known are \"innosetup\", \"file\", \"folder\", \"zip\" and \"wise\"")),
+            x => return Err(format!("[[extract]] {x}: not a first step")),
         }
         for (guest, host) in &adds {
             let rel = if guest.eq_ignore_ascii_case(&app_guest) { "" } else { match guest.get(..app_guest.len() + 1) { Some(p) if p.eq_ignore_ascii_case(&format!("{app_guest}/")) => &guest[app_guest.len() + 1..], _ => return Err(format!("[[source.add]] {guest}: files are added in the title's folder ({app_guest}) or under it")) } };
@@ -246,10 +298,10 @@ fn extract(r: &Recipe, src: &Path, sha: &str, cache: &Path, with: &[(String, Pat
     for e in io(std::fs::read_dir(&dir), &dir)?.filter_map(|e| e.ok()) {
         let top = e.file_name().to_string_lossy().into_owned();
         let guest = if top == "app" { app_guest.clone() } else {
-            match r.source.map.get(&top) { Some(p) => recipe::drive_path(p)?, None => return Err(format!("the installer has files in {{{top}}}: say where they go in [source] map = {{ {top} = 'C:\\...' }}")) }
+            match r.source.map.get(&top) { Some(p) => recipe::drive_path(p)?, None => return Err(format!("the installer has files in {{{top}}}: say where they go in the first step's map = {{ {top} = 'C:\\...' }}")) }
         };
         let (mut fs, mut ds) = (Vec::new(), Vec::new());
-        walk(&e.path(), "", &mut fs, &mut ds)?;
+        walk_as(&e.path(), "", &mut fs, &mut ds, modes(r))?;
         let join = |rel: &str| if guest.is_empty() { rel.to_string() } else if rel.is_empty() { guest.clone() } else { format!("{guest}/{rel}") };
         dirs.push(join("")); for d in ds { dirs.push(join(&d)); }
         for (rel, host) in fs { files.insert(join(&rel), host); }
@@ -257,17 +309,45 @@ fn extract(r: &Recipe, src: &Path, sha: &str, cache: &Path, with: &[(String, Pat
     for c in &r.source.cabs { uncab(c, &mut files, &mut dirs, &dir)?; }
     Ok(Extracted { files, dirs, app_guest, added: add_key.lines().map(String::from).collect() })
 }
+/// The versions of the extractors this recipe's steps ran (the config's build.tools: provenance, not identity)
+fn tool_versions(r: &Recipe) -> serde_json::Value {
+    let first = |p: PathBuf, arg: &str| Command::new(&p).arg(arg).output().ok().map(|o| String::from_utf8_lossy(if o.stdout.is_empty() { &o.stderr } else { &o.stdout }).lines().next().unwrap_or("").trim().to_string());
+    let mut m = serde_json::Map::new();
+    if r.source.extract == "innosetup" { if let Some(v) = first(innoextract(), "--version") { m.insert("innoextract".into(), json!(v)); } }
+    if !r.source.cabs.is_empty() { if let Some(v) = first(cabextract(), "--version") { m.insert("cabextract".into(), json!(v)); } }
+    serde_json::Value::Object(m)
+}
+/// recipe.lock (docs/spec/recipe.md#the-lock): checked when it is there; written with --lock, for a recipe whose
+/// inputs are all pinned
+fn lock(r: &Recipe, tree: &str, files: usize, write: bool) -> R<()> {
+    let path = r.dir.join("recipe.lock");
+    let want = format!("sha256:{tree}");
+    if write {
+        if let Some(i) = r.inputs.iter().find(|i| !matches!(i.pin, Pin::Sha256(_))) { return Err(format!("--lock: input {} is not pinned by a sha256, so the app's files are this machine's: a lock would not hold elsewhere", i.id)); }
+        let text = format!("# recipe.lock: the tree digest of the app's files that this recipe's inputs gave (docs/spec/recipe.md#the-lock).\n# Written by `pisco build --lock`; any conforming builder must give the same.\nschema = 1\ntree = \"{want}\"\nfiles = {files}\n");
+        io(std::fs::write(&path, text), &path)?;
+        say(&format!("lock: {} written: tree {want}, {files} files", path.display()));
+        return Ok(());
+    }
+    if !path.is_file() { return Ok(()); }
+    let t: toml::Table = io(std::fs::read_to_string(&path), &path)?.parse().map_err(|e| format!("{}: {e}", path.display()))?;
+    if t.get("schema").and_then(|v| v.as_integer()) != Some(1) { return Err(format!("{}: schema = 1 expected", path.display())); }
+    let got = t.get("tree").and_then(|v| v.as_str()).ok_or(format!("{}: no tree", path.display()))?;
+    if got != want { return Err(format!("{}: the app's files have tree digest {want} ({files} files), the lock says {got} ({}): not the files the recipe gave when it was locked", path.display(), t.get("files").and_then(|v| v.as_integer()).map(|n| format!("{n} files")).unwrap_or_default())); }
+    say(&format!("lock: the app's files are the lock's ({want})"));
+    Ok(())
+}
 fn cabextract() -> PathBuf {
     if let Ok(p) = std::env::var("CABEXTRACT") { return p.into(); }
     let p = home().join("tools/cabextract/bin/cabextract");
     if p.is_file() { p } else { "cabextract".into() }
 }
-/// [[source.cab]]: files taken out of a cabinet the installer carries (cabextract), once per cabinet and list,
+/// [[extract]] cab: files taken out of a cabinet the installer carries (cabextract), once per cabinet and list,
 /// into a folder of their own beside the extraction's
 fn uncab(c: &recipe::Cab, files: &mut BTreeMap<String, PathBuf>, dirs: &mut Vec<String>, extracted: &Path) -> R<()> {
     let cab_guest = recipe::drive_path(&c.cab)?;
     let to = recipe::drive_path(&c.to)?;
-    let cab = files.iter().find(|(g, _)| g.eq_ignore_ascii_case(&cab_guest)).map(|x| x.1.clone()).ok_or(format!("[[source.cab]] {}: not among the installer's files", c.cab))?;
+    let cab = files.iter().find(|(g, _)| g.eq_ignore_ascii_case(&cab_guest)).map(|x| x.1.clone()).ok_or(format!("[[extract]] cab {}: not among the installer's files", c.cab))?;
     let key = oci::sha256(format!("{cab_guest}\n{}\n", c.files.join("\n")).as_bytes());
     let mut name = extracted.as_os_str().to_owned(); name.push(format!("-cab-{}", &key[..16]));
     let dir = PathBuf::from(name);
@@ -276,7 +356,7 @@ fn uncab(c: &recipe::Cab, files: &mut BTreeMap<String, PathBuf>, dirs: &mut Vec<
         let ce = cabextract();
         for f in &c.files {
             let o = Command::new(&ce).args(["-q", "-F", f, "-d"]).arg(&tmp).arg(&cab).output()
-                .map_err(|e| format!("{}: {e}: [[source.cab]] needs cabextract on this machine (tools/setup-toolchain.sh cabextract, or CABEXTRACT=<path>)", ce.display()))?;
+                .map_err(|e| format!("{}: {e}: [[extract]] cab needs cabextract on this machine (tools/setup-toolchain.sh cabextract, or CABEXTRACT=<path>)", ce.display()))?;
             if !o.status.success() { return Err(format!("cabextract {f} from {}: {}", c.cab, String::from_utf8_lossy(&o.stderr).trim())); }
         }
         publish(&tmp, &dir)?;
@@ -284,7 +364,7 @@ fn uncab(c: &recipe::Cab, files: &mut BTreeMap<String, PathBuf>, dirs: &mut Vec<
     }
     for f in &c.files {
         let host = io(std::fs::read_dir(&dir), &dir)?.filter_map(|e| e.ok()).find(|e| e.file_name().to_string_lossy().eq_ignore_ascii_case(f)).map(|e| e.path())
-            .ok_or(format!("[[source.cab]] {f}: not in {}", c.cab))?;
+            .ok_or(format!("[[extract]] cab {f}: not in {}", c.cab))?;
         let n = host.file_name().unwrap().to_string_lossy().into_owned();
         files.insert(if to.is_empty() { n } else { format!("{to}/{n}") }, host);
     }
@@ -349,7 +429,7 @@ fn lift(t: &Tools, r: &Recipe, exe: &Path, ex: &Extracted, cache: &Path, user: O
 fn lift_as(t: &Tools, r: &Recipe, exe: &Path, ex: &Extracted, cache: &Path, user: Option<&str>, pic: bool) -> R<Lifted> {
     let dir = exe.parent().unwrap();
     // the images the lifter reads: the exe and every DLL beside it that is not builtin, and the DLLs the image puts in
-    // C:\WINDOWS\system32 (a [[source.cab]]'s), which it may import too: the lifter looks in their folders
+    // C:\WINDOWS\system32 (a [[extract]] cab's), which it may import too: the lifter looks in their folders
     let mut images: Vec<(String, PathBuf)> = io(std::fs::read_dir(dir), dir)?.filter_map(|e| e.ok()).map(|e| (e.file_name().to_string_lossy().to_ascii_lowercase(), e.path()))
         .filter(|(n, p)| p == exe || (n.ends_with(".dll") && !r.dll.contains_key(n))).collect();
     let mut sys_dirs: Vec<PathBuf> = Vec::new();
@@ -360,11 +440,11 @@ fn lift_as(t: &Tools, r: &Recipe, exe: &Path, ex: &Extracted, cache: &Path, user
             if let Some(p) = h.parent() { if !sys_dirs.iter().any(|d| d == p) { sys_dirs.push(p.to_path_buf()); } }
         }
     }
-    // [lifter] load: DLLs the title loads itself, by their path below the exe's folder
+    // [code] load: DLLs the title loads itself, by their path below the exe's folder
     let mut loads: Vec<String> = Vec::new();
     for l in &r.load {
         let rel = l.replace('\\', "/");
-        let host = find_ci(dir, &rel).ok_or(format!("[lifter] load: {l}: not in the title's folder"))?;
+        let host = find_ci(dir, &rel).ok_or(format!("[code] load: {l}: not in the app's folder"))?;
         loads.extend(["--load".into(), format!("{}={rel}", host.display())]);
         images.push((rel.to_ascii_lowercase(), host));
     }
@@ -482,21 +562,17 @@ pub fn build(root: &Path, o: &Opts) -> R<()> {
     let out = o.out.clone().unwrap_or(root.join("out/images").join(&r.name));
     if out.exists() && !oci::is_image(&out) && io(std::fs::read_dir(&out), &out)?.next().is_some() { return Err(format!("{}: not an image, and not empty: not replaced", out.display())); }
     let t = tools(root)?;
+    if base.stability == "experimental" { say(&format!("{} is experimental: what its platform page says may change in any pull request (docs/spec/README.md#stability)", base.reference())); }
     say(&format!("{}: FROM {}{}", r.name, base.reference(), if r.libraries.is_empty() { String::new() } else { format!(", libraries {}", r.libraries.join(" ")) }));
 
     // 1. the source, then its files
-    let src = o.source.clone().unwrap_or(r.dir.join(&r.source.file));
-    // a folder (extract = "folder", a title the user built or copied) is hashed as its list of files and their hashes
-    let sha = if src.is_dir() {
-        let (mut fs, mut ds) = (Vec::new(), Vec::new()); walk(&src, "", &mut fs, &mut ds)?;
-        let mut h = String::new(); for (rel, p) in fs { h.push_str(&format!("{rel} {}\n", oci::sha256(&io(std::fs::read(&p), &p)?))); }
-        oci::sha256(h.as_bytes())
+    let src = o.source.clone().or_else(|| bound(&o.with, &r.primary.id).cloned()).unwrap_or(r.dir.join(&r.source.file));
+    // a folder input (a title the user built or copied) is known by its tree digest
+    let sha = if r.primary.folder {
+        if !src.is_dir() { return Err(format!("{}: input {} is a folder", src.display(), r.primary.id)); }
+        folder_digest(&src, r.primary.files.as_deref(), modes(&r))?
     } else { let data = io(std::fs::read(&src), &src)?; oci::sha256(&data) };
-    match &r.source.sha256 {
-        Some(w) if *w != sha => return Err(format!("{}: sha256 {sha}, the recipe wants {w}: not the installer the recipe is for", src.display())),
-        Some(_) => say(&format!("source: {} has the recipe's sha256", src.display())),
-        None => say(&format!("source: the recipe gives no sha256 for {} (it has {sha}): not checked", src.display())),
-    }
+    check_pin(&r.primary.pin, &sha, &format!("{} ({})", src.display(), r.primary.id))?;
     let mut ex = extract(&r, &src, &sha, &cache, &o.with)?;
     if let Some(c) = &o.compare { compare(&ex, c)?; }
     // [files]: settings a setup step would write, put in the title's files (a file the installer has is replaced)
@@ -507,6 +583,16 @@ pub fn build(root: &Path, o: &Opts) -> R<()> {
         if let Some(k) = ex.files.keys().find(|k| k.eq_ignore_ascii_case(&guest)).cloned() { ex.files.remove(&k); }
         ex.files.insert(guest, host);
     }
+    // the app's files: its layer, and their tree digest against the recipe's lock (docs/spec/recipe.md#the-lock)
+    let mut game = Tree::default();
+    for d in &ex.dirs { if !d.is_empty() { game.dir(d); } }
+    for (g, h) in &ex.files { match found(h, modes(&r))? { Found::Link(t) => game.link(g, &t), Found::File(d, x) => game.file_mode(g, d, x) } }
+    if base.os != "linux" && base.os != "microvm" {   // a Windows drive: names are one without regard to case
+        let mut seen: BTreeMap<String, &String> = BTreeMap::new();
+        for p in game.entries.keys() { if let Some(o) = seen.insert(p.to_ascii_lowercase(), p) { say(&format!("warning: the app's files have {o} and {p}, one name on a drive that does not tell case apart: the host finds one of them")); } }
+    }
+    let (tree, tree_files) = game.digest();
+    lock(&r, &tree, tree_files, o.lock)?;
     let exe_guest = recipe::drive_path(&r.exe)?;
     let exe = ex.files.iter().find(|(g, _)| g.eq_ignore_ascii_case(&exe_guest)).map(|x| x.1.clone()).ok_or(format!("{}: not among the installer's files", r.exe))?;
 
@@ -514,34 +600,34 @@ pub fn build(root: &Path, o: &Opts) -> R<()> {
     // program under two names is lifted once). A Linux title's exe may be a script: its first process starts in
     // any program's module and runs it (rt/linux-x64/start.c)
     let is_elf = |p: &Path| std::fs::File::open(p).ok().and_then(|mut f| { let mut b = [0u8; 4]; std::io::Read::read_exact(&mut f, &mut b).ok().map(|_| b == *b"\x7fELF") }).unwrap_or(false);
-    let programs: Vec<(String, PathBuf)> = if base.os == "linux" { ex.files.iter().filter(|(_, h)| is_elf(h)).map(|(g, h)| (g.clone(), h.clone())).collect() } else { vec![(exe_guest.clone(), exe.clone())] };
-    if programs.is_empty() { return Err(format!("{}: no program among the title's files", r.exe)); }
+    let programs: Vec<(String, PathBuf)> = if base.os == "linux" { ex.files.iter().filter(|(_, h)| !h.is_symlink() && is_elf(h)).map(|(g, h)| (g.clone(), h.clone())).collect() } else { vec![(exe_guest.clone(), exe.clone())] };
+    if programs.is_empty() { return Err(format!("{}: no program among the app's files", r.exe)); }
     let mut lifts: Vec<Lifted> = Vec::new(); let mut lift_of: BTreeMap<String, usize> = BTreeMap::new(); let mut by_sha: BTreeMap<String, usize> = BTreeMap::new();
     for (g, h) in &programs {
         let sha = oci::sha256(&io(std::fs::read(h), h)?);
         let k = match by_sha.get(&sha) { Some(&k) => k, None => { if programs.len() > 1 { say(&format!("program /{g}")); } lifts.push(lift(&t, &r, h, &ex, &cache, None)?); by_sha.insert(sha, lifts.len() - 1); lifts.len() - 1 } };
         lift_of.insert(g.clone(), k);
     }
-    // a machine's programs (its kernel's initramfs, [lifter] programs): each lifted on its own under its name, linked
+    // a machine's programs (its kernel's initramfs, [hints.pisco] programs): each lifted on its own under its name, linked
     // into the kernel's module with their list (programs.gen.c: rt/microvm-x64/run.c finds the one that runs)
     let mut user_lifts: Vec<(String, Lifted)> = Vec::new();
     if base.os == "microvm" {
         for p in &r.programs {
             let g = recipe::drive_path(p)?;
-            let h = ex.files.iter().find(|(f, _)| f.eq_ignore_ascii_case(&g)).map(|x| x.1.clone()).ok_or(format!("[lifter] programs: {p} is not among the title's files"))?;
+            let h = ex.files.iter().find(|(f, _)| f.eq_ignore_ascii_case(&g)).map(|x| x.1.clone()).ok_or(format!("[hints.pisco] programs: {p} is not among the app's files"))?;
             let name: String = g.rsplit('/').next().unwrap().chars().map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '_' }).collect();
             let name = if name.starts_with(|ch: char| ch.is_ascii_digit()) { format!("_{name}") } else { name };
             say(&format!("program {p} ({name})"));
             user_lifts.push((name.clone(), lift(&t, &r, &h, &ex, &cache, Some(&name))?));
         }
     }
-    // a machine's programs in modules of their own ([lifter] modules): lifted position-independent, each linked as a
+    // a machine's programs in modules of their own ([hints.pisco] modules): lifted position-independent, each linked as a
     // wasm side module (web/side.mjs loads it); the title's module exports what they import
     let mut side_lifts: Vec<(String, Lifted)> = Vec::new();
     if base.os == "microvm" {
         for p in &r.modules {
             let g = recipe::drive_path(p)?;
-            let h = ex.files.iter().find(|(f, _)| f.eq_ignore_ascii_case(&g)).map(|x| x.1.clone()).ok_or(format!("[lifter] modules: {p} is not among the title's files"))?;
+            let h = ex.files.iter().find(|(f, _)| f.eq_ignore_ascii_case(&g)).map(|x| x.1.clone()).ok_or(format!("[hints.pisco] modules: {p} is not among the app's files"))?;
             let name: String = g.rsplit('/').next().unwrap().chars().map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '_' }).collect();
             let name = if name.starts_with(|ch: char| ch.is_ascii_digit()) { format!("_{name}") } else { name };
             say(&format!("module {p} ({name})"));
@@ -556,8 +642,8 @@ pub fn build(root: &Path, o: &Opts) -> R<()> {
     let cen = Census::new(root, &base, &r.libraries, &shipped)?;
     let report = cen.check(&lifted.imports);
     say(&format!("imports: {}", report.summary));
-    if !report.needs.is_empty() { return Err(format!("the title imports from DLLs of libraries the recipe does not name: add {} to `libraries`", report.needs.join(", "))); }
-    for l in &r.libraries { if !report.used.contains(l) { say(&format!("imports: library {l} is not used by the title's imports (it may still be loaded at run time)")); } }
+    if !report.needs.is_empty() { return Err(format!("the app imports from DLLs of libraries the recipe does not name: add {} to `libraries`", report.needs.join(", "))); }
+    for l in &r.libraries { if !report.used.contains(l) { say(&format!("imports: library {l} is not used by the app's imports (it may still be loaded at run time)")); } }
 
     // 3. the runtime: the base's core and the libraries
     let t3 = Instant::now();
@@ -576,10 +662,10 @@ pub fn build(root: &Path, o: &Opts) -> R<()> {
     let st = Command::new(root.join("tools/gen-imports.sh")).arg(lifted.bits.to_string()).arg(&lifted.dir).arg(gen.join("imports.gen.c")).args(sources.iter().map(|s| root.join(s))).status().map_err(|e| e.to_string())?;
     if !st.success() { return Err("tools/gen-imports.sh failed".into()); }
     let features = r.cpu.clone().unwrap_or(base.cpu.clone());
-    let mut cpu_toml = format!("[cpu]\nfeatures = [{}]\n", features.iter().map(|f| format!("\"{f}\"")).collect::<Vec<_>>().join(", "));
-    if let Some(b) = r.heap_fill { cpu_toml.push_str(&format!("[quirks]\nheap_fill = {b}\n")); }
-    io(std::fs::write(gen.join("cpu.toml"), &cpu_toml), &gen)?;
-    let o2 = Command::new("python3").args(["-I", &root.join("tools/recipe-gen.py").to_string_lossy(), "cpu.toml"]).current_dir(&gen).output().map_err(|e| e.to_string())?;
+    // (the registry is not built in: it reaches the runtime from the config)
+    let cpu_json = json!({ "cpu": { "features": features }, "quirks": { "heap_fill": r.heap_fill }, "registry": [] });
+    io(std::fs::write(gen.join("recipe.json"), cpu_json.to_string()), &gen)?;
+    let o2 = Command::new("python3").args(["-I", &root.join("tools/recipe-gen.py").to_string_lossy(), "recipe.json"]).current_dir(&gen).output().map_err(|e| e.to_string())?;
     if !o2.status.success() { return Err(format!("tools/recipe-gen.py: {}", String::from_utf8_lossy(&o2.stderr))); }
     io(std::fs::write(gen.join("recipe.gen.c"), &o2.stdout), &gen)?;
     let mut gen_items = Vec::new();
@@ -654,7 +740,7 @@ pub fn build(root: &Path, o: &Opts) -> R<()> {
     let wasms: Vec<PathBuf> = lifts.iter().map(|l| link_module(l)).collect::<R<_>>()?;
     let wasm = wasms[main_lift].clone();
 
-    // 5. the image; with [shaders], written twice: once to run it and collect the shaders it compiles, then with them
+    // 5. the image; with [warmup], written twice: once to run it and collect the shaders it compiles, then with them
     let write = |extra: Option<&Tree>| -> R<String> {
     let tmp_out = tmp_name(&out);
     let lay = Layout::create(&tmp_out)?;
@@ -666,10 +752,7 @@ pub fn build(root: &Path, o: &Opts) -> R<()> {
         placeholders(&mut tree, &base, &cen.dlls_of(l), &format!("library {l} of {}", base.reference()));
         layers.push(lay.put(LAYER, &tree.tar(), &[(ROLE, "library"), (TITLE, &format!("{}/{l}", base.reference()))])?);
     }
-    let mut game = Tree::default();
-    for d in &ex.dirs { if !d.is_empty() { game.dir(d); } }
-    for (g, h) in &ex.files { game.file(g, io(std::fs::read(h), h)?); }
-    layers.push(lay.put(LAYER, &game.tar(), &[(ROLE, "game"), (TITLE, &r.name), (LOCAL, "true")])?);
+    layers.push(lay.put(LAYER, &game.tar(), &[(ROLE, "app"), (TITLE, &r.name), (LOCAL, "true")])?);
     if let Some(t) = extra { layers.push(lay.put(LAYER, &t.tar(), &[(ROLE, "shaders"), (TITLE, &format!("{} shaders", r.name)), (LOCAL, "true")])?); }
     let module = lay.put(MODULE, &io(std::fs::read(&wasm), &wasm)?, &[(ROLE, "module"), (TITLE, "title.wasm"), (LOCAL, "true")])?;
     // a Linux title's other programs: a module each (the first module above is the one its first process starts in)
@@ -690,7 +773,10 @@ pub fn build(root: &Path, o: &Opts) -> R<()> {
     let program_map: BTreeMap<String, String> = if base.os == "linux" { lift_of.iter().map(|(g, k)| (format!("/{g}"), digest_of[k].clone())).collect() } else { BTreeMap::new() };
     let registry = recipe::merge_registry(&base.registry, &r.registry);
     let config = json!({
-        "architecture": base.architecture, "os": base.os, "base": base.reference(), "title": r.name,
+        "schema": 1, "name": r.name, "platform": r.platform, "abi": oci::ABI,
+        "about": { "display_name": r.display_name, "version": r.version, "revision": r.revision },
+        "architecture": base.architecture, "os": base.os, "base": base.reference(),
+        "tree": { "digest": format!("sha256:{tree}"), "files": tree_files },
         "run": { "exe": r.exe, "display": r.display, "args": r.args, "initrd": r.initrd, "cmdline": r.cmdline },
         "guest": { "bits": lifted.bits, "image": [format!("0x{:x}", lifted.low), format!("0x{:x}", lifted.high)] },
         "cpu": { "features": features },
@@ -702,7 +788,7 @@ pub fn build(root: &Path, o: &Opts) -> R<()> {
         "programs": if program_map.is_empty() { serde_json::Value::Null } else { json!(program_map) },
         "side": if side_map.is_empty() { serde_json::Value::Null } else { json!(side_map) },
         "source": { "sha256": sha, "extract": r.source.extract, "added": ex.added },
-        "build": { "lift": lifted.key, "lifter": t.lifter_hash, "clang": t.clang_version, "opt": r.opt, "runtime_opt": base.opt,
+        "build": { "lift": lifted.key, "lifter": t.lifter_hash, "clang": t.clang_version, "opt": r.opt, "runtime_opt": base.opt, "tools": tool_versions(&r),
             "programs": if user_lifts.is_empty() { serde_json::Value::Null } else { json!(user_lifts.iter().map(|(n, l)| (n.clone(), l.key.clone())).collect::<BTreeMap<_, _>>()) } },
     });
     let cfg = lay.put_json(oci::CONFIG, &config, &[])?;
@@ -734,7 +820,7 @@ pub fn build(root: &Path, o: &Opts) -> R<()> {
     Ok(())
 }
 
-/// [shaders]: the image run once in Node (SW_HLSL_CAPTURE: D3DCompile logs each source it has no shader for and
+/// [warmup]: the image run once in Node (SW_HLSL_CAPTURE: D3DCompile logs each source it has no shader for and
 /// answers with a placeholder; SW_EXIT_FRAMES: the run ends after that many presents), the logged sources compiled
 /// by tools/hlsl-prep.mjs (dxc, then tools/shader-prep.mjs: dxil2spv and naga) into <cache>/shaders/<key>, once per
 /// image and session; returned as a layer: the files under the title's folder, `shaders/`
@@ -756,11 +842,11 @@ fn shaders_layer(root: &Path, r: &Recipe, sh: &recipe::Shaders, image: &Path, im
         let log = tmp.join("capture.log");
         io(std::fs::write(&log, [&o.stdout[..], &o.stderr[..]].concat()), &log)?;
         let sources = String::from_utf8_lossy(&std::fs::read(&log).unwrap_or_default()).matches("d3dcompile-source ").count();
-        if !o.status.success() && sources == 0 { return Err(format!("[shaders]: the run ended with {} and compiled nothing: see {}", o.status, log.display())); }
+        if !o.status.success() && sources == 0 { return Err(format!("[warmup]: the run ended with {} and compiled nothing: see {}", o.status, log.display())); }
         let title = tmp.join("title");
         let o = Command::new("node").arg(root.join("tools/hlsl-prep.mjs")).arg(&log).arg("--title").arg(&title).output().map_err(|e| format!("node: {e}"))?;
         io(std::fs::write(tmp.join("prep.log"), [&o.stdout[..], &o.stderr[..]].concat()), &tmp)?;
-        if !o.status.success() { return Err(format!("[shaders]: tools/hlsl-prep.mjs failed: see {}", tmp.join("prep.log").display())); }
+        if !o.status.success() { return Err(format!("[warmup]: tools/hlsl-prep.mjs failed: see {}", tmp.join("prep.log").display())); }
         publish(&tmp, &dir)?;
         say(&format!("shaders: {sources} sources compiled and translated ({:.1} s)", t.elapsed().as_secs_f64()));
     }
