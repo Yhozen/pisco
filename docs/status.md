@@ -211,7 +211,7 @@ loads itself and Miles Sound System 6.1c beside it ([mohaa.md](mohaa.md)). What 
 | M1 | lift and start in Node | **done** (2026-11-27): strict, on the virtual clock, the engine plays its logos and reaches the menu (2,649 frames, 48,715 draws, no record the null back end finds inconsistent); its console log is Wine's but for what the machines are (CPU, renderer, pixel formats, sound) |
 | M2 | OpenGL's pixels in Chrome | **done** (2026-11-27): the menu within 0.4 of 255 of Wine's screenshot on average, the menus and the briefing within 0.1 |
 | M3 | Sound: Miles on DirectSound | **done** (2026-11-27): the level session's sound within 0.3 dB of Wine's recording on average, the same course (correlation 0.93) |
-| M4 | Played by hand | [mohaa.md](mohaa.md#the-plan) |
+| M4 | Played by hand | under way: how to play it is in [mohaa.md](mohaa.md#play-it); by hand on a real GPU still to do |
 
 ## Linux x64
 

@@ -585,6 +585,28 @@ described. Now each pull request adds its entry as a file in `changelog/` (the i
 of them), and on `main` `.github/workflows/changelog.yml` draws the page again with `tools/changelog.mjs` and publishes
 the draft release that holds the entry's video. The eleven entries written by hand became the first eleven files.
 
+### 3.29 Medal of Honor: Allied Assault's demo: OpenGL, and Miles (2026-11-27)
+
+The demo of Medal of Honor: Allied Assault, on Ritual's version of the Quake III engine, is the first OpenGL title
+and the first whose game code is DLLs the engine loads itself ([mohaa.md](mohaa.md)). It came as a zip around a Wise
+installer around an InstallShield 6 setup; `pisco build` now reads both formats without running either. Under Wine it
+ran on Mesa's llvmpipe once Mesa's extension list was cut to 2001's: the engine copies it into a 4 KiB buffer. What the
+comparison found:
+
+- **MMX had been lifted as SSE**: an MMX instruction the lifter recognised was emitted on `xmm0`-`xmm7`, silently.
+  The engine's memory fill needs MMX whatever the processor says, so MMX got registers of its own, and a fixture
+  written in assembly (a compiler of today makes SSE2 of MMX's intrinsics).
+- **wsock32 is not ws2_32 by number**: three ordinals differ, and the engine's `ioctlsocket(FIONBIO)` had been an
+  `inet_addr`, which left its socket blocking.
+- **The engine reads the mouse buttons from the messages' `MK_*` bits**, and Narbacular Drop's menu, once window
+  messages arrived at all, followed them: a mouse DirectInput holds exclusively gets none, on Windows and now here.
+- **OpenGL viewports may reach past the window**; WebGPU's may not. The menu's room was drawn squeezed until the
+  vertex stage learnt to keep OpenGL's mapping for the part inside.
+- **A triangle turns the same way on the screen in every API**: the front face had been turned over, and nothing in
+  the menus (culling off) showed it; the level's ground and crates were missing.
+- **Configure.exe**, which the first start runs and which writes the settings for the machine it finds, is not run:
+  the recipe gives the files it wrote under Wine, and the oracle starts every run from that state.
+
 ## 4. Roadblocks
 
 ### Resolved

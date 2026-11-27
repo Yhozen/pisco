@@ -196,3 +196,5 @@ tools/oracle-wine/mohaa-play.sh recipes/mohaa/sessions/menu.json menu1      # th
 - **M3** (2026-11-27): Miles opens DirectSound and reports what it reports under Wine (Miles Fast 2D Positional Audio,
   2 speakers, 16 bits, 44,100 Hz). Over the `level` session the sound is -22.2 dB on average against Wine's -22.5 dB,
   the loudness of the two runs follows the same course (correlation 0.93) and is 0.0 dB apart where both sound.
+- **M4** (under way): how to play it (above), the README, the journey, the progress map and the changelog. Still
+  to do: playing it by hand on a real GPU.

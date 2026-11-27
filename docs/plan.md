@@ -75,6 +75,6 @@ A new runtime is a new folder and a new base; a new title of an existing runtime
 | M1 | the demo lifted and started in Node: MMX in the lifter, DLLs loaded on demand, input as window messages, OpenGL 1.1 on the GPU ring; strict, from the logos to the menu and into the level, its console log Wine's | done ([mohaa.md](mohaa.md#progress)) |
 | M2 | MOHAA's demo in Chrome: OpenGL's viewports past the window, one more function found; the menus and the briefing within 0.4 of 255 of Wine's | done ([mohaa.md](mohaa.md#progress)) |
 | M3 | MOHAA's sound: DirectSound for Miles, a Pentium III; the level's sound within 0.3 dB of Wine's | done ([mohaa.md](mohaa.md#progress)) |
-| M4 | MOHAA's demo played by hand on a real GPU | to do ([mohaa.md](mohaa.md#the-plan)) |
+| M4 | MOHAA's demo playable by hand: the docs and how to play it are done; playing it by hand on a real GPU is still to do | under way ([mohaa.md](mohaa.md#play-it)) |
 | B0 | experimental, optional: development on boat.dev sandboxes (a snapshot with everything built, the tests on several sandboxes at once); cowsay ported that way | done ([dev-machines.md](dev-machines.md)) |
 | B1 | the changelog on GitHub Pages drawn from `changelog/*.md` by a workflow on `main`, video releases published by it | done ([changelog/README.md](../changelog/README.md)) |

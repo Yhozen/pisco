@@ -10,7 +10,7 @@
 set -uo pipefail
 root=$(cd "$(dirname "$0")/../.." && pwd); cd "$root"
 zip=${MOHAA_ZIP:-$HOME/games/mohaaspdemo.zip}; img=out/img-mohaa; oracle=${ORACLE:-out/oracle/mohaa/menu1}
-target/release/pisco build recipes/mohaa --source "$zip" --out $img > out/mohaa.build.log 2>&1 || { echo "the build failed:"; tail -3 out/mohaa.build.log; exit 1; }
+target/release/pisco build recipes/mohaa --source "$zip" --out $img --cache out/pc-mohaa > out/mohaa.build.log 2>&1 || { echo "the build failed:"; tail -3 out/mohaa.build.log; exit 1; }
 for session in menu level; do
   saves=out/mohaa-saves-$session; rm -rf $saves; oracle=${ORACLE:-out/oracle/mohaa}/${session}1
   start=$(date +%s)
