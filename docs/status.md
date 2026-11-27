@@ -10,7 +10,7 @@ titles, its own next steps and its own goal:
 | [Windows x86](#windows-x86) | Narbacular Drop, playable; Tag: The Power of Paint into its second level | Tag played by hand on a real GPU, then its later levels | 32-bit Direct3D 9 games of the 2000s |
 | [Linux x64](#linux-x64) | fastfetch 2.71.0; neofetch 7.1.0 (bash, busybox); cowsay 3.8.4 (perl) | threads, signals, writes | statically linked command-line programs |
 | [PS5](ps5.md) | the raymarching tech demo (CPU-drawn, AVX2): its three scenes, pad and music in the browser | more system functions, a GPU (AGC) title | PS5 homebrew |
-| [Microvm x64](#microvm-x64) | our own test kernel (paging, faults, the timer, tasks, ring 3), equal to QEMU; Linux 6.18 built and read by the lifter | Linux 6.18 booted to `/init` (K2) | Linux itself, lifted, and its programs |
+| [Microvm x64](#microvm-x64) | Linux 6.18 lifted, booted to `/init` in Node (0.9 s); our own test kernel, equal to QEMU | busybox lifted with it: `/init`'s programs (K3) | Linux itself, lifted, and its programs |
 
 ## Shared: the recompiler, the core runtime, the packages
 
@@ -260,8 +260,11 @@ reasoning and the measurements: [research/kernel-as-a-title.md](research/kernel-
   and a host stack per kernel task (JSPI). `fixtures/microvm-hello`, our own test kernel, prints what QEMU prints,
   in Node and headless Chrome (`tests/run.sh microvm`, a default step). With the machine mode the lifter leaves 56
   of Linux's 602,001 instructions.
-- **Next, K2**: Linux booted to `/init`: its alternatives and static calls, `fxsave` / `xsave`, the IOAPIC and the
-  serial port's interrupt.
+- **K2, done**: Linux 6.18 lifted (a 42 MB module) boots on the machine in Node to `Run /init as init process`, in
+  0.9 s, the same on every run (`tests/run.sh kernel`, `recipes/linux/traces/boot.txt`). It took the kernel's
+  runtime constants read from memory, its static-call trampolines decoded as it rewrites them, labels where its
+  `int3` self-test returns, the boot protocol, an MP table, the IOAPIC and a CMOS clock.
+- **Next, K3**: busybox lifted with the kernel, so that `/init` runs.
 
 ## Known limits
 

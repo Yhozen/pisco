@@ -124,7 +124,7 @@ void rt_wrmsr(Cpu *c, u64 ip) {
   case 0x6E0: apic_tsc_deadline(v); break;
   case 0x277: mc.pat = v; break;
   case 0x1A0: mc.misc_enable = v; break;
-  case 0x10: break;   // the TSC itself: the virtual clock does not move back
+  case 0x10: case 0x8B: break;   // the TSC itself (the virtual clock does not move back); the microcode's revision
   default: unknown_msr("a write", n, ip);
   }
 }
@@ -145,6 +145,7 @@ void rt_rdmsr(Cpu *c, u64 ip) {
   case 0x277: v = mc.pat; break;
   case 0x1A0: v = mc.misc_enable; break;
   case 0x10: v = rt_rdtsc(); break;
+  case 0x8B: v = 0xFFFFFFFF00000000ull; break;   // the microcode's revision: newer than any erratum asks
   default: unknown_msr("a read", n, ip);
   }
   R[RAX] = (u32)v; R[RDX] = (u32)(v >> 32);

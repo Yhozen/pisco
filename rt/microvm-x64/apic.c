@@ -49,6 +49,39 @@ u64 apic_next_deadline(void) { return timer_deadline; }
 void apic_tsc_deadline(u64 v) { tsc_deadline = v; if (((lvt_timer >> 17) & 3) == 2) timer_deadline = v ? v : ~0ull; }
 u64 apic_tsc_deadline_get(void) { return tsc_deadline; }
 
+// ---- the IOAPIC at 0xfec00000: 24 pins, each a vector for the local APIC (edge or level, masked or not) ----
+static u32 io_sel, io_id; static u64 redir[24]; static u8 line[24];
+static void io_try(int pin) {
+  u64 e = redir[pin];
+  if ((e & 0x10000) || !line[pin]) return;                    // masked, or the line is low
+  if (e & 0x8000) { if (e & 0x4000) return; redir[pin] |= 0x4000; }   // level: once until EOI (remote IRR)
+  raise_((int)(e & 0xFF)); mc_budget = 0;
+}
+void ioapic_line(int pin, int level) {
+  int was = line[pin]; line[pin] = (u8)level;
+  if (level && (!was || (redir[pin] & 0x8000))) io_try(pin);
+}
+static void io_eoi(int vector) {
+  for (int p = 0; p < 24; p++) if ((redir[p] & 0x8000) && (redir[p] & 0x4000) && (int)(redir[p] & 0xFF) == vector) { redir[p] &= ~0x4000ull; io_try(p); }
+}
+u32 ioapic_read(u32 off) {
+  if (off == 0) return io_sel;
+  if (off != 0x10) return 0;
+  if (io_sel == 0) return io_id; if (io_sel == 1) return 0x00170011; if (io_sel == 2) return 0;
+  if (io_sel >= 0x10 && io_sel < 0x10 + 48) { u64 e = redir[(io_sel - 0x10) / 2]; return (io_sel & 1) ? (u32)(e >> 32) : (u32)e; }
+  return 0;
+}
+void ioapic_write(u32 off, u32 v) {
+  if (off == 0) { io_sel = v & 0xFF; return; }
+  if (off != 0x10) return;
+  if (io_sel == 0) { io_id = v & 0x0F000000; return; }
+  if (io_sel >= 0x10 && io_sel < 0x10 + 48) {
+    int p = (int)(io_sel - 0x10) / 2;
+    if (io_sel & 1) redir[p] = (redir[p] & 0xFFFFFFFFull) | (u64)v << 32;
+    else { redir[p] = (redir[p] & ~0xFFFFFFFFull) | (v & ~0x5000u) | (redir[p] & 0x5000); io_try(p); }
+  }
+}
+
 u32 apic_read(u32 r) {
   switch (r) {
   case 0x20: return 0;                // ID
@@ -72,7 +105,7 @@ u32 apic_read(u32 r) {
 void apic_write(u32 r, u32 v) {
   switch (r) {
   case 0x80: tpr = v & 0xFF; mc_budget = 0; break;
-  case 0xB0: { int s = highest(isr); if (s >= 0) isr[s >> 5] &= ~(1u << (s & 31)); mc_budget = 0; break; }   // EOI
+  case 0xB0: { int s = highest(isr); if (s >= 0) { isr[s >> 5] &= ~(1u << (s & 31)); io_eoi(s); } mc_budget = 0; break; }   // EOI
   case 0xD0: ldr = v; break; case 0xE0: dfr = v; break;
   case 0xF0: svr = v; break;
   case 0x280: esr = 0; break;
@@ -119,6 +152,7 @@ void rt_cpuid(Cpu *c) {
     d = 1u << 0 | 1u << 4 | 1u << 5 | 1u << 6 | 1u << 8 | 1u << 9 | 1u << 11 | 1u << 13 | 1u << 15 | 1u << 16 | 1u << 19 | 1u << 23 | 1u << 24 | 1u << 25 | 1u << 26;
     break;   // FPU TSC MSR PAE CX8 APIC SEP PGE CMOV PAT CLFLUSH MMX FXSR SSE SSE2
   case 6: a = 1u << 2; break;   // ARAT: the APIC timer runs while the CPU halts
+  case 7: if (sub == 0) d = 1u << 14; break;   // SERIALIZE (so that sync_core() needs no iretq to itself)
   case 0x15: a = 1; b = 1; cx = 1000000000; break;   // the TSC: 1 GHz, from a 1 GHz crystal
   case 0x16: a = 1000; b = 1000; cx = 1000; break;   // MHz
   case 0x80000000: a = 0x80000008; break;
@@ -130,6 +164,5 @@ void rt_cpuid(Cpu *c) {
   case 0x80000007: d = 1u << 8; break;   // the TSC never changes rate
   case 0x80000008: a = 0x3028; break;    // 40 physical, 48 virtual address bits
   }
-  (void)sub;
   R[RAX] = a; R[RBX] = b; R[RCX] = cx; R[RDX] = d;
 }

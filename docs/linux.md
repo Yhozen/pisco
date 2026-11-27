@@ -6,10 +6,11 @@ x86-64 machine (`rt/microvm-x64`, `base/microvm-x64`). The Linux x64 runtime ([f
 kernel one system call at a time; here `fork`, signals, pipes and files are the kernel's own work. Why this route,
 what was measured before taking it and how the machine is designed: [research/kernel-as-a-title.md](research/kernel-as-a-title.md).
 
-**So far (K1) the machine runs our own test kernel, not Linux yet.** Linux is built, the lifter reads it (56 of its
-602,001 instructions are not lifted yet), and QEMU boots it as the reference: its programs print the 15 lines the
-lifted kernel will have to print. The machine itself is checked on `fixtures/microvm-hello`, a kernel of about 300
-lines that does what Linux will ask of it, and prints what QEMU prints.
+**So far (K2) Linux boots lifted, to its first program.** In Node, in 0.9 s, the kernel prints its boot log and
+`Run /init as init process`, the same on every run; then it stops, because `/init`'s program, busybox, is not
+lifted yet (K3). QEMU boots the same kernel as the reference: its programs print the 15 lines the lifted kernel
+will have to print. The machine was first checked on `fixtures/microvm-hello`, a kernel of about 300 lines that
+does what Linux asks of it, and prints what QEMU prints.
 
 ## The files
 
@@ -64,6 +65,8 @@ tools/build-linux.sh                                      # out/linux: vmlinux, 
 tools/oracle-qemu/oracle.sh run linux                     # QEMU: the boot log, then what /init's programs print
 tools/oracle-qemu/oracle.sh programs linux                # only the programs' lines of that run
 tools/census.sh out/linux/vmlinux                         # what the lifter does not lift yet (it knows a kernel)
+tools/build-title.sh out/linux/vmlinux out/linux/wasm     # Linux lifted (a 42 MB module; six minutes the first time)
+(cd out/linux && SW_INITRD=initramfs.cpio SW_CMDLINE="$(cat ../../recipes/linux/cmdline)" node ../../web/run-node.mjs wasm/title.wasm vmlinux)
 fixtures/microvm-hello/build.sh out/microvm-hello         # the machine's test kernel
 tools/build-title.sh out/microvm-hello/hello out/microvm-hello/wasm      # lifted (base/microvm-x64, from OS=microvm)
 node web/run-node.mjs out/microvm-hello/wasm/title.wasm out/microvm-hello/hello   # its serial port, in Node
@@ -71,9 +74,10 @@ node tools/run-chrome.mjs out/microvm-hello/wasm/title.wasm out/microvm-hello/he
 target/release/lifter out/linux/vmlinux out/linux/census/title.c --split 16 --machine   # the same, by hand
 ```
 
-`tests/run.sh kernel` does the last four: the lifter must read `vmlinux`, and on QEMU the programs must print
-`recipes/linux/traces/programs.txt`, also on a machine without HPET, PIT and 8259 (`KERNEL_RECORD=1` records the
-file again). It is skipped until `out/linux` is built, and says so when QEMU is missing. `tests/run.sh microvm` (a
+`tests/run.sh kernel` checks the kernel: the lifter must read `vmlinux`; on QEMU the programs must print
+`recipes/linux/traces/programs.txt`, also on a machine without HPET, PIT and 8259; and lifted, in Node, its boot
+must reach `/init`, twice the same, equal to `recipes/linux/traces/boot.txt` (`KERNEL_RECORD=1` records both
+again). It is skipped until `out/linux` is built, and says so when QEMU is missing. `tests/run.sh microvm` (a
 default step, in CI) builds and runs the test kernel: it must print `fixtures/microvm-hello/expected.txt`, what QEMU
 prints, and does under QEMU too when QEMU is there; `tests/run.sh chrome` runs it in the page.
 
@@ -116,11 +120,33 @@ prints, and does under QEMU too when QEMU is there; `tests/run.sh chrome` runs i
 - **Linux's census with the machine mode**: 602,001 instructions, 56 not lifted (`xsave` and `fxsave` forms,
   `cmpxchg16b`, `lkgs`, a few AVX-512 and AMX ones, string I/O).
 
+## What it took (K2)
+
+The lifted kernel (11,612 functions, 636,773 instructions; a 42 MB module, compiled in under six minutes on four
+cores) printed most of its boot on the first run. What it needed after that:
+
+| Stop | What the kernel did | What changed |
+|---|---|---|
+| `error_entry` came back on another stack | it saves the registers above its own return address, on purpose | a call may come back on a moved stack through its own return address; only another address is a missed switch |
+| the CPU went on at `int3_selftest_asm`+5 | the boot's `int3` self-test emulates a 5-byte call at the `int3` | a label after each `int3`, and 5 bytes on |
+| an address `0x0123456789abcdef`-based | the dentry hash's address and shift and `USER_PTR_MAX` are runtime constants, patched into the code at boot | the lifter reads `runtime_ptr_*` and `runtime_shift_*`; those immediates are read from memory |
+
+Done before the first run, from the kernel's source: the static-call trampolines (`__SCT__*`) decode the jump the
+kernel has written into them; the exception table's fix-ups and the entry stubs at computed addresses
+(`early_idt_handler_array`, `irq_entries_start`) are functions; CPUID reports SERIALIZE, so `sync_core()` needs
+no `iretq` to itself; `fxsave`, `fxrstor` and `cmpxchg16b`; the boot protocol (the zero page with its memory map,
+the command line, the initramfs at the top of RAM), an MP table with the IOAPIC, the IOAPIC, the 16550's
+interrupt, a CMOS clock on the virtual clock's date, and the microcode revision MSR (high, so the TSC-deadline
+timer is not turned off for an erratum). The alternatives were left as the file has them: the code before patching
+is correct on any CPU, and the boot showed nothing that needed more.
+
+`recipes/linux/traces/boot.txt` is the boot up to `/init`. It differs from QEMU's where the machines differ: the
+CPU's name and features, the TSC at 1 GHz, the MSRs the machine leaves at 0 (it says which, on its standard error).
+
 ## Limits
 
-- Linux does not run under PISCO yet: K2 boots it. What it will need first: its alternatives and static calls
-  (the code it rewrites), `fxsave` and `xsave`, the IOAPIC, the serial port's interrupt, model-specific registers
-  it reads through an exception-table fix-up (an unknown one reads as 0 here, where a CPU raises #GP).
+- No program runs yet: busybox is not lifted with the kernel (K3). Model-specific registers the machine does not
+  know read as 0 where a CPU raises #GP, which some of the kernel's `rdmsr_safe` callers would want.
 - No input yet: the serial port only prints.
 - A store that faults between its read and its write (an add to memory whose page must be copied) reads again after
   the fault; with one CPU and no other task in between, the same.
@@ -135,6 +161,6 @@ prints, and does under QEMU too when QEMU is there; `tests/run.sh chrome` runs i
 |---|---|---|
 | K0 | the kernel built from a pinned source with our configuration; the lifter reads it and counts what it does not lift; QEMU as the oracle, `/init`'s programs recorded; stacks, memory and hardware measured | done |
 | K1 | the machine (`rt/microvm-x64`) on a test kernel of our own: paging, a fault fixed up, the timer, two tasks, a ring-3 task, the serial port, equal under QEMU and PISCO, in Node and Chrome | done |
-| K2 | this kernel lifted: its boot log up to `Run /init as init process` | next |
-| K3 | busybox lifted: `/init`'s programs print `recipes/linux/traces/programs.txt` | |
+| K2 | this kernel lifted: its boot log up to `Run /init as init process`, in Node, the same on every run | done |
+| K3 | busybox lifted: `/init`'s programs print `recipes/linux/traces/programs.txt` | next |
 | K4 | a console typed into, in Node and in the page; `pisco build recipes/linux` | |

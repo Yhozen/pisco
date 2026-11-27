@@ -640,6 +640,16 @@ the stack it comes back on.
 
 The same file runs in headless Chrome; each kernel task is a wasm stack there too.
 
+### 3.32 Linux boots, lifted (2026-11-27)
+
+Linux 6.18, all 636,773 instructions of it, became one 42 MB module in under six minutes, and its first run on the
+machine printed 90 lines of its boot before it stopped. Three more stops, each a thing the kernel does to itself:
+`error_entry` returns on a stack it moved on purpose; the boot's `int3` self-test returns to the byte after a
+pretend 5-byte call; and the dentry cache's hash table is a runtime constant, an address the kernel writes into its
+own instructions at boot, where lifted code still held the placeholder `0x0123456789abcdef`. With those, the kernel
+unpacks its initramfs, finds the 16550, write-protects its own read-only data and prints `Run /init as init
+process`: 0.9 s in Node, the same 116 lines every run. What it runs next is busybox, which is not lifted yet.
+
 ## 4. Roadblocks
 
 ### Resolved

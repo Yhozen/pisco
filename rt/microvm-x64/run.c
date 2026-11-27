@@ -12,6 +12,7 @@
 #include "machine.h"
 
 HOST("co_switch") void host_co_switch(int from, int to, int start);   // suspends `from`; resumes `to` or starts it
+HOST("stat") s64 host_stat(const char *name, u32 len);                 // a file's size, -1 missing
 
 // the C stack pointer (a wasm global), and the entry of a new host stack: its C stack set before any C runs
 __asm__(
@@ -25,11 +26,22 @@ __asm__(
 u32 rt_sp_get(void); void rt_sp_set(u32);
 
 void rt_call(Cpu *c, u64 t) { rt_dispatch(c, t); }
-// a lifted call came back with another stack pointer than it was made with: the guest switched stacks in a way
-// the machine did not see (only __switch_to_asm's is a task switch), and the host's frames no longer match it
-void rt_bad_return(Cpu *c, u64 call, u64 sp) {
+// a static-call trampoline (Linux's __SCT__*), as the kernel has rewritten it: a jump to the function the call goes
+// to now (the call's return address is the caller's), or a return (no function)
+void rt_static_call(Cpu *c, u64 tramp) {
+  u8 b[5]; vread(tramp, b, 5);
+  if (b[0] == 0xE9) { s32 rel; memcpy(&rel, b + 1, 4); rt_dispatch(c, tramp + 5 + (u64)(s64)rel); return; }
+  if (b[0] == 0xC3) { R[RSP] += 8; return; }
+  uart_flush(); rt_fatal("machine: the static-call trampoline at 0x%llx holds %02x %02x %02x %02x %02x", tramp, b[0], b[1], b[2], b[3], b[4]);
+}
+// a lifted call came back with another stack pointer than it was made with. Fine when the address it returned
+// through (just below the stack) is this call's own: the callee moved the stack on purpose (Linux's error_entry
+// leaves the registers it saved there). Else the guest switched stacks in a way the machine did not see (only
+// __switch_to_asm's is a task switch), and the host's frames no longer match it
+void rt_check_return(Cpu *c, u64 call, u64 next, u64 sp) {
+  if (vread64(R[RSP] - 8) == next) return;
   uart_flush();
-  rt_fatal("machine: the call at 0x%llx came back with the stack at 0x%llx, not 0x%llx (a stack switch the machine does not know)", call, R[RSP], sp);
+  rt_fatal("machine: the call at 0x%llx came back with the stack at 0x%llx, not 0x%llx, from 0x%llx (a stack switch the machine does not know)", call, R[RSP], sp, vread64(R[RSP] - 8));
 }
 
 // ---- entering lifted code by address: a function's start, or a return address in one (c->resume) ----
@@ -86,6 +98,53 @@ void rt_switch(Cpu *c, u64 rsp, u64 next) {
 }
 
 // ---- the start ----
+// ---- what a boot loader hands the kernel (Linux's 64-bit boot protocol): the boot parameters ("zero page") with
+// the memory map, the command line and the initramfs; an MP table with the CPU, the IOAPIC and the ISA interrupts ----
+enum { ZERO_PAGE = 0x7000, CMDLINE = 0x20000, MPTABLE = 0x9FC00 };
+static void put8(u64 pa, u8 v) { ram[pa] = v; }
+static void put16(u64 pa, u16 v) { memcpy(ram + pa, &v, 2); }
+static void put32(u64 pa, u32 v) { memcpy(ram + pa, &v, 4); }
+static void put64(u64 pa, u64 v) { memcpy(ram + pa, &v, 8); }
+static u8 sum(u64 pa, unsigned n) { u8 s = 0; for (unsigned i = 0; i < n; i++) s += ram[pa + i]; return s; }
+static void mptable(void) {
+  u64 fp = MPTABLE, t = MPTABLE + 16, e = t + 44; unsigned count = 0;
+  #define ENTRY(...) do { u8 b_[] = { __VA_ARGS__ }; memcpy(ram + e, b_, sizeof b_); e += sizeof b_; count++; } while (0)
+  ENTRY(0, 0, 0x14, 3, 0x00, 0x06, 0, 0, 0x01, 0x02, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);   // the CPU: local APIC 0, enabled, the boot CPU
+  ENTRY(1, 0, 'I', 'S', 'A', ' ', ' ', ' ');                                          // bus 0: ISA
+  ENTRY(2, 1, 0x11, 1, 0x00, 0x00, 0xC0, 0xFE);                                       // IOAPIC 1 at 0xfec00000
+  for (u8 irq = 0; irq < 16; irq++) ENTRY(3, 0, 0, 0, 0, irq, 1, irq);                // ISA interrupt n on pin n
+  ENTRY(4, 3, 0, 0, 0, 0, 0xFF, 0);                                                   // LINT0: ExtINT
+  ENTRY(4, 1, 0, 0, 0, 0, 0xFF, 1);                                                   // LINT1: NMI
+  #undef ENTRY
+  memcpy(ram + t, "PCMP", 4); put16(t + 4, (u16)(e - t)); put8(t + 6, 4); memcpy(ram + t + 8, "PISCO   ", 8); memcpy(ram + t + 16, "microvm-x64 ", 12);
+  put16(t + 34, (u16)count); put32(t + 36, 0xFEE00000); put8(t + 7, (u8)-sum(t, (unsigned)(e - t)));
+  memcpy(ram + fp, "_MP_", 4); put32(fp + 4, (u32)t); put8(fp + 8, 1); put8(fp + 9, 4); put8(fp + 10, (u8)-sum(fp, 16));
+}
+static void boot_params(void) {
+  u64 z = ZERO_PAGE;
+  const char *line = getenv("SW_CMDLINE");
+  if (!line) line = "console=ttyS0,115200 earlyprintk=serial,ttyS0,115200 panic=-1 no_timer_check vdso=0 tsc=reliable 8250.nr_uarts=1";
+  size_t n = strlen(line); if (n > 4095) n = 4095;
+  memcpy(ram + CMDLINE, line, n); ram[CMDLINE + n] = 0;
+  put16(z + 0x1FE, 0xAA55); put32(z + 0x202, 0x53726448); put16(z + 0x206, 0x020F);   // the setup header: "HdrS", 2.15
+  put8(z + 0x210, 0xFF); put8(z + 0x211, 0x01); put32(z + 0x228, CMDLINE); put32(z + 0x238, 4095);
+  put32(z + 0x22C, 0x7FFFFFFF); put32(z + 0x230, 0x200000);
+  // the memory map: low memory but the MP table, then everything from 1 MiB
+  struct { u64 a, n; u32 type; } map[] = { { 0, MPTABLE, 1 }, { MPTABLE, 0x100000 - MPTABLE, 2 }, { 0x100000, ram_size - 0x100000, 1 } };
+  for (unsigned i = 0; i < 3; i++) { u64 at = z + 0x2D0 + 20 * i; put64(at, map[i].a); put64(at + 8, map[i].n); put32(at + 16, map[i].type); }
+  put8(z + 0x1E8, 3);
+  // the initramfs (SW_INITRD, a file beside the kernel), at the top of RAM
+  const char *rd = getenv("SW_INITRD");
+  if (rd && *rd) {
+    s64 size = host_stat(rd, (u32)strlen(rd));
+    if (size <= 0) rt_fatal("machine: no initramfs %s", rd);
+    u64 at = (ram_size - (u64)size) & ~0xFFFFFull;
+    if (host_read_file(rd, (u32)strlen(rd), 0, (u64)size, (u64)(uptr)(ram + at)) != (u64)size) rt_fatal("machine: cannot read %s", rd);
+    put32(z + 0x218, (u32)at); put32(z + 0x21C, (u32)size);
+  }
+  mptable();
+}
+
 static void load(const char *name) {
   u8 h[64];
   if (host_read_file(name, (u32)strlen(name), 0, 64, (u64)(uptr)h) != 64 || memcmp(h, "\x7f" "ELF\x02\x01", 6)) rt_fatal("machine: %s is no 64-bit ELF", name);
@@ -115,7 +174,9 @@ int main(void) {
   mc.cr0 = 0x80050033; mc.cr4 = 0x20; mc.efer = 0xD01; mc.cpl = 0; mc.seg[S_CS] = 0x08; mc.seg[S_SS] = mc.seg[S_DS] = mc.seg[S_ES] = 0x10;
   mc.apic_base = 0xFEE00900; mc.pat = 0x0007040600070406ull;
   load(rt_modules[0].name);
+  boot_params();
   Cpu *c = &cpu; c->mxcsr = 0x1F80; c->fcw = 0x037F;
+  R[15] = ZERO_PAGE;   // where Linux's common_startup_64 finds the boot parameters (physical)
   Co *boot = co_new(); boot->started = 1; co_cur = boot;
   boot->root_pc = rt_machine_entry;
   root_loop(c, boot);

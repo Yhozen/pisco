@@ -183,7 +183,8 @@ void rt_invlpg(struct Cpu *c, u64 a);
 u32 rt_in(struct Cpu *c, u16 port, unsigned size);
 void rt_out(struct Cpu *c, u16 port, unsigned size, u32 v);
 void rt_switch(struct Cpu *c, u64 rsp, u64 next);
-void rt_bad_return(struct Cpu *c, u64 call, u64 sp) __attribute__((noreturn));
+void rt_check_return(struct Cpu *c, u64 call, u64 next, u64 sp);
+void rt_static_call(struct Cpu *c, u64 tramp);
 #endif
 
 static inline u8 parity(u64 v) { return !__builtin_parity((u8)v); }
@@ -451,6 +452,18 @@ static inline void fstenv(Cpu *c, u64 a) {
 static inline void fldenv(Cpu *c, u64 a) { u16 sw = M16(a + 4); c->fcw = M16(a); c->fsw = sw & ~0x3800; c->ftop = (sw >> 11) & 7; }
 static inline void fsave(Cpu *c, u64 a) { fstenv(c, a); for (int i = 0; i < 8; i++) f80_store(c, a + 28 + 10 * i, ST(i)); c->ftop = 0; c->fcw = 0x37F; c->fsw = 0; }
 static inline void frstor(Cpu *c, u64 a) { fldenv(c, a); for (int i = 0; i < 8; i++) ST(i) = f80_load(c, a + 28 + 10 * i); }
+// fxsave / fxrstor (64-bit layout): the x87 and SSE state in 512 bytes (the tag word abridged: all registers valid)
+static inline void fxsave(Cpu *c, u64 a) {
+  MW16(a, c->fcw); MW16(a + 2, fstsw(c)); MW16(a + 4, 0xFF); MW16(a + 6, 0); MW64(a + 8, 0); MW64(a + 16, 0);
+  MW32(a + 24, c->mxcsr); MW32(a + 28, 0xFFFF);
+  for (int i = 0; i < 8; i++) { f80_store(c, a + 32 + 16 * i, ST(i)); MW16(a + 42 + 16 * i, 0); MW32(a + 44 + 16 * i, 0); }
+  for (int i = 0; i < 16; i++) MWV(a + 160 + 16 * i, c->x[i]);
+}
+static inline void fxrstor(Cpu *c, u64 a) {
+  c->fcw = M16(a); u16 sw = M16(a + 2); c->fsw = sw & ~0x3800; c->ftop = (sw >> 11) & 7; c->mxcsr = M32(a + 24);
+  for (int i = 0; i < 8; i++) ST(i) = f80_load(c, a + 32 + 16 * i);
+  for (int i = 0; i < 16; i++) c->x[i] = MV(a + 160 + 16 * i);
+}
 
 // ---- more SSE, on WebAssembly SIMD where it has the same operation ----
 #include <wasm_simd128.h>

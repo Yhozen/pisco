@@ -50,6 +50,9 @@ void apic_tick(void);             // the clock moved: timers that are due raise 
 u64 apic_next_deadline(void);     // when the next timer fires (~0: none)
 void apic_tsc_deadline(u64 v); u64 apic_tsc_deadline_get(void);
 
+u32 ioapic_read(u32 off); void ioapic_write(u32 off, u32 v);
+void ioapic_line(int pin, int level);   // a device's interrupt line, high or low
+
 // ---- devices (devices.c) ----
 void uart_flush(void);
 

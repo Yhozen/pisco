@@ -43,6 +43,9 @@ struct Image {
     /// a machine's image: the symbols its runtime and the lifter look for (common_startup_64, early_top_pgt,
     /// __switch_to_asm), as (address, size)
     named: BTreeMap<String, (u64, u64)>,
+    /// a machine's image: immediates the kernel patches at boot (Linux's runtime constants: the sections
+    /// runtime_ptr_* and runtime_shift_*), by the address of the immediate; they are read from memory
+    patched: BTreeSet<u64>,
     /// an ELF: the C library's setjmp (1), sigsetjmp (2) and longjmp (3), by their symbols
     jumps: BTreeMap<u64, u8>,
     /// a PS5 title (ps5.rs): imports from the system's libraries by NID, relocations whose values the image keeps
@@ -113,7 +116,7 @@ impl Image {
         let size = u64::from(object::read::pe::ImageOptionalHeader::size_of_image(opt));
         let characteristics = pe.nt_headers().file_header().characteristics.get(LE);
         let mut img = Image { bits, base, entry, sections, text, pdata: BTreeMap::new(), unwind: BTreeMap::new(), imports: Vec::new(), relocs, raw, orig_base: base, dirs, stack_reserve,
-            fixed: characteristics & 1 != 0, size, is_dll: characteristics & 0x2000 != 0, exports: Vec::new(), ranges: vec![(base, base + size)], elf: false, seeds: Vec::new(), jumps: BTreeMap::new(), ps5: false, machine: false, named: BTreeMap::new(), reloc_values: Vec::new() };
+            fixed: characteristics & 1 != 0, size, is_dll: characteristics & 0x2000 != 0, exports: Vec::new(), ranges: vec![(base, base + size)], elf: false, seeds: Vec::new(), jumps: BTreeMap::new(), ps5: false, machine: false, named: BTreeMap::new(), patched: BTreeSet::new(), reloc_values: Vec::new() };
         if let Some(Some(table)) = pe.export_table().ok() {
             if let Ok(list) = table.exports() {
                 for e in list {
@@ -188,11 +191,12 @@ impl Image {
         let base = sections.iter().map(|s| s.0).min().ok_or("no loadable segment")? & !0xFFF;
         let size = ((sections.iter().map(|s| s.0 + s.2).max().unwrap() + 0xFFF) & !0xFFF) - base;
         let mut img = Image { bits: 64, base, entry: h.e_entry(en), sections, text, pdata: BTreeMap::new(), unwind: BTreeMap::new(), imports: Vec::new(), relocs: Vec::new(), raw, orig_base: base,
-            dirs: Vec::new(), stack_reserve: 8 << 20, fixed: true, size, is_dll: false, exports: Vec::new(), ranges: vec![(base, base + size)], elf: true, seeds: Vec::new(), jumps: BTreeMap::new(), ps5: false, machine, named: BTreeMap::new(), reloc_values: Vec::new() };
+            dirs: Vec::new(), stack_reserve: 8 << 20, fixed: true, size, is_dll: false, exports: Vec::new(), ranges: vec![(base, base + size)], elf: true, seeds: Vec::new(), jumps: BTreeMap::new(), ps5: false, machine, named: BTreeMap::new(), patched: BTreeSet::new(), reloc_values: Vec::new() };
         // symbols: functions, and the labels of hand-written assembly (no type)
         for sym in file.symbols() {
             let a = sym.address();
-            if machine && matches!(sym.name().unwrap_or(""), "common_startup_64" | "early_top_pgt" | "__switch_to_asm") {
+            if machine && (matches!(sym.name().unwrap_or(""), "common_startup_64" | "early_top_pgt" | "__switch_to_asm" | "early_idt_handler_array" | "irq_entries_start" | "spurious_entries_start")
+                || sym.name().unwrap_or("").starts_with("__SCT__")) {
                 img.named.insert(sym.name().unwrap_or("").to_string(), (a, sym.size()));
             }
             if !img.is_code(a) || !matches!(sym.kind(), SymbolKind::Text | SymbolKind::Unknown | SymbolKind::Label) { continue; }
@@ -247,6 +251,25 @@ impl Image {
                 at += 4 + len;
             }
         }
+        if machine {
+            // Linux's runtime constants: each entry the address of an immediate, relative to the entry
+            use object::{Object, ObjectSection};
+            for sec in file.sections().filter(|s| s.name().is_ok_and(|n| n.starts_with("runtime_ptr_") || n.starts_with("runtime_shift_"))) {
+                let (va, d) = (sec.address(), sec.data().map_err(|e| e.to_string())?);
+                for (k, e) in d.chunks_exact(4).enumerate() {
+                    img.patched.insert((va + 4 * k as u64).wrapping_add(i32::from_le_bytes(e.try_into().unwrap()) as i64 as u64));
+                }
+            }
+            // a kernel's exception table (Linux's __ex_table: {insn, fixup, data}, each relative to its own field): the
+            // fix-up addresses are entered by address when a fault is fixed up, so each is a function's start
+            if let Some(sec) = file.section_by_name("__ex_table") {
+                let (va, d) = (sec.address(), sec.data().map_err(|e| e.to_string())?);
+                for (k, e) in d.chunks_exact(12).enumerate() {
+                    let fixup = (va + 12 * k as u64 + 4).wrapping_add(i32::from_le_bytes(e[4..8].try_into().unwrap()) as i64 as u64);
+                    if img.is_code(fixup) { img.seeds.push(fixup); }
+                }
+            }
+        }
         img.seeds.sort();
         img.seeds.dedup();
         // a label of hand-written assembly has no size: it reaches to the next function
@@ -254,6 +277,12 @@ impl Image {
         for (a, n) in img.named.values_mut() {
             if *n == 0 { *n = seeds.iter().find(|&&s| s > *a).map(|s| s - *a).unwrap_or(4096); }
         }
+        // Linux's arrays of interrupt entry stubs: the IDT points at each stub, which no symbol names
+        for (name, stride) in [("early_idt_handler_array", 9u64), ("irq_entries_start", 8), ("spurious_entries_start", 8)] {
+            if let Some(&(a, n)) = img.named.get(name) { for k in 0..n / stride { img.seeds.push(a + k * stride); } }
+        }
+        img.seeds.sort();
+        img.seeds.dedup();
         Ok(img)
     }
     /// Moves the image to `to`: every address it holds and every address we keep.
@@ -1034,6 +1063,10 @@ fn decode_func(img: &Image, entry: u64, entries: &BTreeSet<u64>) -> (Func, BTree
                     FlowControl::Interrupt | FlowControl::Exception if img.machine && matches!(ins.mnemonic(), Mnemonic::Int3 | Mnemonic::Int | Mnemonic::Ud2 | Mnemonic::Into) => {
                         // (and int3 followed by int3 is padding: the fill between functions and up to an alignment)
                         if entries.contains(&next) || !img.is_code(next) || ins.mnemonic() == Mnemonic::Int3 && img.u8(next) == Some(0xCC) { break; }
+                        // a handler may also come back there by a return, or past the 5-byte call or jump an int3 stands
+                        // for (Linux emulates one at an int3 while it patches code, and so does its boot's self-test)
+                        f.leaders.insert(next); f.rets.insert(next);
+                        if ins.mnemonic() == Mnemonic::Int3 { f.leaders.insert(ip + 5); f.rets.insert(ip + 5); }
                     }
                     _ => break, // ret, int3, ud2, ...
                 }
@@ -1507,11 +1540,13 @@ impl Emit<'_> {
             M::Push => format!("{{u64 t={};PUSH64(t);}}", if is_imm(i.op_kind(0)) { format!("0x{:x}ull", i.immediate(0)) } else { rd(i, 0) }),
             M::Pop => format!("{{u64 t=POP64();{}}}", wr(i, 0, "t")),
             M::Call if self.img.machine => {
-                // a machine's image: a callee that comes back on another stack is a task switch the runtime did not see
+                // a machine's image: a callee that comes back on another stack, from another return address than this
+                // call's, is a task switch the runtime did not see (one that moved the stack on purpose, as Linux's
+                // error_entry, returned through this call's own address)
                 let call = if i.op_kind(0) == OpKind::NearBranch64 && entries.contains(&i.near_branch_target()) { format!("f_{:x}(c);", i.near_branch_target()) }
                     else if i.op_kind(0) == OpKind::NearBranch64 { format!("rt_call(c,0x{:x}ull);", i.near_branch_target()) } else { "rt_call(c,t);".into() };
                 let target = if i.op_kind(0) == OpKind::NearBranch64 { String::new() } else { format!("u64 t={};", rd(i, 0)) };
-                format!("{{{target}u64 sp_=R[RSP];PUSH64(0x{:x}ull);{call}if(__builtin_expect(R[RSP]!=sp_,0))rt_bad_return(c,0x{:x}ull,sp_);}}", i.next_ip(), i.ip())
+                format!("{{{target}u64 sp_=R[RSP];PUSH64(0x{:x}ull);{call}if(__builtin_expect(R[RSP]!=sp_,0))rt_check_return(c,0x{:x}ull,0x{:x}ull,sp_);}}", i.next_ip(), i.ip(), i.next_ip())
             }
             M::Call if i.op_kind(0) == OpKind::NearBranch64 && entries.contains(&i.near_branch_target()) => format!("PUSH64(0x{:x}ull);f_{:x}(c);", i.next_ip(), i.near_branch_target()),
             M::Call if i.op_kind(0) == OpKind::NearBranch64 => format!("PUSH64(0x{:x}ull);rt_call(c,0x{:x}ull);", i.next_ip(), i.near_branch_target()),
@@ -1638,6 +1673,16 @@ impl Emit<'_> {
         let seg_index = |r: Register| match r { Register::ES => 0, Register::CS => 1, Register::SS => 2, Register::DS => 3, Register::FS => 4, _ => 5 };
         let port = || if reg(0) && i.op0_register() == Register::DX || i.op_count() > 1 && reg(1) && i.op_register(1) == Register::DX && i.mnemonic() == M::In { "(u16)R[RDX]".to_string() }
             else { format!("0x{:x}", if i.mnemonic() == M::In { i.immediate(1) } else { i.immediate(0) }) };
+        // an immediate the kernel patches at boot (a runtime constant): the value it holds now
+        if i.mnemonic() == M::Mov && i.op_count() == 2 && i.op_kind(1) == OpKind::Immediate64 && self.img.patched.contains(&(next - 8)) {
+            return Some(wr(i, 0, &format!("M64(0x{:x}ull)", next - 8)));
+        }
+        if matches!(i.mnemonic(), M::Shr | M::Shl | M::Sar) && i.op_count() == 2 && i.op_kind(1) == OpKind::Immediate8 && self.img.patched.contains(&(next - 1)) {
+            let bits = opsize(i, 0) * 8;
+            return Some(wr(i, 0, &format!("{}{bits}(&f,{},(u8)M8(0x{:x}ull))", format!("{:?}", i.mnemonic()).to_lowercase(), rd(i, 0), next - 1)));
+        }
+        // far jumps and calls (to real mode, to another segment): not the machine's
+        if i.is_jmp_far() || i.is_jmp_far_indirect() || i.is_call_far() || i.is_call_far_indirect() { return Some(self.not_lifted(i)); }
         Some(match i.mnemonic() {
             M::Cli => "mc_rflags&=~0x200ull;".into(),
             M::Sti => "rt_sti(c);".into(),
@@ -1666,6 +1711,10 @@ impl Emit<'_> {
                 String::new()
             }
             M::Rdpmc => "R[RAX]=0;R[RDX]=0;".into(),
+            M::Fxsave64 | M::Fxsave => format!("fxsave(c,{});", ea(i)),
+            // one CPU: compared and exchanged in two halves (no other CPU can see between them)
+            M::Cmpxchg16b => format!("{{u64 a_={};u64 lo=M64(a_),hi=M64(a_+8);f.zf=lo==R[RAX]&&hi==R[RDX];if(f.zf){{MW64(a_,R[RBX]);MW64(a_+8,R[RCX]);}}else{{R[RAX]=lo;R[RDX]=hi;}}}}", ea(i)),
+            M::Fxrstor64 | M::Fxrstor => format!("fxrstor(c,{});", ea(i)),
             M::Rdfsbase => wr(i, 0, "c->fs_base"),
             M::Rdgsbase => wr(i, 0, "c->gs_base"),
             M::Wrfsbase => format!("c->fs_base={};", rd(i, 0)),
@@ -2571,6 +2620,8 @@ fn lift() {
         let body = match img.jumps.get(e) {
             Some(2) if img.jumps.values().any(|k| *k == 1) => format!("void f_{e:x}(Cpu*__restrict c){{f_{:x}(c);}}\n", img.jumps.iter().find(|(_, k)| **k == 1).unwrap().0),
             Some(3) => format!("void f_{e:x}(Cpu*__restrict c){{rt_longjmp(c);}}\n"),
+            // a machine's static-call trampoline (Linux's __SCT__*): the kernel rewrites it, so it is decoded as it is now
+            _ if img.machine && img.named.iter().any(|(n, v)| n.starts_with("__SCT__") && v.0 == *e) => format!("void f_{e:x}(Cpu*__restrict c){{rt_static_call(c,0x{e:x}ull);}}\n"),
             _ => em.func(*e, f, &entries),
         };
         let k = (0..parts).min_by_key(|&k| sizes[k]).unwrap();
