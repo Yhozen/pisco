@@ -625,6 +625,21 @@ so code is now what the sections say is code. And the 64-bit emitters took any r
 `mov cr3, rax` was a write to RBX. That was wrong in every 64-bit title, and is fixed for all of them.
 ([linux.md](linux.md) has the files and the ladder, K0 to K4.)
 
+### 3.31 The machine, on a kernel of our own (2026-11-27)
+
+The machine Linux needs was built against a smaller kernel first: about 300 lines of C and assembly that page,
+fault, take the timer, switch tasks and drop to ring 3, each in a line on the serial port. QEMU printed its 20
+lines on the first run; that output is the test.
+
+The design held: a fault, an interrupt or a system call is a nested run of the kernel's handler, and when it
+returns where it was raised the lifted function just goes on, its flags still in its C locals. The two bugs were
+the machine's view of the code. Decoding stopped at an `int3` the handler comes back from, so half of the kernel was
+never seen. And the task switch's hook covered one instruction of a function with no size, so a switch went
+unseen and the boot task carried on, quietly, on another task's stack. Every call in a machine's image now checks
+the stack it comes back on.
+
+The same file runs in headless Chrome; each kernel task is a wasm stack there too.
+
 ## 4. Roadblocks
 
 ### Resolved

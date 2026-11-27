@@ -1,0 +1,20 @@
+microvm-hello: long mode, paging on
+paging: a page read through a second address: 4660
+paging: written there, read at the first: 17185
+paging: the address moved to another page (invlpg): 22136
+paging: cr3 is the top table's physical address: 1
+fault: a page not mapped read as 77 after 1 fault at the right address
+fixup: a read of an address not mapped returned -14
+int3: handled, back in kmain
+ud2: handled as a warning, 1 so far
+timer: 3 ticks while halted
+task A: first run
+task B: first run
+task A: resumed
+task B: resumed
+tasks: back in the boot task
+user: hello from ring 3
+user: preempted, exiting
+exit: ring 3 exited with 7
+ring 3: back in the boot task, preempted: 1
+microvm-hello: done

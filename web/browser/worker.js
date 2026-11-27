@@ -115,7 +115,24 @@ function run(d) {
     }
     return -6; // EAGAIN: no idle worker
   };
+  // a machine (rt/microvm-x64): each of its kernel's tasks on a wasm stack of its own (JSPI), as in web/run-node.mjs
+  const machine = WebAssembly.Module.exports(module).some((e) => e.name === 'rt_co_entry');
+  let coEntry = null;
+  if (machine) {
+    const parked = new Map();
+    host.co_switch = new WebAssembly.Suspending((from, to, begin) => {
+      const mine = new Promise((resolve) => parked.set(from, resolve));
+      if (begin) coEntry(to).catch((err) => { bus.postMessage({ out: `pisco: ${err && err.stack || err}\n` }); exit(123); });
+      else { const go = parked.get(to); if (!go) throw new Error(`machine: task ${to} is not waiting`); parked.delete(to); go(); }
+      return mine;
+    });
+  }
   const instance = new WebAssembly.Instance(module, { env: { memory }, wasi_snapshot_preview1: wasi, wasi: { 'thread-spawn': spawn }, host });
+  if (machine) {
+    coEntry = WebAssembly.promising(instance.exports.rt_co_entry);
+    WebAssembly.promising(instance.exports._start)().then(() => exit(0), (err) => { bus.postMessage({ out: `pisco: ${err && err.stack || err}\n` }); exit(123); });
+    return;
+  }
   try {
     if (tid === 0 && mode === 'fork') { instance.exports.rt_fork_resume(); exit(0); }
     else if (tid === 0) { instance.exports._start(); exit(0); }

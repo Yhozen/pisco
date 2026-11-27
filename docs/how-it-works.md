@@ -42,6 +42,9 @@ runtime (rt/, C on wasi-libc, linked into the same module) ◄──────
               fork / exec / pipes with a worker per process. It links none of the Windows core
   ps5/        the PS5's system libraries a homebrew title calls: libkernel, the C library, VideoOut, Pad, AudioOut.
               It links none of the Windows core either
+  microvm-x64/ a small x86-64 machine whose title is a kernel (docs/linux.md): its MMU over the kernel's page
+              tables, exceptions, interrupts and system calls as nested runs, a local APIC, a 16550, and a host
+              stack (JSPI) for each of the kernel's tasks. It links none of the Windows core
 host (web/)   WASI calls, one worker per guest thread over one shared memory; image.mjs reads a title image
 pisco (crates/pisco) builds a recipe and the user's own copy of a title into a title image (OCI layout), and runs it
 ```

@@ -37,7 +37,7 @@ u64 rt_valloc(u64 size, u64 align) {
   memset(p, 0, size);
   return (u64)(uptr)p;
 }
-void rt_vfree(u64 a) { free((void *)GP(a)); }
+void rt_vfree(u64 a) { free((void *)(uptr)a); }   // (a host address: the same as GP(a) where guest addresses are)
 
 // ---- lifted functions: an indirect call or jump finds its target by address ----
 void rt_dispatch(Cpu *c, u64 t) {
@@ -65,7 +65,8 @@ void rt_pc(Cpu *c, u32 pc) {
 }
 
 // ---- the virtual CPU: what CPUID reports decides which code paths a title takes ----
-void rt_cpuid(Cpu *c) {
+// (weak: a machine's runtime, rt/microvm-x64, has its own CPU)
+__attribute__((weak)) void rt_cpuid(Cpu *c) {
   u32 leaf = (u32)R[RAX], sub = (u32)R[RCX], a = 0, b = 0, d = 0, cx = 0;
   (void)sub;
   switch (leaf) {
@@ -90,7 +91,7 @@ void rt_cpuid(Cpu *c) {
 #if GUEST_BITS == 32
 u64 rt_rdtsc(void) { return rt_uptime_us() * 3000; } // a 3 GHz counter on the title's clock
 #else
-u64 rt_rdtsc(void) { return (u64)(host_now_us() * 3000.0); }
+__attribute__((weak)) u64 rt_rdtsc(void) { return (u64)(host_now_us() * 3000.0); }
 #endif
 
 // ---- the end of the process ----

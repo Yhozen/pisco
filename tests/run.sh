@@ -26,6 +26,11 @@
 #   cowsay   cowsay on perl (docs/cowsay.md), when tools/build-cowsay.sh has built its root into out/cowsay: its image
 #            built by `pisco build`, run by `pisco run` in strict mode with several cows and options; each must print
 #            what the same root's perl prints here (the oracle), and the first the same in headless Chrome
+#   microvm  fixtures/microvm-hello, a small x86-64 kernel of our own (built with the machine's gcc), lifted as a
+#            machine's image and run on rt/microvm-x64 in Node: paging, a page fault returned from and one fixed up,
+#            int3, ud2, the APIC's timer while halted, two tasks on their own stacks, a ring-3 task with system calls
+#            preempted by the timer. What it prints on the serial port must be fixtures/microvm-hello/expected.txt,
+#            which is what QEMU prints booting it (checked again when QEMU is there: tools/setup-toolchain.sh qemu)
 #   kernel   the Linux title's kernel (docs/linux.md), when tools/build-linux.sh has built it into out/linux: the
 #            lifter must read vmlinux as a machine's image (--machine) and say what it does not lift yet. With QEMU
 #            (tools/oracle-qemu; said in one line without it) the kernel must run /init to its end there, and its
@@ -86,7 +91,7 @@
 #            screens close to the oracle's screenshots (needs out/img-desire: the desireplay step; half an hour)
 #   xcl      tests/gfx/xcl.sh: XCL's console test title in Chrome, when it has been built into out/xcltitle-game
 #   audio    tests/audio/run.sh: the XMA2 / Opus decoders (builds FFmpeg's the first time)
-# Default: build layout node bench win32 linux avx ffp sm gdi changelog. Needs tools/setup-toolchain.sh to have run. Exit status 1 if a step fails.
+# Default: build layout node bench win32 linux microvm avx ffp glffp sm gdi changelog. Needs tools/setup-toolchain.sh to have run. Exit status 1 if a step fails.
 set -uo pipefail
 root=$(cd "$(dirname "$0")/.." && pwd); cd "$root"; mkdir -p out
 MINGW=${MINGW:-$HOME/tools/llvm-mingw-20261117-ucrt-ubuntu-22.04-x86_64}; CXX=$MINGW/bin/x86_64-w64-mingw32-clang++
@@ -166,6 +171,22 @@ linux() {
   SW_STRICT=1 SW_ROOT=$p/root SW_EXE=/bin/proc timeout 120 node web/run-node.mjs $p/root/bin/proc.wasm $p/root/bin/proc /bin/script > $p/got.txt 2>&1
   cmp -s $p/got.txt $p/native.txt || { echo "linux-proc differs from its run on this machine (< ours, > native):"; diff $p/got.txt $p/native.txt | head -12; return 1; }
   echo "linux-proc: $(wc -l < $p/native.txt) lines (fork, pipes, execve, a script, wait4, longjmp) equal its run on this machine"
+}
+microvm() {
+  local d=out/microvm-hello want=fixtures/microvm-hello/expected.txt
+  fixtures/microvm-hello/build.sh $d > /dev/null || { echo "microvm-hello: does not build"; return 1; }
+  tools/build-title.sh $d/hello $d/wasm > out/microvm-hello.build.log 2>&1 || { echo "microvm-hello: build failed (out/microvm-hello.build.log)"; return 1; }
+  timeout 120 node web/run-node.mjs $d/wasm/title.wasm $d/hello 2>&1 | tr -d '\r' > $d/got.txt
+  cmp -s $d/got.txt $want || { echo "microvm-hello differs from expected.txt (< ours, > expected):"; diff $d/got.txt $want | head -12; return 1; }
+  local q="lifted, in Node"
+  if command -v "${QEMU:-qemu-system-x86_64}" > /dev/null; then
+    . tools/oracle-qemu/env.sh
+    timeout 120 "$QEMU" -M "$ORACLE_QEMU_MACHINE,accel=tcg" -cpu "$ORACLE_QEMU_CPU" -m 256 -smp 1 -display none -no-reboot -nodefaults -no-user-config -serial stdio \
+      -device isa-debug-exit,iobase=0xf4,iosize=0x04 -kernel $d/hello < /dev/null 2> $d/qemu.log | tr -d '\r' > $d/qemu.txt
+    cmp -s $d/qemu.txt $want || { echo "microvm-hello under QEMU differs from expected.txt (< QEMU, > expected):"; diff $d/qemu.txt $want | head -12; return 1; }
+    q="$q and under QEMU"
+  fi
+  echo "microvm-hello: $(wc -l < $want) lines equal expected.txt, $q"
 }
 kernel() {
   local d=out/linux want=recipes/linux/traces/programs.txt fns left
@@ -262,6 +283,11 @@ chrome() {
     SW_STRICT=1 SW_CLOCK=16667 TIMEOUT=300 node tools/run-chrome.mjs out/linux-hello/wasm/title.wasm out/linux-hello/hello 2>&1 | grep -v -e '^$' -e '^gpu: ' > out/linux-hello/got-chrome.txt
     if cmp -s out/linux-hello/got-chrome.txt fixtures/linux-hello/expected.txt; then echo "linux-hello: equal to expected.txt"; else echo "linux-hello: differs from expected.txt"; ok=1; fi
   fi
+  # the machine, when the microvm step has built it: each of its tasks on a stack of its own in the page too
+  if [ -f out/microvm-hello/wasm/title.wasm ]; then
+    TIMEOUT=300 node tools/run-chrome.mjs out/microvm-hello/wasm/title.wasm out/microvm-hello/hello 2>&1 | tr -d '\r' | grep -v -e '^$' -e '^gpu: ' > out/microvm-hello/got-chrome.txt
+    if cmp -s out/microvm-hello/got-chrome.txt fixtures/microvm-hello/expected.txt; then echo "microvm-hello: equal to what QEMU prints"; else echo "microvm-hello: differs from what QEMU prints"; ok=1; fi
+  fi
   if [ -f out/x87/wasm/title.wasm ]; then
     TIMEOUT=300 node tools/run-chrome.mjs out/x87/wasm/title.wasm out/x87/x87.exe 2>&1 | grep -v -e '^$' -e '^gpu: ' > out/x87/got-chrome.txt   # the page's own first line names the GPU
     if cmp -s out/x87/got-chrome.txt fixtures/x87/expected.txt; then echo "x87: equal to what it prints under Wine"; else echo "x87: differs from what it prints under Wine"; ok=1; fi
@@ -312,7 +338,7 @@ ND=${ND:-$HOME/.pisco/oracle/prefix-narbacular-drop/drive_c/Program Files (x86)/
 D3DX_DLL=${D3DX_DLL:-$HOME/untrusted/tag/cab/d3dx9_35.dll}
 REDIST=${REDIST:-$HOME/untrusted/vcredist/x/Contents/VC/Redist/MSVC/14.44.35112/x64/Microsoft.VC143.CRT}; export REDIST
 WINSDK=${WINSDK:-$HOME/winsdk}
-for s in ${*:-build layout node bench win32 linux avx ffp glffp sm gdi changelog}; do case $s in
+for s in ${*:-build layout node bench win32 linux microvm avx ffp glffp sm gdi changelog}; do case $s in
   build)  step build build ;;
   layout) step layout tests/layout.sh ;;
   node)   LINES_SHOWN=8 step node tests/regress.sh ;;
@@ -323,6 +349,7 @@ for s in ${*:-build layout node bench win32 linux avx ffp glffp sm gdi changelog
   cowsay) if [ -x out/cowsay/root/usr/bin/perl ]; then step cowsay cowsay; else echo "skip  cowsay: out/cowsay/root is not built (tools/build-cowsay.sh)"; fi ;;
   neofetch) if [ -x out/neofetch/root/bin/bash ]; then step neofetch neofetch; else echo "skip  neofetch: out/neofetch/root is not built (tools/build-neofetch.sh)"; fi ;;
   fastfetch) if [ -x out/fastfetch/fastfetch ]; then step fastfetch fastfetch; else echo "skip  fastfetch: out/fastfetch/fastfetch is not built (tools/build-fastfetch.sh)"; fi ;;
+  microvm) if command -v gcc > /dev/null && [ "$(uname -m)" = x86_64 ]; then step microvm microvm; else echo "skip  microvm: it needs gcc for x86-64 (fixtures/microvm-hello/build.sh)"; fi ;;
   kernel) if [ -f out/linux/vmlinux ]; then LINES_SHOWN=2 step kernel kernel; else echo "skip  kernel: out/linux is not built (tools/build-linux.sh)"; fi ;;
   chrome) LINES_SHOWN=6 step chrome chrome ;;
   nd)     if [ -f "$ND/Narbacular Drop.exe" ]; then LINES_SHOWN=3 step nd nd; else echo "skip  nd: the game is not installed (ND=$ND)"; fi ;;

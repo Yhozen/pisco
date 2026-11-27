@@ -10,7 +10,7 @@ titles, its own next steps and its own goal:
 | [Windows x86](#windows-x86) | Narbacular Drop, playable; Tag: The Power of Paint into its second level | Tag played by hand on a real GPU, then its later levels | 32-bit Direct3D 9 games of the 2000s |
 | [Linux x64](#linux-x64) | fastfetch 2.71.0; neofetch 7.1.0 (bash, busybox); cowsay 3.8.4 (perl) | threads, signals, writes | statically linked command-line programs |
 | [PS5](ps5.md) | the raymarching tech demo (CPU-drawn, AVX2): its three scenes, pad and music in the browser | more system functions, a GPU (AGC) title | PS5 homebrew |
-| [Microvm x64](linux.md), planned | nothing yet: Linux 6.18 is built, read by the lifter and booted on the oracle (K0) | the machine, on a test kernel of our own (K1) | Linux itself, lifted, and its programs |
+| [Microvm x64](#microvm-x64) | our own test kernel (paging, faults, the timer, tasks, ring 3), equal to QEMU; Linux 6.18 built and read by the lifter | Linux 6.18 booted to `/init` (K2) | Linux itself, lifted, and its programs |
 
 ## Shared: the recompiler, the core runtime, the packages
 
@@ -247,17 +247,21 @@ loads itself and Miles Sound System 6.1c beside it ([mohaa.md](mohaa.md)). What 
 6. **Fork without copying everything**: a fork copies the whole memory (64 MiB for bash, about 20 ms).
 7. **Smaller modules for large programs**: perl's is 34 MB, some of its code decoded into more than one function.
 
-## Microvm x64 (planned)
+## Microvm x64
 
 A runtime that imitates a small x86-64 machine, so that a real Linux kernel is a title ([linux.md](linux.md); the
-reasoning and the measurements: [research/kernel-as-a-title.md](research/kernel-as-a-title.md)). No file of it is
-written yet.
+reasoning and the measurements: [research/kernel-as-a-title.md](research/kernel-as-a-title.md)).
 
 - **K0, done**: `tools/build-linux.sh` builds Linux 6.18.65 and an initramfs of busybox; the lifter reads `vmlinux`
   (10,853 functions; 3,958 instructions of the system not lifted yet); QEMU boots it as the oracle, and what
   `/init`'s programs print is recorded (`tests/run.sh kernel`).
-- **Next, K1**: the machine on a test kernel of our own: a software MMU, faults and interrupts as nested calls, a
-  host stack per task, a local APIC, an IOAPIC, a serial port.
+- **K1, done**: the machine (`rt/microvm-x64`): a software MMU over the kernel's page tables, exceptions,
+  interrupts and system calls as nested runs of lifted code, the local APIC's timer on a virtual clock, a 16550,
+  and a host stack per kernel task (JSPI). `fixtures/microvm-hello`, our own test kernel, prints what QEMU prints,
+  in Node and headless Chrome (`tests/run.sh microvm`, a default step). With the machine mode the lifter leaves 56
+  of Linux's 602,001 instructions.
+- **Next, K2**: Linux booted to `/init`: its alternatives and static calls, `fxsave` / `xsave`, the IOAPIC and the
+  serial port's interrupt.
 
 ## Known limits
 

@@ -225,9 +225,23 @@ if (isMainThread) {
       .on('error', (e) => { console.error(e); exit(122); });
     return t;
   };
+  // a machine (rt/microvm-x64): each of its kernel's tasks on a wasm stack of its own (JSPI). co_switch suspends the
+  // task that switches away and resumes the one switched to, or starts it (rt_co_entry)
+  const machine = WebAssembly.Module.exports(module).some((e) => e.name === 'rt_co_entry');
+  let coEntry = null;
+  if (machine) {
+    const parked = new Map();
+    host.co_switch = new WebAssembly.Suspending((from, to, start) => {
+      const mine = new Promise((resolve) => parked.set(from, resolve));
+      if (start) coEntry(to).catch((e) => { fs.writeSync(2, String(e.stack || e) + "\n"); exit(123); });
+      else { const go = parked.get(to); if (!go) throw new Error(`machine: task ${to} is not waiting`); parked.delete(to); go(); }
+      return mine;
+    });
+  }
   const instance = new WebAssembly.Instance(module, { env: { memory }, wasi_snapshot_preview1: wasi, wasi: { 'thread-spawn': spawn }, host });
   try {
-    if (tid === 0 && mode === 'fork') { instance.exports.rt_fork_resume(); exit(0); }
+    if (machine) { coEntry = WebAssembly.promising(instance.exports.rt_co_entry); await WebAssembly.promising(instance.exports._start)(); exit(0); }
+    else if (tid === 0 && mode === 'fork') { instance.exports.rt_fork_resume(); exit(0); }
     else if (tid === 0) { instance.exports._start(); exit(0); }
     else instance.exports.wasi_thread_start(tid, workerData.start);
   } catch (e) {

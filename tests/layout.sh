@@ -6,7 +6,7 @@
 set -uo pipefail
 root=$(cd "$(dirname "$0")/.." && pwd); cd "$root"
 fail=0
-hits=$(grep -rnE '"?rt/(\*|gdk/\*|xbox-series/\*|windows-x(64|86)/\*|linux-x64/\*)\.c' tools tests crates web --include=*.sh --include=*.py --include=*.mjs --include=*.js --include=*.rs | grep -v '^tests/layout.sh:')
+hits=$(grep -rnE '"?rt/(\*|gdk/\*|xbox-series/\*|windows-x(64|86)/\*|linux-x64/\*|microvm-x64/\*|ps5/\*)\.c' tools tests crates web --include=*.sh --include=*.py --include=*.mjs --include=*.js --include=*.rs | grep -v '^tests/layout.sh:')
 [ -z "$hits" ] || { echo "runtime files listed outside bases/:"; echo "$hits" | head; fail=1; }
 all=$(mktemp); trap 'rm -f "$all"' EXIT
 for b in bases/*/*/base.toml; do

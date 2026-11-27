@@ -6,8 +6,8 @@
 # (-DGUEST_BITS=32), the stdcall argument sizes of its imports (tools/stdcall-sizes.sh, needs llvm-mingw's
 # import libraries), and its own memory layout: see "the memory layout" below.
 # BASE picks the runtime (a base of bases/, which lists its files; `pisco sources` reads them): windows-x86,
-# windows-x64, xbox-series, linux-x64 or ps5; default: linux-x64 for an ELF (the lifter says so too: OS=linux), ps5 for a
-# PS5 executable (OS=ps5),
+# windows-x64, xbox-series, linux-x64, ps5 or microvm-x64; default: linux-x64 for an ELF (the lifter says so too: OS=linux), ps5 for a
+# PS5 executable (OS=ps5), microvm-x64 for a machine's image such as a kernel (OS=microvm),
 # windows-x86 for a 32-bit title, windows-x64 for another 64-bit one. A title links
 # only its base's files and every library of the base (LICENSING.md); with RECIPE, the recipe's base and libraries.
 # RECIPE=<title.toml>: the title's recipe (CPU features, registry values); tools/recipe-gen.py reads it.
@@ -23,13 +23,15 @@ GUEST_BITS=64; IMAGE_LOW=0; IMAGE_HIGH=0; FIXED_BASE=0; OS=windows
 [ -z "${PROFILE:-}" ] || { echo "build-title.sh: PROFILE is gone; BASE=windows-x86, windows-x64, xbox-series or linux-x64" >&2; exit 2; }
 PISCO=$root/target/release/pisco; [ -x "$PISCO" ] || { echo "build-title.sh: $PISCO is not built (cargo build --release -p pisco)" >&2; exit 2; }
 if [ -n "${RECIPE:-}" ] && [ -z "${BASE:-}" ]; then RT_FILES=$("$PISCO" sources "$(dirname "$RECIPE")")
-else BASE=${BASE:-$([ "$OS" = linux ] && echo linux-x64 || { [ "$OS" = ps5 ] && echo ps5; } || { [ "$GUEST_BITS" = 32 ] && echo windows-x86 || echo windows-x64; })}; RT_FILES=$("$PISCO" sources "base/$BASE:1" --all-libraries); fi
+else BASE=${BASE:-$([ "$OS" = linux ] && echo linux-x64 || { [ "$OS" = ps5 ] && echo ps5; } || { [ "$OS" = microvm ] && echo microvm-x64; } || { [ "$GUEST_BITS" = 32 ] && echo windows-x86 || echo windows-x64; })}; RT_FILES=$("$PISCO" sources "base/$BASE:1" --all-libraries); fi
 RT_FILES=$(for f in $RT_FILES; do echo "$root/$f"; done)
 python3 "$root/tools/recipe-gen.py" ${RECIPE:+"$RECIPE"} > "$out/recipe.gen.c"
 # the import table: every IMP(dll, name) the runtime defines, and for a 32-bit title the stdcall sizes
 "$root/tools/gen-imports.sh" "$GUEST_BITS" "$out" "$out/imports.gen.c" $RT_FILES
 CF="$TARGET -mllvm -wasm-enable-sjlj ${OPT:--O2} -fno-strict-aliasing -I$root/rt -Wno-everything -DGUEST_BITS=$GUEST_BITS"
 [ "$OS" = linux ] && CF="$CF -DGUEST_LINUX=1"   # the x87 at its full precision (rt/cpu.h fpx), in the lifted code and the runtime alike
+# a machine's image (rt/microvm-x64): memory through its MMU (rt/cpu.h), jumps between functions as tail calls
+[ "$OS" = microvm ] && CF="$CF -DGUEST_MACHINE=1 -mtail-call"
 # The memory layout. By default the runtime's stack, data and heap come first and the images sit above them
 # (the lifter moves them there). An image that has to load low (a 32-bit title's exe at 0x400000, often with no
 # relocations) gets a gap instead: the runtime's stack below it, the runtime's data and heap above it.
