@@ -43,9 +43,14 @@ typedef struct Cpu {
 } Cpu;
 // A lifted function with landing pads registers one while it runs. `jb` is a jmp_buf in its frame.
 typedef struct Landing { void *jb; u64 entry_rsp; u64 resume; struct Landing *prev; } Landing;
+#if __has_include(<setjmp.h>)
 #include <setjmp.h>
 #define LANDING(body) do { jmp_buf jb; Landing L = {&jb, c->r[4], 0, c->landing}; c->landing = &L; \
     u64 resume_at = 0; if (setjmp(jb)) resume_at = L.resume; body(c, resume_at); c->landing = L.prev; } while (0)
+#else
+// A freestanding lift can run without libc if none of its functions has a landing pad.
+#define LANDING(body) _Static_assert(0, "lifted landing pads require setjmp.h")
+#endif
 typedef struct { u8 cf, zf, sf, of, pf, af, df; } Flags; // df: 32-bit code only (64-bit code assumes it clear)
 
 extern volatile u32 rt_last_pc;   // a title lifted with --trace-pc: the guest address of the block last entered
