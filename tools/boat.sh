@@ -72,7 +72,7 @@ case "${1:-}" in
       P fastfetch tools/build-fastfetch.sh
       P neofetch tools/build-neofetch.sh
       for t in cowsay; do [ -x tools/build-\$t.sh ] && P \$t tools/build-\$t.sh; done
-      P tests tests/run.sh build layout node bench win32 linux fastfetch neofetch" || exit 1
+      P tests tests/run.sh build layout node bench win32 linux fastfetch neofetch cowsay" || exit 1
     echo "saving the snapshot $name"
     boat snapshot "$id" "$name" > /dev/null 2>&1 || { echo "boat.sh: the snapshot failed; the sandbox $id is kept" >&2; exit 1; }
     boat delete --yes "$id" > /dev/null 2>&1
