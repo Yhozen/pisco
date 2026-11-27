@@ -285,7 +285,9 @@ reasoning and the measurements: [research/kernel-as-a-title.md](research/kernel-
   or anywhere, lifted when it first runs.
 - **K12, done**: Alpine's busybox, position-independent and dynamically linked, runs on musl's loader, both lifted
   when they first run, as on QEMU.
-- **Next**: shared libraries the loader opens, a network, snapshots.
+- **K13, done**: a program's own libraries, linked or opened with `dlopen`, are each lifted when their code is
+  first met (`fixtures/linux-dyn`), as on QEMU.
+- **Next**: a network, snapshots.
 
 ## Known limits
 

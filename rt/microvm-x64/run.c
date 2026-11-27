@@ -139,24 +139,60 @@ static void relocate(u8 *img, u64 size, const u8 *ph, unsigned phnum, u64 bias, 
     else { for (int bit = 1; bit < 64; bit++) if (e >> bit & 1) { u64 w = off_of(ph, phnum, at + 8ull * (bit - 1)); if (w != ~0ull && w + 8 <= size) { u64 v; memcpy(&v, img + w, 8); v += bias; memcpy(img + w, &v, 8); } } at += 63 * 8; }
   }
 }
-static int ask_host(Cpu *c, u64 pc) {
-  // its auxiliary vector, on its stack where it starts: its program headers (AT_PHDR), its entry, its interpreter's
-  // base (AT_BASE: a dynamically linked program's loader, which runs first)
-  u64 sp = R[RSP], argc, v, aphdr = 0, aphnum = 0, entry = 0, ibase = 0;
+// whether an image's executable segments, moved by bias, hold pc
+static int holds_pc(const u8 *ph, unsigned phnum, u64 bias, u64 pc) {
+  for (unsigned i = 0; i < phnum; i++) { u32 t, fl; u64 va, ms; memcpy(&t, ph + 56 * i, 4); memcpy(&fl, ph + 56 * i + 4, 4); memcpy(&va, ph + 56 * i + 16, 8); memcpy(&ms, ph + 56 * i + 40, 8);
+    if (t == 1 && (fl & 1) && pc >= va + bias && pc < va + bias + ms) return 1; }
+  return 0;
+}
+// the load bias of an image whose ELF header is at base: where its first segment (file offset 0) is meant to be
+static u64 bias_of(const u8 *ph, unsigned phnum, u64 base) {
+  for (unsigned i = 0; i < phnum; i++) { u32 t; u64 off, va; memcpy(&t, ph + 56 * i, 4); memcpy(&off, ph + 56 * i + 8, 8); memcpy(&va, ph + 56 * i + 16, 8);
+    if (t == 1 && off == 0) return base - va; }
+  return base;
+}
+// the image code met in the middle of a run is in (a library its loader mapped, at start or by dlopen): the nearest
+// ELF header below pc, on a page that is there (the loader has read its headers and its dynamic tables), whose
+// executable segments hold pc. Its base, its header in h and its program headers in ph; ~0 when there is none
+static u64 image_below(Cpu *c, u64 pc, u8 h[64], u8 *ph, u64 *phnum) {
+  u64 a = pc & ~0xFFFull;
+  for (unsigned k = 0; k < 65536 && a; k++, a -= 4096) {
+    if (!user_read(c, a, h, 64, 0) || memcmp(h, "\x7f" "ELF\x02\x01", 6)) continue;
+    u64 po; u16 pn; memcpy(&po, h + 32, 8); memcpy(&pn, h + 56, 2);
+    if (!pn || pn > 64 || po > 4096 || !user_read(c, a + po, ph, 56u * pn, 0)) continue;
+    if (holds_pc(ph, pn, bias_of(ph, pn, a), pc)) { *phnum = pn; return a; }
+  }
+  return ~0ull;
+}
+// the auxiliary vector on the stack, as a program has it where it starts: its program headers (AT_PHDR), its entry,
+// its interpreter's base (AT_BASE: a dynamically linked program's loader, which runs first). 0 when the stack does
+// not look like one (code met in the middle of a run)
+static int auxv(Cpu *c, u64 *aphdr, u64 *aphnum, u64 *entry, u64 *ibase) {
+  u64 sp = R[RSP], argc, v;
   if (!user_read(c, sp, &argc, 8, 0) || argc > 4096) return 0;
   u64 at = sp + 8 * (argc + 2);
   for (int k = 0; k < 4096; k++, at += 8) { if (!user_read(c, at, &v, 8, 0)) return 0; if (!v) break; }   // the environment
   for (int k = 0; k < 64; k++) {
     u64 kv[2]; at += 8; if (!user_read(c, at, kv, 16, 0)) return 0; at += 8;
-    if (kv[0] == 0) break; if (kv[0] == 3) aphdr = kv[1]; if (kv[0] == 5) aphnum = kv[1]; if (kv[0] == 7) ibase = kv[1]; if (kv[0] == 9) entry = kv[1];
+    if (kv[0] == 0) return 1; if (kv[0] == 3) *aphdr = kv[1]; if (kv[0] == 5) *aphnum = kv[1]; if (kv[0] == 7) *ibase = kv[1]; if (kv[0] == 9) *entry = kv[1];
   }
-  // which image: the program at its entry, or its interpreter where it starts (its ELF header at its base)
-  u8 h[64], ph[64 * 56]; u64 phdr, phnum, bias = 0; int loader = 0;
-  if (pc == entry && aphdr && aphnum && aphnum <= 64) { phdr = aphdr; phnum = aphnum; }
-  else if (ibase) { if (!user_read(c, ibase, h, 64, 1) || memcmp(h, "\x7f" "ELF\x02\x01", 6)) return 0; u64 po; u16 pn; memcpy(&po, h + 32, 8); memcpy(&pn, h + 56, 2); phdr = ibase + po; phnum = pn; bias = ibase; loader = 1; if (phnum > 64) return 0; }
-  else return 0;
-  if (!user_read(c, phdr, ph, 56u * (unsigned)phnum, 1)) return 0;
-  if (!loader) for (unsigned i = 0; i < phnum; i++) { u32 t; u64 va; memcpy(&t, ph + 56 * i, 4); memcpy(&va, ph + 56 * i + 16, 8); if (t == 6) bias = phdr - va; }   // PT_PHDR: a position-independent program's load bias
+  return 0;
+}
+static int ask_host(Cpu *c, u64 pc) {
+  // which image: the program at its entry, its loader where it starts (its ELF header at its base), or the image
+  // below pc (a library); a loader, or a program that relocates itself, has not run its relocations yet
+  u64 aphdr = 0, aphnum = 0, entry = 0, ibase = 0; int start = auxv(c, &aphdr, &aphnum, &entry, &ibase);
+  u8 h[64], ph[64 * 56]; u64 phdr, phnum = 0, bias = 0; int apply = 0, found = 0;
+  if (start && pc == entry && aphdr && aphnum && aphnum <= 64) {
+    phdr = aphdr; phnum = aphnum; apply = !ibase;
+    if (!user_read(c, phdr, ph, 56u * (unsigned)phnum, 1)) return 0;
+    for (unsigned i = 0; i < phnum; i++) { u32 t; u64 va; memcpy(&t, ph + 56 * i, 4); memcpy(&va, ph + 56 * i + 16, 8); if (t == 6) bias = phdr - va; }   // PT_PHDR: a position-independent program's load bias
+    found = 1;
+  } else if (start && ibase && user_read(c, ibase, h, 64, 1) && !memcmp(h, "\x7f" "ELF\x02\x01", 6)) {
+    u64 po, e; u16 pn; memcpy(&po, h + 32, 8); memcpy(&pn, h + 56, 2); memcpy(&e, h + 24, 8);
+    if (pc == ibase + e && pn && pn <= 64) { phdr = ibase + po; phnum = pn; bias = ibase; apply = 1; if (!user_read(c, phdr, ph, 56u * (unsigned)phnum, 1)) return 0; found = 1; }
+  }
+  if (!found) { u64 b = image_below(c, pc, h, ph, &phnum); if (b == ~0ull) return 0; bias = bias_of(ph, (unsigned)phnum, b); }
   // its first segment (file offset 0) holds its ELF header; the image is its segments' bytes at their offsets
   u64 size = 0, base = ~0ull; int holds = 0;
   for (unsigned i = 0; i < phnum; i++) { u32 t, fl; u64 off, va, fs, ms; memcpy(&t, ph + 56 * i, 4); memcpy(&fl, ph + 56 * i + 4, 4); memcpy(&off, ph + 56 * i + 8, 8); memcpy(&va, ph + 56 * i + 16, 8); memcpy(&fs, ph + 56 * i + 32, 8); memcpy(&ms, ph + 56 * i + 40, 8);
@@ -166,8 +202,9 @@ static int ask_host(Cpu *c, u64 pc) {
   u8 *img = calloc(1, size); if (!img) return 0;
   for (unsigned i = 0; i < phnum; i++) { u32 t; u64 off, va, fs; memcpy(&t, ph + 56 * i, 4); memcpy(&off, ph + 56 * i + 8, 8); memcpy(&va, ph + 56 * i + 16, 8); memcpy(&fs, ph + 56 * i + 32, 8);
     if (t == 1 && fs && !user_read(c, va + bias, img + off, (unsigned)fs, 1)) { free(img); return 0; } }
-  // a loader, or a program that relocates itself, has not run its relocations yet where it starts: done in the copy
-  n_fns = 0; relocate(img, size, ph, (unsigned)phnum, bias, loader || !ibase);
+  // (its relocations done in the copy when they have not run yet)
+  n_fns = 0; relocate(img, size, ph, (unsigned)phnum, bias, apply);
+  if (n_fns < 4096) fns[n_fns++] = pc;   // (where it is met: a library's constructor, which no symbol may name)
   // as a program at the addresses it was loaded at: no dynamic headers, its addresses moved by its bias, no sections
   u64 po; memcpy(&po, h + 32, 8); u8 *p = img + po; u16 pn; memcpy(&pn, h + 56, 2);
   if (po + 56u * pn <= size) for (unsigned i = 0; i < pn; i++) {

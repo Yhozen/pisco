@@ -24,6 +24,8 @@ fastfetch: Locale: C
 bash: 5.2.37, 42, 6 parts of a version
 proc: lifted when it first ran, exit 5
 alpine: a program of a distribution, dynamically linked (BusyBox v1.37.0)
+dyn: hello lifted from a library, 42, ops 14 49
+dyn: a plugin opened: 4 sorted: apple fig kiwi pear
  _____________________________
 < Hello from the lifted Linux >
  -----------------------------

@@ -40,7 +40,8 @@
 #            the first time) booted by `pisco run` in Node: its console must be the same twice, its boot up to "Run
 #            /init as init process" recipes/linux/traces/boot.txt (the compiler's name and the kernel's sizes left
 #            out), and its programs what they print on QEMU (programs.txt): /bin/proc among them, which no build lifts
-#            (the host lifts it when it first runs, web/lift.mjs; out/lift-cache keeps it). Then the kernel with /bin/sh as its first
+#            (the host lifts it when it first runs, web/lift.mjs; out/lift-cache keeps it), Alpine's busybox on musl's
+#            loader, and fixtures/linux-dyn with a library it is linked against and one it opens. Then the kernel with /bin/sh as its first
 #            program, typed into through the console (recipes/linux/console-input.txt): what it prints from there must
 #            be traces/console.txt. Then with a disk (SW_DISK=16M: virtio's block device): /init formats it, writes it
 #            and reads it again. KERNEL_RECORD=1 records the traces again

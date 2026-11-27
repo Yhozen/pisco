@@ -326,11 +326,27 @@ module of its own, and print what they print on QEMU.
 
 The loader (669 KB) lifts in about a minute and busybox (803 KB) in two, on four cores; from the cache, nothing.
 
+## What it took (K13): libraries
+
+`/init` runs `/bin/dyn` (`fixtures/linux-dyn`, linked against Alpine's musl), which has libraries of its own:
+`libgreet.so`, which it is linked against (a constructor, a table of function pointers, a call through its PLT), and
+`libplug.so`, which it opens itself (`dlopen`) and calls by name (`dlsym`). Each is lifted into a module of its own
+when its code is first met, and they print what they print on QEMU.
+
+A library's code is met in the middle of a run, not where a program starts: the loader calls its constructor, or the
+program calls into it. There the stack holds no auxiliary vector, so the machine finds the image another way: the
+nearest ELF header below the code, on a page that is there (the loader has read the library's headers and dynamic
+tables), whose executable segments hold it. Its bias is where its first segment is. The loader has relocated it
+already, so its image is taken as it is, and the address where it was met is a function start the lifter is told of
+(a constructor no symbol names).
+
 ## Limits
 
-- In the page only programs lifted when the image is built run; in Node any program is lifted when it first runs,
-  static or dynamically linked. A library the loader opens (`dlopen`, or a program's own shared libraries beside
-  musl's) is not lifted yet: its code is met inside the loader's run, not at a program's entry point.
+- In the page only programs lifted when the image is built run; in Node any program or library is lifted when its
+  code is first met, static or dynamically linked.
+- A library's image is taken when its code is first met, with its data as it is then: a library whose data the
+  program has written before calling it (no constructor) has another image, and another lift, when that data
+  differs.
 - Model-specific registers the machine does not know read as 0 where a CPU raises #GP, which some of the kernel's
   `rdmsr_safe` callers would want.
 - A store that faults between its read and its write (an add to memory whose page must be copied) reads again after
@@ -357,4 +373,5 @@ The loader (669 KB) lifts in about a minute and busybox (803 KB) in two, on four
 | K10 | programs lifted when they first run (Node: from the initramfs, cached by sha256) | done |
 | K11 | programs lifted from their image in memory: from the disk, a pipe, anywhere | done |
 | K12 | a distribution's program, position-independent and dynamically linked: Alpine's busybox on musl's loader | done |
-| K13 | shared libraries the loader opens, a network, snapshots | next |
+| K13 | libraries: one a program is linked against, one it opens (`dlopen`), each lifted when its code is first met | done |
+| K14 | a network, snapshots | next |
