@@ -166,10 +166,13 @@ and reports a hardware skip. To require both paths, run
 KVM_REQUIRED=1 tests/run.sh kvm
 ```
 
-Each path must match the FNV checksum for empty input, 257 bytes and the benchmark's 64 MiB
-(`48e7c13380222325`). The hardware run must also return through KVM exactly once per input. The probe runs a
-freestanding function. A title host would additionally need an image loader, guest services and devices. KVM
-here requires an x86-64 host CPU. An Apple Silicon Mac can run x86 code through PISCO's lift. [Probe source](../tests/kvm/)
+On an x86-64 GitHub Actions runner both paths matched for empty input, 257 bytes and the benchmark's 64 MiB
+(`48e7c13380222325`). The host counted three returns at the expected halt instruction on the KVM path and zero
+on the lifted path. [Hardware run](https://github.com/Yhozen/pisco/actions/runs/46000100817)
+
+The probe runs a freestanding function. A title host would additionally need an image loader, guest services
+and devices. KVM here requires an x86-64 host CPU. An Apple Silicon Mac can run x86 code through PISCO's lift.
+[Probe source](../tests/kvm/)
 
 ## Sources
 

@@ -54,7 +54,7 @@ pub fn run(kvm: &Kvm, text: &[u8], entry: u32, input: &[u8]) -> Result<u64> {
             slot: 0,
             guest_phys_addr: 0,
             memory_size: size as u64,
-            userspace_addr: ram.as_ptr() as u64,
+            userspace_addr: ram.as_mut_ptr() as u64,
             flags: 0,
         })?;
     }
