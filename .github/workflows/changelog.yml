@@ -1,0 +1,31 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# The changelog on GitHub Pages (the gh-pages branch's index.html), from changelog/*.md (tools/changelog.mjs): when an
+# entry reaches main, a video release it names that is still a draft is published, and the page is drawn again.
+name: changelog
+on:
+  push:
+    branches: [main]
+    paths: ['changelog/**', 'tools/changelog.mjs', '.github/workflows/changelog.yml']
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency: { group: gh-pages, cancel-in-progress: false }
+jobs:
+  page:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }   # the commit that added each entry names its pull request
+      - uses: actions/setup-node@v4
+        with: { node-version: 24 }
+      - uses: actions/checkout@v4
+        with: { ref: gh-pages, path: pages }
+      - run: node tools/changelog.mjs --publish --page pages/index.html
+        env: { GH_TOKEN: "${{ github.token }}" }
+      - name: publish when it changed
+        run: |
+          cd pages
+          git add -A
+          if git diff --cached --quiet; then echo "no change"; exit 0; fi
+          git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" commit -m "changelog for ${GITHUB_SHA::7}"
+          git push

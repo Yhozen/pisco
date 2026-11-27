@@ -274,6 +274,9 @@ impl Image {
     fn bytes(&self, va: u64) -> Option<&[u8]> {
         self.sections.iter().find(|(a, d, _)| va >= *a && va < *a + d.len() as u64).map(|(a, d, _)| &d[(va - a) as usize..])
     }
+    fn u8(&self, va: u64) -> Option<u8> {
+        self.bytes(va).and_then(|b| b.first().copied())
+    }
     fn u32(&self, va: u64) -> Option<u32> {
         self.bytes(va).filter(|b| b.len() >= 4).map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]))
     }
@@ -346,17 +349,33 @@ fn table_bound(prev: &[&Instruction], load_ip: u64, index: Register) -> Option<u
 /// - relative: `lea B,[rip+T] ... movsxd R,[B+I*4]; add R,B; jmp R` (LLVM, GCC; B may be set far earlier);
 /// - image-relative (MSVC): `lea B,[__ImageBase] ... mov R32,[B+I*4+rva]; add R,B; jmp R`.
 /// The bound comes from the `cmp I,N; ja` before it; without one, entries are read while they land in the function.
+/// The bound of a jump table whose block is reached by a branch from far away (GCC puts the table's block at the end
+/// of the function: `cmp I,N; jbe <block>` near its start): the compare before a conditional branch to the block.
+fn table_bound_by_branch(insns: &BTreeMap<u64, Instruction>, load: &Instruction, index: Register) -> Option<u64> {
+    // the block's start: back from the load while the instruction before falls through to the next one
+    let mut start = load.ip();
+    for (_, i) in insns.range(..load.ip()).rev() {
+        if i.next_ip() != start || !matches!(i.flow_control(), FlowControl::Next | FlowControl::Call) { break; }
+        start = i.ip();
+    }
+    for (_, j) in insns.iter() {
+        if j.flow_control() != FlowControl::ConditionalBranch || j.near_branch_target() != start { continue; }
+        let prev: Vec<&Instruction> = std::iter::once(load).chain(std::iter::once(j)).chain(insns.range(..j.ip()).rev().take(16).map(|(_, i)| i)).collect();
+        if let Some(b) = table_bound(&prev, load.ip(), index) { return Some(b); }
+    }
+    None
+}
 /// A `switch` of code that is not position-independent (a static Linux program): `jmp [I*8+T]`, T a table of
 /// absolute addresses in data. Bounded by the `cmp I,N; ja` before it, else read while the entries land between the
 /// function's start and the next function a symbol names.
 fn jump_table_abs64(img: &Image, insns: &BTreeMap<u64, Instruction>, jmp: &Instruction, entry: u64) -> Option<Vec<u64>> {
-    if jmp.op0_kind() != OpKind::Memory || jmp.memory_base() != Register::None || jmp.memory_index() == Register::None || jmp.memory_index_scale() != 8 || jmp.segment_prefix() != Register::None {
+    if jmp.op0_kind() != OpKind::Memory || jmp.memory_base() != Register::None || jmp.memory_index() == Register::None || jmp.memory_index_scale() != 8 || !matches!(jmp.segment_prefix(), Register::None | Register::DS) {   // (DS: `notrack`, CET's)
         return None;
     }
     let table = jmp.memory_displacement64();
     if img.is_code(table) { return None; }
     let prev: Vec<&Instruction> = std::iter::once(jmp).chain(insns.range(..jmp.ip()).rev().take(32).map(|(_, i)| i)).collect();
-    let bound = table_bound(&prev, jmp.ip(), jmp.memory_index().full_register());
+    let bound = table_bound(&prev, jmp.ip(), jmp.memory_index().full_register()).or_else(|| table_bound_by_branch(insns, jmp, jmp.memory_index().full_register()));
     let end = img.seeds.iter().copied().find(|&s| s > entry).unwrap_or(u64::MAX);
     let mut out = Vec::new();
     for k in 0..bound.unwrap_or(1024).min(4096) {
@@ -411,37 +430,51 @@ fn jump_table(img: &Image, insns: &BTreeMap<u64, Instruction>, jmp: &Instruction
     // `cmp R8,0x80; jae loop; lea R9,[R8+0xF]; and R9,-16; mov R11,R9; shr R11,4; mov R11D,[R10+R11*4+rva]`):
     // the compared maximum carried forward to the load. Tried first: it follows the value live at the load,
     // where the backward search below can pick a compare of an older value of the same register.
-    let mut sim = None;
-    {
-        let fwd: Vec<&Instruction> = prev.iter().rev().copied().collect(); // in program order, up to the load
-        let at_load = fwd.iter().position(|i| i.ip() == load.ip());
-        if let Some(at_load) = at_load {
-            for c in (0..at_load).rev() {
-                let i = fwd[c];
-                if i.mnemonic() != Mnemonic::Cmp || i.op_kind(0) != OpKind::Register || !is_imm(i.op_kind(1)) || c + 1 >= at_load { continue; }
-                let max = match fwd[c + 1].mnemonic() { Mnemonic::Jae | Mnemonic::Jb => i.immediate(1).wrapping_sub(1), Mnemonic::Ja | Mnemonic::Jbe => i.immediate(1), _ => continue };
-                let mut vals: std::collections::HashMap<Register, u64> = std::collections::HashMap::new();
-                vals.insert(i.op0_register().full_register(), max);
-                for j in &fwd[c + 2..at_load] {
-                    if j.op_count() == 0 || j.op_kind(0) != OpKind::Register { continue; }
-                    let d = j.op0_register().full_register();
-                    let src = |n: u32| if j.op_kind(n) == OpKind::Register { vals.get(&j.op_register(n).full_register()).copied() } else { None };
-                    let v = match j.mnemonic() {
-                        Mnemonic::Mov | Mnemonic::Movzx | Mnemonic::Movsxd => src(1),
-                        Mnemonic::Lea if j.memory_index() == Register::None => vals.get(&j.memory_base().full_register()).map(|b| b.wrapping_add(j.memory_displacement64())),
-                        Mnemonic::And if is_imm(j.op_kind(1)) => vals.get(&d).map(|x| x & j.immediate(1)),
-                        Mnemonic::Shr if is_imm(j.op_kind(1)) => vals.get(&d).map(|x| x >> (j.immediate(1) & 63)),
-                        Mnemonic::Add if is_imm(j.op_kind(1)) => vals.get(&d).map(|x| x.wrapping_add(j.immediate(1))),
-                        _ => None,
-                    };
-                    match v { Some(v) => { vals.insert(d, v); } None => { vals.remove(&d); } }
-                }
-                if let Some(&v) = vals.get(&index) { if v < 4096 { sim = Some(v + 1); } }
-                break;
+    let sim_at = |at: u64, index: Register| -> Option<u64> {
+        let fwd: Vec<&Instruction> = prev.iter().rev().copied().collect(); // in program order, up to the jump
+        let at_load = fwd.iter().position(|i| i.ip() == at)?;
+        for c in (0..at_load).rev() {
+            let i = fwd[c];
+            if i.mnemonic() != Mnemonic::Cmp || i.op_kind(0) != OpKind::Register || !is_imm(i.op_kind(1)) || c + 1 >= at_load { continue; }
+            let max = match fwd[c + 1].mnemonic() { Mnemonic::Jae | Mnemonic::Jb => i.immediate(1).wrapping_sub(1), Mnemonic::Ja | Mnemonic::Jbe => i.immediate(1), _ => continue };
+            let mut vals: std::collections::HashMap<Register, u64> = std::collections::HashMap::new();
+            vals.insert(i.op0_register().full_register(), max);
+            for j in &fwd[c + 2..at_load] {
+                if j.op_count() == 0 || j.op_kind(0) != OpKind::Register { continue; }
+                let d = j.op0_register().full_register();
+                let src = |n: u32| if j.op_kind(n) == OpKind::Register { vals.get(&j.op_register(n).full_register()).copied() } else { None };
+                let v = match j.mnemonic() {
+                    Mnemonic::Mov | Mnemonic::Movzx | Mnemonic::Movsxd => src(1),
+                    Mnemonic::Lea if j.memory_index() == Register::None => vals.get(&j.memory_base().full_register()).map(|b| b.wrapping_add(j.memory_displacement64())),
+                    Mnemonic::And if is_imm(j.op_kind(1)) => vals.get(&d).map(|x| x & j.immediate(1)),
+                    Mnemonic::Shr if is_imm(j.op_kind(1)) => vals.get(&d).map(|x| x >> (j.immediate(1) & 63)),
+                    Mnemonic::Add if is_imm(j.op_kind(1)) => vals.get(&d).map(|x| x.wrapping_add(j.immediate(1))),
+                    _ => None,
+                };
+                match v { Some(v) => { vals.insert(d, v); } None => { vals.remove(&d); } }
+            }
+            return vals.get(&index).copied().filter(|&v| v < 4096).map(|v| v + 1);
+        }
+        None
+    };
+    // MSVC's two-level switch: the index is a byte of an index table, `movzx I,byte [B+J+rva]` with the same image
+    // base (`cmp J,N; ja default; movsxd J; movzx eax,[rdx+rax+itab]; mov ecx,[rdx+rax*4+tab]; add rcx,rdx; jmp rcx`):
+    // the table has as many entries as the largest byte among the index table's J+1 says. Tried first: a compare
+    // found for I itself would be J's, the index table's length
+    let mut bound = None;
+    if img.is_base(base) {
+        let def = prev.iter().filter(|i| i.ip() < load.ip()).find(|i| i.op_count() >= 1 && i.op_kind(0) == OpKind::Register && i.op0_register().full_register() == index);
+        if let Some(m) = def.filter(|m| m.mnemonic() == Mnemonic::Movzx && m.op_kind(1) == OpKind::Memory && m.memory_size() == iced_x86::MemorySize::UInt8
+            && m.memory_base().full_register() == base_reg && m.memory_index() != Register::None && m.memory_index_scale() == 1) {
+            let j = m.memory_index().full_register();
+            if let Some(nj) = sim_at(m.ip(), j).or_else(|| table_bound(&prev, m.ip(), j)) {
+                let itab = base + m.memory_displacement64();
+                let max = (0..nj).filter_map(|k| img.u8(itab + k)).max();
+                if let Some(mx) = max { bound = Some(u64::from(mx) + 1); }
             }
         }
     }
-    let bound = sim.or_else(|| table_bound(&prev, load.ip(), index));
+    let bound = bound.or_else(|| sim_at(load.ip(), index)).or_else(|| table_bound(&prev, load.ip(), index)).or_else(|| table_bound_by_branch(insns, &load, index));
     if bound.is_none() && std::env::var_os("LIFTER_DEBUG").is_some() { eprintln!("table without bound: jmp at 0x{:x}, load at 0x{:x}", jmp.ip(), load.ip()); }
     let bound = Some(bound?); // a table with no bound is not trusted: its end is unknown
     // a target may be in another part of the function (GCC's .cold): any code will do
@@ -2747,6 +2780,15 @@ fn landing_pads(img: &Image, entry: u64) -> Vec<u64> {
     if ["__CxxFrameHandler3", "__GSHandlerCheck_EH"].iter().any(|n| is_import_thunk(img, handler, n)) {
         return msvc_continuations(img, ib, img.u32(data).map(|r| ib + u64::from(r)).unwrap_or(0), entry, end);
     }
+    // FH4 (__CxxFrameHandler4, the default of current MSVC for x64): the compressed FuncInfo4 names each catch's
+    // continuations itself; the funclets' own `lea rax,[continuation]` are read as for FH3 too
+    if handler_is(img, handler, "__CxxFrameHandler4") {
+        let Some(fi) = img.u32(data).map(|r| ib + u64::from(r)) else { return vec![] };
+        let Some(f) = fh4(img, ib, fi, entry) else { return vec![] };
+        let mut out: Vec<u64> = f.continuations.into_iter().filter(|&x| x >= entry && x < end).collect();
+        for x in funclet_continuations(img, &f.handlers, entry, end) { if !out.contains(&x) { out.push(x); } }
+        return out;
+    }
     // __C_specific_handler (through its import thunk): a scope table; jump targets are the __except blocks
     if is_import_thunk(img, handler, "__C_specific_handler") {
         let n = img.u32(data).unwrap_or(0).min(4096) as u64;
@@ -2778,11 +2820,15 @@ fn throw_info_functions(img: &Image, insns: &BTreeMap<u64, Instruction>, call: &
 fn msvc_funclets(img: &Image, entry: u64) -> Vec<u64> {
     let mut out = Vec::new();
     let (Some(&info), Some(h)) = (img.unwind.get(&entry), unwind_handler(img, entry)) else { return out };
-    if !["__CxxFrameHandler3", "__GSHandlerCheck_EH"].iter().any(|n| is_import_thunk(img, h, n)) { return out; }
     let Some(b) = img.bytes(info) else { return out };
     let ib = img.base_of(entry);
     let data = info + 4 + 2 * ((b[2] as u64 + 1) & !1) + 4;
     let Some(fi) = img.u32(data).map(|r| ib + u64::from(r)) else { return out };
+    if handler_is(img, h, "__CxxFrameHandler4") {
+        if let Some(f) = fh4(img, ib, fi, entry) { out.extend(f.actions.into_iter().chain(f.handlers).filter(|&a| img.is_code(a))); }
+        return out;
+    }
+    if !["__CxxFrameHandler3", "__GSHandlerCheck_EH"].iter().any(|n| is_import_thunk(img, h, n)) { return out; }
     if !(0x19930520..=0x19930522).contains(&img.u32(fi).unwrap_or(0)) { return out; }
     // the unwind map's cleanup actions (destructors run while unwinding): {to state, action}
     let (n_state, umap) = (img.u32(fi + 4).unwrap_or(0).min(4096) as u64, ib + u64::from(img.u32(fi + 8).unwrap_or(0)));
@@ -2792,6 +2838,77 @@ fn msvc_funclets(img: &Image, entry: u64) -> Vec<u64> {
         let e = tries + 20 * t;
         let (n_catch, handlers) = (img.u32(e + 12).unwrap_or(0).min(64) as u64, ib + u64::from(img.u32(e + 16).unwrap_or(0)));
         for k in 0..n_catch { if let Some(r) = img.u32(handlers + 20 * k + 12) { let a = ib + u64::from(r); if img.is_code(a) { out.push(a); } } }
+    }
+    out
+}
+/// MSVC FH4's FuncInfo4 (vcruntime's ehdata4.h), for the function at `entry`: the unwind map's actions (destructor
+/// funclets), each catch's funclet and the continuations it lists. Numbers are compressed (the low bits of the first
+/// byte say how many bytes: xxxxxxx0 one, xxxxxx01 two, xxxxx011 three, xxxx0111 four, 1111 a 32-bit value after
+/// it); displacements of tables and funclets are 32-bit image-relative addresses.
+struct Fh4 { actions: Vec<u64>, handlers: Vec<u64>, continuations: Vec<u64> }
+fn fh4_unsigned(img: &Image, at: &mut u64) -> Option<u64> {
+    let b = img.bytes(*at)?;
+    let (len, shift) = match b.first()? & 0x0f { x if x & 1 == 0 => (1, 1), x if x & 3 == 1 => (2, 2), x if x & 7 == 3 => (3, 3), 7 => (4, 4), _ => (5, 0) };
+    if b.len() < len { return None; }
+    let v = if len == 5 { u64::from(u32::from_le_bytes([b[1], b[2], b[3], b[4]])) } else { (0..len).fold(0u64, |v, k| v | u64::from(b[k]) << (8 * k)) >> shift };
+    *at += len as u64;
+    Some(v)
+}
+fn fh4_int(img: &Image, at: &mut u64) -> Option<u32> { let v = img.u32(*at)?; *at += 4; Some(v) }
+fn fh4(img: &Image, ib: u64, fi: u64, entry: u64) -> Option<Fh4> {
+    let mut at = fi;
+    let head = *img.bytes(at)?.first()?; at += 1;
+    let (is_catch, separated, bbt, unwind, tries) = (head & 1 != 0, head & 2 != 0, head & 4 != 0, head & 8 != 0, head & 16 != 0);
+    let _ = (is_catch, separated);
+    if bbt { fh4_unsigned(img, &mut at)?; }
+    let umap = if unwind { Some(ib + u64::from(fh4_int(img, &mut at)?)) } else { None };
+    let tmap = if tries { Some(ib + u64::from(fh4_int(img, &mut at)?)) } else { None };
+    let mut f = Fh4 { actions: vec![], handlers: vec![], continuations: vec![] };
+    if let Some(mut u) = umap {
+        // {next offset << 2 | type (0 none, 1 destructor of an object, 2 of an object through a pointer, 3 a funclet)}, action, object
+        for _ in 0..fh4_unsigned(img, &mut u)?.min(4096) {
+            let ty = fh4_unsigned(img, &mut u)? & 3;
+            if ty != 0 { f.actions.push(ib + u64::from(fh4_int(img, &mut u)?)); }
+            if ty == 1 || ty == 2 { fh4_unsigned(img, &mut u)?; }
+        }
+    }
+    if let Some(mut t) = tmap {
+        // {try low, try high, catch high, handler map}; the handler map: {header, adjectives, type, catch object, funclet, continuations}
+        for _ in 0..fh4_unsigned(img, &mut t)?.min(1024) {
+            for _ in 0..3 { fh4_unsigned(img, &mut t)?; }
+            let mut h = ib + u64::from(fh4_int(img, &mut t)?);
+            for _ in 0..fh4_unsigned(img, &mut h)?.min(64) {
+                let hh = *img.bytes(h)?.first()?; h += 1;
+                if hh & 1 != 0 { fh4_unsigned(img, &mut h)?; }       // adjectives
+                if hh & 2 != 0 { fh4_int(img, &mut h)?; }            // type descriptor
+                if hh & 4 != 0 { fh4_unsigned(img, &mut h)?; }       // catch object's frame offset
+                f.handlers.push(ib + u64::from(fh4_int(img, &mut h)?));
+                for _ in 0..(hh >> 4 & 3).min(2) {                   // continuations: image-relative, or from the function's start
+                    let c = if hh & 8 != 0 { ib + u64::from(fh4_int(img, &mut h)?) } else { entry + fh4_unsigned(img, &mut h)? };
+                    f.continuations.push(c);
+                }
+            }
+        }
+    }
+    Some(f)
+}
+/// Where catch funclets return to: the `lea rax,[continuation]` before each one's `ret`, inside [entry, end)
+fn funclet_continuations(img: &Image, funclets: &[u64], entry: u64, end: u64) -> Vec<u64> {
+    let mut out = Vec::new();
+    for &start in funclets {
+        let mut ip = start;
+        for _ in 0..4096 {
+            let Some(b) = img.bytes(ip) else { break };
+            let mut d = Decoder::with_ip(64, &b[..b.len().min(16)], ip, DecoderOptions::NONE);
+            let i = d.decode();
+            if i.is_invalid() { break; }
+            if i.mnemonic() == Mnemonic::Lea && i.op0_register() == Register::RAX && i.is_ip_rel_memory_operand() {
+                let x = i.ip_rel_memory_address();
+                if x >= entry && x < end && !out.contains(&x) { out.push(x); }
+            }
+            if matches!(i.mnemonic(), Mnemonic::Ret | Mnemonic::Int3) { break; }
+            ip = i.next_ip();
+        }
     }
     out
 }
@@ -2830,6 +2947,23 @@ fn unwind_handler(img: &Image, entry: u64) -> Option<u64> {
     if b.len() < 4 || b[0] >> 3 & 3 == 0 || b[0] >> 3 & 4 != 0 { return None; }
     let h = info + 4 + 2 * ((b[2] as u64 + 1) & !1);
     img.u32(h).map(|r| img.base_of(entry) + u64::from(r)).filter(|&a| img.is_code(a))
+}
+/// A frame handler that is `name` or reaches it: the import (thunk or export), or a local function that calls or jumps
+/// to it within its first instructions (MSVC's __GSHandlerCheck_EH4, linked into the image, checks the frame's
+/// security cookie and then calls __CxxFrameHandler4)
+fn handler_is(img: &Image, at: u64, name: &str) -> bool {
+    if is_import_thunk(img, at, name) { return true; }
+    let mut ip = at;
+    for _ in 0..64 {
+        let Some(b) = img.bytes(ip) else { return false };
+        let mut d = Decoder::with_ip(64, &b[..b.len().min(16)], ip, DecoderOptions::NONE);
+        let i = d.decode();
+        if i.is_invalid() { return false; }
+        if matches!(i.mnemonic(), Mnemonic::Call | Mnemonic::Jmp) && is_near(&i) && is_import_thunk(img, i.near_branch_target(), name) { return true; }
+        if matches!(i.mnemonic(), Mnemonic::Ret | Mnemonic::Int3) { return false; }
+        ip = i.next_ip();
+    }
+    false
 }
 /// `at` is the function `name`: a thunk to its import, or (inside the DLL that has it, as vcruntime has
 /// __C_specific_handler) its export

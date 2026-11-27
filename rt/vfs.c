@@ -7,7 +7,7 @@
 // Writes go to an in-memory overlay (a copy of the file is made on first write); deletes leave a whiteout;
 // listings merge the overlay with the folder. Nothing in the title's folder is ever changed.
 // What persists (the host keeps it between runs, below): S:\ for every title; for a Windows desktop title
-// (rt/windows-x86/glue.c sets vfs_writable_game) also what it writes in its own folder, the top layer over its files
+// (the desktop runtimes' glue.c set vfs_writable_game) also what it writes in its own folder, the top layer over its files
 // (Narbacular Drop's system.opt): the files it changed or made there, whole (files it deletes there are not recorded).
 #include <ctype.h>
 #include <time.h>
@@ -31,7 +31,7 @@ static pthread_mutex_t vfs_lock = PTHREAD_MUTEX_INITIALIZER;
 static u32 hash(const char *s) { u32 h = 2166136261u; while (*s) h = (h ^ (u8)*s++) * 16777619u; return h % BUCKETS; }
 static Node *node_raw(const char *p) { for (Node *n = nodes[hash(p)]; n; n = n->next) if (!strcmp(n->path, p)) return n; return 0; }
 static Node *node_new(const char *p);
-__attribute__((weak)) const int vfs_writable_game = 0;   // rt/windows-x86/glue.c: 1
+__attribute__((weak)) const int vfs_writable_game = 0;   // rt/windows-x86/glue.c and rt/windows-x64/glue.c: 1
 static int persistent(const char *p) { return !strncmp(p, "pls/", 4) || (vfs_writable_game && !strncmp(p, "game/", 5)); }
 static int store_loaded;
 static void store_load(void) {

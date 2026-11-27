@@ -26,9 +26,9 @@ packages  Doom as a console title, XCL's   Stockfish, SimpleTriangleDesktop,    
 | Runtime | Base | Its files | Runs | Next | Its goal |
 |---|---|---|---|---|---|
 | Xbox Series | `base/xbox-series:1` | `rt/gdk/`, `rt/xbox-series/` | Doom (D3D12.X on WebGPU, XAudio2, GameInput, saves), XCL's console test title 50/50 | the rungs in [status.md](status.md#xbox-series) | Minecraft (Bedrock), the Xbox Series build |
-| Windows x64 | `base/windows-x64:1` | `rt/gdk/`, `rt/windows-x64/` | Stockfish 19, Microsoft's SimpleTriangleDesktop and SimplePBR | more desktop D3D12 titles | desktop D3D12 titles |
+| Windows x64 | `base/windows-x64:1` | `rt/gdk/`, `rt/windows-x64/` | Stockfish 19, Microsoft's SimpleTriangleDesktop and SimplePBR | Desire, a small D3D12 game on its own engine ([desire.md](desire.md)) | desktop D3D12 titles |
 | Windows x86 | `base/windows-x86:1` | `rt/windows-x86/` | Narbacular Drop, playable; Tag: The Power of Paint into its second level (Direct3D 9 shaders as WGSL, D3DX's effects, FMOD Ex) | Tag played by hand on a real GPU (T6's check), then its later levels | 32-bit Direct3D 9 games of the 2000s |
-| Linux x64 | `base/linux-x64:1` | `rt/linux-x64/` | fastfetch 2.71.0; neofetch 7.1.0 on bash and busybox, its processes forked and executed ([fastfetch.md](fastfetch.md), [neofetch.md](neofetch.md)) | threads, signals, a file system that can be written | statically linked command-line programs |
+| Linux x64 | `base/linux-x64:1` | `rt/linux-x64/` | fastfetch 2.71.0; neofetch 7.1.0 on bash and busybox, its processes forked and executed; cowsay on perl 5.44 ([fastfetch.md](fastfetch.md), [neofetch.md](neofetch.md), [cowsay.md](cowsay.md)) | threads, signals, a file system that can be written | statically linked command-line programs |
 
 A new runtime is a new folder and a new base; a new title of an existing runtime is a recipe.
 
@@ -48,7 +48,8 @@ A new runtime is a new folder and a new base; a new title of an existing runtime
 5. **Licences checked.** Our own code is GPL-2.0-or-later with SPDX headers; `reuse lint` passes; code from others
    keeps its licence and has a row in `THIRD_PARTY.md`.
 6. **One pull request per milestone, none straight to `main`;** the docs (this file, `status.md`, `journey.md`, the
-   title's page, the progress map) change in the same pull request as the code.
+   title's page, the progress map) change in the same pull request as the code, and so does its entry in the
+   changelog (`changelog/README.md`): a file there, a video only as a release.
 
 ## Now (2026-11-26)
 
@@ -60,6 +61,14 @@ A new runtime is a new folder and a new base; a new title of an existing runtime
 | A4 | these docs; the progress map by runtime | done |
 | A5 | CI for the tests that need no game files, and `reuse lint` | done |
 | T0 to T5 | Tag: The Power of Paint on the Windows x86 runtime: census and oracle, lift and start, the main loop, the shader translator, pixels, sound and input | done ([tag.md](tag.md#progress)) |
-| T6 | Tag playable: the docs and how to play it are done; playing it by hand on a real GPU is still to do | under way |
+| T6 | Tag playable: played by hand on a real GPU through level 3 | done |
 | L0 to L4 | a fourth runtime, Linux x64: the core's neutral parts apart, the lifter reads an ELF, a C library starts and finds a machine, fastfetch in Node and in the page | done ([fastfetch.md](fastfetch.md#progress)) |
 | N0 to N3 | Linux processes (fork, execve, wait4, pipes), images of several programs, neofetch on bash and busybox in Node and in the page | done ([neofetch.md](neofetch.md#progress)) |
+| D0 | Desire (DESI:Re v0.1) on the Windows x64 runtime: census, recipe (`pisco build` reads a zip and adds the user's C++ runtime DLLs), and the oracle (Direct3D 12 under Wine on lavapipe) | done ([desire.md](desire.md#progress)) |
+| D1 | Desire lifted and started: the first frame in Node, strict, with Wine's seeds drawing Wine's maze | done ([desire.md](desire.md#progress)) |
+| D2 | MSVC's FH4 exception tables in the lifter | done ([desire.md](desire.md#progress)) |
+| D3 | Desire's main loop in Node on the virtual clock: keyboard and window messages for 64-bit titles | done ([desire.md](desire.md#progress)) |
+| D4 | Desire's pixels in Chrome against Wine's | done ([desire.md](desire.md#progress)) |
+| D5 | Desire playable by hand: the docs and how to play it are done; playing it by hand on a real GPU is still to do | under way |
+| B0 | experimental, optional: development on boat.dev sandboxes (a snapshot with everything built, the tests on several sandboxes at once); cowsay ported that way | done ([dev-machines.md](dev-machines.md)) |
+| B1 | the changelog on GitHub Pages drawn from `changelog/*.md` by a workflow on `main`, video releases published by it | done ([changelog/README.md](../changelog/README.md)) |

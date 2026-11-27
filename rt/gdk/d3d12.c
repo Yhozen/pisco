@@ -259,17 +259,20 @@ IMP(d3d12, Device_CreateCommandList1) { // (node mask, type, flags, riid, ppv): 
 IMP(d3d12, Device_CheckFeatureSupport) { // (feature, data, size)
   u32 f = (u32)ARG(1); u64 p = ARG(2), n = ARG(3);
   switch (f) {
-  case 0: if (n >= 60) { memset((void *)GP(p), 0, n); M32(p + 16) = 1; M32(p + 8) = 3; } RET(S_OK); return; // D3D12_OPTIONS: tiled resources tier 1, binding tier 3
+  // D3D12_OPTIONS {double ops, logic op, min precision (+8), tiled tier (+12), binding tier (+16), ..., GPU VA bits
+  // per resource (+36), ..., resource heap tier (+56)}: binding tier 3, heap tier 1 (a heap holds one kind of
+  // resource: buffers, targets or other textures); tiled resources on the console only
+  case 0: if (n >= 60) { Obj *d = d3d12_obj(ARG(0)); memset((void *)GP(p), 0, n); M32(p + 8) = 3; M32(p + 12) = d && d->console ? 1 : 0; M32(p + 16) = 3; M32(p + 36) = 40; M32(p + 56) = 1; } RET(S_OK); return;
   case 2: if (n >= 16) { u32 cnt = M32(p), best = 0; for (u32 i = 0; i < cnt; i++) { u32 lv = M32(M64(p + 8) + 4 * i); if (lv <= 0xc100 && lv > best) best = lv; } M32(p + 12) = best; } RET(S_OK); return; // feature levels
   case 3: if (n >= 12) { M32(p + 4) = 0xFFFFFFFF; M32(p + 8) = 0xFFFFFFFF; } RET(S_OK); return; // format support: everything
   case 7: if (n >= 4) M32(p) = 0x60; RET(S_OK); return; // shader model 6.0
-  case 1: if (n >= 8) { M32(p) = 0; M32(p + 4) = 1; } RET(S_OK); return; // architecture: UMA
+  case 1: if (n >= 16) { Obj *d = d3d12_obj(ARG(0)); int uma = d && d->console; M32(p + 4) = 0; M32(p + 8) = uma; M32(p + 12) = uma; } RET(S_OK); return; // architecture {node, tile-based, UMA, cache-coherent UMA}: UMA on the console
   case 4: if (n >= 16) { M32(p + 12) = 1; } RET(S_OK); return; // multisample quality levels
   case 27: memset((void *)GP(p), 0, n); RET(S_OK); return; // D3D12_OPTIONS5: no render passes tier, no raytracing (WebGPU has none)
   case 5: if (n >= 8) M8(p + 4) = 1; RET(S_OK); return; // format info: one plane
   case 6: if (n >= 8) { M32(p) = 40; M32(p + 4) = 40; } RET(S_OK); return; // GPU virtual address bits per resource / process
   case 12: if (n >= 4) { if (M32(p) > 2) M32(p) = 2; } RET(S_OK); return; // root signature: up to version 1.1
-  case 16: memset((void *)GP(p + 4), 0, n > 4 ? n - 4 : 0); if (n >= 12) M32(p + 8) = 1; RET(S_OK); return; // architecture1 {node, tile-based, UMA, cache-coherent UMA, isolated MMU}: UMA
+  case 16: { Obj *d = d3d12_obj(ARG(0)); int uma = d && d->console; memset((void *)GP(p + 4), 0, n > 4 ? n - 4 : 0); if (n >= 16) { M32(p + 8) = uma; M32(p + 12) = uma; } RET(S_OK); return; } // architecture1 {node, tile-based, UMA, cache-coherent UMA, isolated MMU}: UMA on the console
   case 19: if (n >= 4) M32(p) = 0; RET(S_OK); return; // shader cache: none
   case 20: if (n >= 12) M32(p + 8) = M32(p + 4) == 0; RET(S_OK); return; // command queue priority: normal only
   default: { // an options structure we do not know: all zero (nothing optional supported)
@@ -448,6 +451,42 @@ IMP(d3d12, Device_CreateHeap) { // ({size, properties {type, cpu page, pool, ...
   if (d->console) { h->va = rt_gfx_alloc(h->size, 65536, (h->type == 2 || h->type == 3) && h->size <= (64ull << 20) ? 3 : 0); if (!h->va) { RET(E_OUTOFMEMORY); return; } }
   RET(d3d12_give(&h->o, ARG(2), ARG(3)));
 }
+// The newer creation methods (ID3D12Device4 to 10; D3D12 Memory Allocator calls them when the device has them):
+// a D3D12_RESOURCE_DESC1 starts with the 56 bytes of a D3D12_RESOURCE_DESC (then a sampler-feedback mip region:
+// 72 bytes in an array), a protected session is never given, and a layout instead of a state changes nothing here.
+IMP(d3d12, Device_CreateCommittedResource1) { // (heap properties, heap flags, desc, state, clear, session, riid, ppv)
+  u64 hp = ARG(1); RET(d3d12_create_resource(d3d12_obj(ARG(0)), hp ? M32(hp) : 1, hp ? M32(hp + 4) : 0, ARG(3), 0, ARG(7), ARG(8)));
+}
+IMP(d3d12, Device_CreateCommittedResource2) { imp_d3d12_Device_CreateCommittedResource1(c); } // (..., desc1, state, clear, session, riid, ppv)
+IMP(d3d12, Device_CreateCommittedResource3) { // (heap properties, heap flags, desc1, layout, clear, session, castable count, castable formats, riid, ppv)
+  u64 hp = ARG(1); RET(d3d12_create_resource(d3d12_obj(ARG(0)), hp ? M32(hp) : 1, hp ? M32(hp + 4) : 0, ARG(3), 0, ARG(9), ARG(10)));
+}
+IMP(d3d12, Device_CreateHeap1) { // (desc, session, riid, ppv)
+  Obj *d = d3d12_obj(ARG(0)); HeapObj *h = obj_new(C_HEAPOBJ, sizeof(HeapObj), d->console); u64 desc = ARG(1);
+  h->size = M64(desc); h->type = M32(desc + 8); h->cpu_page = M32(desc + 12);
+  if (d->console) { h->va = rt_gfx_alloc(h->size, 65536, (h->type == 2 || h->type == 3) && h->size <= (64ull << 20) ? 3 : 0); if (!h->va) { RET(E_OUTOFMEMORY); return; } }
+  RET(d3d12_give(&h->o, ARG(3), ARG(4)));
+}
+IMP(d3d12, Device_CreatePlacedResource1) { imp_d3d12_Device_CreatePlacedResource(c); } // (heap, offset, desc1, state, clear, riid, ppv)
+IMP(d3d12, Device_CreatePlacedResource2) { // (heap, offset, desc1, layout, clear, castable count, castable formats, riid, ppv)
+  Obj *ho = d3d12_obj(ARG(1)); HeapObj *h = ho && ho->cls == C_HEAPOBJ ? (HeapObj *)ho : 0;
+  u64 at = h && h->va && M32(ARG(3)) == 1 ? h->va + ARG(2) : 0;
+  RET(d3d12_create_resource(d3d12_obj(ARG(0)), h ? h->type : 1, h ? h->cpu_page : 0, ARG(3), at, ARG(8), ARG(9)));
+}
+// (hidden return, visible mask, count, descs, [info1 per resource: offset, alignment, size]): resources one after
+// the other at 64 KiB
+static void alloc_info(u64 ret, u64 n, u64 descs, u64 stride, u64 info1) {
+  u64 size = 0;
+  for (u64 i = 0; i < n; i++) {
+    u64 s = d3d12_alloc_info((u8 *)GP(descs + stride * i));
+    if (info1) { M64(info1 + 24 * i) = size; M64(info1 + 24 * i + 8) = 65536; M64(info1 + 24 * i + 16) = s; }
+    size += s;
+  }
+  M64(ret) = size; M64(ret + 8) = 65536;
+}
+IMP(d3d12, Device_GetResourceAllocationInfo1) { alloc_info(ARG(1), ARG(3), ARG(4), 56, ARG(5)); RET(ARG(1)); }
+IMP(d3d12, Device_GetResourceAllocationInfo2) { alloc_info(ARG(1), ARG(3), ARG(4), 72, ARG(5)); RET(ARG(1)); }
+IMP(d3d12, Device_GetResourceAllocationInfo3) { alloc_info(ARG(1), ARG(3), ARG(4), 72, ARG(7)); RET(ARG(1)); } // (..., descs1, castable counts, castable formats, info1)
 IMP(d3d12, Device_CreateQueryHeap) { // ({type, count, node}, riid, ppv)
   Obj *d = d3d12_obj(ARG(0)); QueryHeap *q = obj_new(C_QUERYHEAP, sizeof(QueryHeap), d->console);
   q->type = M32(ARG(1)); q->count = M32(ARG(1) + 4); RET(d3d12_give(&q->o, ARG(2), ARG(3)));

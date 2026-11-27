@@ -545,6 +545,46 @@ joins them (the process table, the pipes) is the host's, in one SharedArrayBuffe
   pointers: bash's lifted code shrank by 40 %, and the parser is a loop again.
 - **The page became a terminal**: neofetch draws its logo, then moves the cursor up and writes beside it.
 
+### 3.26 Desire: a Direct3D 12 game on its own engine, and MSVC's FH4 (2026-11-26)
+
+Desire (DESI:Re v0.1), a small maze escape on its author's C++20 / Direct3D 12 engine, is the Windows x64
+runtime's first third-party game ([desire.md](desire.md)). It came as a zip with no installer and without
+Microsoft's C++ runtime, compiles its HLSL with `D3DCompile` when it starts, reads PNGs through WIC and draws its
+maze from `std::random_device`. Wine ran it on vkd3d and lavapipe from the first try, which made it the first
+Direct3D 12 oracle. What the comparison found:
+
+- **Random, but repeatable**: Wine's relay of its own `msvcp140` prints what `_Random_device` returned. Our `rand_s`
+  never asks the host; given those two values, the maze the lifted `mt19937` writes is Wine's, byte for byte.
+- **MSVC's two-level switch** (a byte index table, then a table of offsets) was read with a bound from the wrong
+  compare: 35 of Desire's tables were left as indirect jumps, and one of them was the first stray jump.
+- **Long log lines were cut at 1 KiB**: the shaders `D3DCompile` logs for compilation reached dxc half written,
+  and dxc's errors pointed into Japanese comments that had nothing to do with it.
+- **FH4** needed two things: the lifter reading the compressed FuncInfo4 (most functions name a local
+  `__GSHandlerCheck_EH4`, not the import), and `RtlUnwindEx` clearing the dispatcher context's `ScopeIndex` for
+  each frame. `__C_specific_handler` had left its count there, and FH4's handler aborts on a state it did not set.
+- Under Wine on lavapipe the game runs at 2 to 6 frames a second, and its frame time is capped at 0.1 s: held keys
+  do not mean distances there, so the walk to the goal is checked in our runtime only, on its virtual clock.
+
+### 3.27 Faster machines, and cowsay (2026-11-27)
+
+Asked what slowed the work most, the answer from the sessions before was compiling lifted C, not the tests. Boat.dev
+sandboxes were tried, as an experimental option ([dev-machines.md](dev-machines.md)): a snapshot with the toolchains, the builds and
+pisco's caches (`tools/boat.sh bake`, ten minutes), sandboxes from it with this working tree in 15 seconds, and the
+test steps on seven of them at once (75 seconds for all, where one machine took a quarter of an hour).
+
+The sandboxes are Ubuntu with gcc 13. The same programs built there showed what one compiler had hidden: a jump
+table's bound far from its jump (busybox's `rpm`), and gcc 13's `notrack` jumps, which the lifter did not take for
+switches, so perl's parser became a recursion. cowsay, on perl built from its source, was the task that measured
+it all: 14 minutes from the first command on a fresh sandbox to six runs equal to native perl in Node and Chrome.
+
+### 3.28 The changelog from files (2026-11-27)
+
+The changelog on GitHub Pages was edited by hand on the `gh-pages` branch after each merge, apart from the code it
+described. Now each pull request adds its entry as a file in `changelog/` (the idea of
+[changesets](https://github.com/changesets/changesets), without versions: the files stay, the page is drawn from all
+of them), and on `main` `.github/workflows/changelog.yml` draws the page again with `tools/changelog.mjs` and publishes
+the draft release that holds the entry's video. The eleven entries written by hand became the first eleven files.
+
 ## 4. Roadblocks
 
 ### Resolved
@@ -592,7 +632,7 @@ joins them (the process table, the pipes) is the host's, in one SharedArrayBuffe
 | O1 | **Graphics beyond the ladder** | D3D12 / D3D12.X → WebGPU works for Doom, XCL's checks, SimpleTriangleDesktop and SimplePBR (vertex, index and constant buffers, descriptor tables, BC textures, DXGI swap chains); compute, raytracing (WebGPU has none) and Minecraft's own patterns are untested | Minecraft's census, then its first frames |
 | O2 | **Shader translation** RDNA2 → WGSL | the console ships GPU machine code, not portable shaders | the census tells which stages and instructions Minecraft needs; XCL's HLSL emitter is the reference; mesh/NGG programs may need compute + indirect draws |
 | O3 | **WebGPU limits** | no mesh shaders, no bindless heaps (XCL saw Minecraft use eight heaps of 73,727 descriptors), no 64-bit integers, no shared memory | per-draw bindings traced from each shader (VIctory's approach), compute emulation where needed; decided after the shader census |
-| O4 | MSVC C++ exceptions | FH3 works with the real vcruntime (§3.20); FH4, which current `cl.exe` emits and Minecraft likely uses, is untested | build an FH4 test title with `cl.exe` (on the MSVC build machine) |
+| O4 | MSVC C++ exceptions | FH3 works with the real vcruntime (§3.20); FH4, which current `cl.exe` emits and Minecraft likely uses, works since Desire threw through it (docs/desire.md, D2) | build an FH4 test title with `cl.exe` (on the MSVC build machine) |
 | O5 | Audio codecs | PCM, XMA2 and Opus voices decode (FFmpeg); XMA buffers are decoded whole at submit, each buffer on its own; GameInput has no device callbacks yet | stream XMA across buffers when a title needs it |
 | O6 | Speed | 1.3–6× native on micro-benchmarks; a game needs headroom | lazy flags, registers across calls, AVX2 paths, wasm64 only if needed |
 | O7 | **The Minecraft files** | every Minecraft-specific answer (imports, memory, shaders, whether it needs `msvcp140` from its package) waits on them | run `tools/census.sh` first (`docs/first-run.md`) |
@@ -674,5 +714,6 @@ joins them (the process table, the pipes) is the host's, in one SharedArrayBuffe
 | `tools/stdcall-sizes.sh`, `tools/recipe-gen.py` | 32-bit builds: what each import removes from the stack; what the recipe says, for the runtime |
 | `fixtures/x87/` | the 32-bit x87 title and what it prints under Wine |
 | `recipes/<title>/` | per-title files: the recipe, session scripts, Wine's recorded call sequences |
+| `changelog/` | the changelog on GitHub Pages, an entry per pull request (`tools/changelog.mjs`, `.github/workflows/changelog.yml`) |
 | `docs/` | this log, status, first-run runbook, memory measurements, the Narbacular Drop census |
 

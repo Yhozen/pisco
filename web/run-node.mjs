@@ -10,7 +10,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { Worker, isMainThread, workerData, parentPort } from 'node:worker_threads';
-import { sessionSteps } from './session.mjs';
+import { sessionEnv, sessionSteps } from './session.mjs';
 import { isImageDir, openImageDir, driveName, blobPath } from './image.mjs';
 import { createKernel, processImports } from './kernel.mjs';
 
@@ -24,7 +24,7 @@ if (isMainThread) {
   if (await isImageDir(first)) {
     image = await openImageDir(first);
     module = await WebAssembly.compile(image.wasm); image.wasm = null;
-    args = [...image.settings.args, ...rest];
+    args = rest.length ? rest : image.settings.args;   // (arguments given replace the image's, as a container's command does)
   } else {
     const [exePath, ...more] = rest; args = more;
     module = await WebAssembly.compile(fs.readFileSync(first));
@@ -48,9 +48,9 @@ if (isMainThread) {
   // SW_SESSION=<session.json>: the runtime's session player gets its steps (rt/windows-x86/input.c)
   const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => k.startsWith('SW_')));
   // the image's settings for the runtime (its registry values: SW_REGISTRY), with the environment's after them
-  if (image) for (const [k, v] of Object.entries(image.settings.env)) env[k] = k === 'SW_REGISTRY' && env[k] ? `${v}\n${env[k]}` : v;
+  if (image) for (const [k, v] of Object.entries(image.settings.env)) env[k] = k === 'SW_REGISTRY' && env[k] ? `${v}\n${env[k]}` : env[k] ?? v;
   const imageDir = image ? path.resolve(first) : null, folder = image ? image.settings.folder : null;
-  if (process.env.SW_SESSION) env.SW_SESSION_STEPS = sessionSteps(JSON.parse(fs.readFileSync(process.env.SW_SESSION, 'utf8')));
+  if (process.env.SW_SESSION) { const s = JSON.parse(fs.readFileSync(process.env.SW_SESSION, 'utf8')); env.SW_SESSION_STEPS = sessionSteps(s); for (const [k, v] of Object.entries(sessionEnv(s))) if (!(k in env)) env[k] = v; }
   GPU_OPEN.onmessage = async (e) => {
     const { startNull } = await import('./gpu/null.js');
     gpu = startNull(memory, e.data, { dir, log: say });

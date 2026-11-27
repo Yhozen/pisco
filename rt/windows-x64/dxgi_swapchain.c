@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // DXGI for Windows desktop titles: the factory, and swap chains whose back buffers are textures of the D3D12 front
 // end (rt/gdk/d3d12.c).
+#include "input.h"
 #include "../gdk/d3d12.h"
 #include "../gdk/dxgi.h"
 #define E_POINTER 0x80004003u
@@ -76,10 +77,28 @@ IMP(dxgi, SwapChain_QueryInterface) { SC; self->refs++; M64(ARG(2)) = ARG(0); RE
 IMP(dxgi, SwapChain_AddRef) { SC; RET(++self->refs); }
 IMP(dxgi, SwapChain_Release) { SC; RET(self->refs > 1 ? --self->refs : 0); }
 IMP(dxgi, SwapChain_GetBuffer) { SC; u32 i = (u32)ARG(1); if (i >= self->count) { RET(E_INVALIDARG); return; } Obj *b = d3d12_obj(self->buffers[i]); b->refs++; RET(d3d12_give(b, ARG(2), ARG(3))); }
-// (sync interval, flags): with an interval, the present waits for the next 60 Hz vertical blank (SW_PACE=off: none)
+// (sync interval, flags): with an interval, the present waits for the next 60 Hz vertical blank (SW_PACE=off: none).
+// SW_EXIT_FRAMES=N ends the process after N presents (pisco build's shader step: the run only lists the shaders)
+void rt_exit_process(u32 code);
+void rt_call_stats_print(const char *title, const char *dlls); // process.c (SW_CALL_STATS)
+// a session's `shot` step (rt/input.c): the checkpoint line, with the Direct3D 12 and DXGI methods called since the
+// last one (SW_CALL_STATS=1), and the frame just presented marked for the host to save
+void rt_session_shot(const char *name, u32 frame) {
+  char title[96]; snprintf(title, sizeof title, "checkpoint %s frame %u", name, frame); rt_log("%s", title);
+  snprintf(title, sizeof title, "calls before checkpoint %s", name); rt_call_stats_print(title, "d3d12.dll,dxgi.dll,d3dcompiler_47.dll");
+  if (!rt_gpu_ring) return;
+  char text[64]; int n = snprintf(text, sizeof text, "shot %s", name);
+  u8 *p = rt_gpu_rec_begin(GPU_R_MARK, (u32)n); memcpy(p, text, (size_t)n); rt_gpu_rec_end();
+}
 IMP(dxgi, SwapChain_Present) {
   SC; u32 interval = (u32)ARG(1);
   rt_gpu_present(d3d12_id_of(self->buffers[self->index]), ++self->frames, interval); self->index = (self->index + 1) % self->count;
+  static s64 exit_after = -1; if (exit_after < 0) { const char *e = getenv("SW_EXIT_FRAMES"); exit_after = e ? atoll(e) : 0; }
+  if (exit_after && self->frames >= (u64)exit_after) { rt_log("exit after %llu frames (SW_EXIT_FRAMES)", (unsigned long long)self->frames); rt_exit_process(0); }
+  // a desktop title's session plays on (rt/input.c); on a virtual clock (SW_CLOCK) a frame is its time, nothing waits
+  input_poll();
+  session_frame((u32)self->frames);
+  if (rt_clock_virtual()) { rt_clock_advance_frame(); RET(S_OK); return; }
   if (interval && !d3d12_pace_off()) {
     static u64 next; u64 now = (u64)host_now_us(), period = 16667ull * (interval > 4 ? 4 : interval);
     if (!next || now > next + period) next = now;

@@ -5,10 +5,10 @@ titles, its own next steps and its own goal:
 
 | Runtime | Runs | Next | Goal |
 |---|---|---|---|
-| [Xbox Series](#xbox-series) | Doom as a console title, XCL's console test title (50/50) | D3D12.X shaders from RDNA2 code, MSVC FH4 | Minecraft, the Xbox Series build |
-| [Windows x64](#windows-x64) | Stockfish 19, SimpleTriangleDesktop, SimplePBR | more desktop D3D12 titles | desktop D3D12 titles |
+| [Xbox Series](#xbox-series) | Doom as a console title, XCL's console test title (50/50) | D3D12.X shaders from RDNA2 code | Minecraft, the Xbox Series build |
+| [Windows x64](#windows-x64) | Stockfish 19, SimpleTriangleDesktop, SimplePBR; Desire, logo to ending, in Node and headless Chrome | Desire played by hand on a real GPU | desktop D3D12 titles |
 | [Windows x86](#windows-x86) | Narbacular Drop, playable; Tag: The Power of Paint into its second level | Tag played by hand on a real GPU, then its later levels | 32-bit Direct3D 9 games of the 2000s |
-| [Linux x64](#linux-x64) | fastfetch 2.71.0; neofetch 7.1.0 (bash, busybox) | threads, signals, writes | statically linked command-line programs |
+| [Linux x64](#linux-x64) | fastfetch 2.71.0; neofetch 7.1.0 (bash, busybox); cowsay 3.8.4 (perl) | threads, signals, writes | statically linked command-line programs |
 | [PS5](ps5.md) | the raymarching tech demo (CPU-drawn, AVX2): its three scenes, pad and music in the browser | more system functions, a GPU (AGC) title | PS5 homebrew |
 
 ## Shared: the recompiler, the core runtime, the packages
@@ -44,8 +44,9 @@ titles; Doom; XCL's checks). What is left before and during step 5:
    and its instruction tests as the reference. Steps 1–4 do not exercise it: their shaders are DXIL.
 3. **WebGPU's limits**: no mesh shaders, no bindless heaps (XCL saw Minecraft use eight heaps of 73,727
    descriptors), no 64-bit atomics. The answer (per-draw bindings, compute emulation) is decided after the census.
-4. **MSVC C++ exceptions, FH4**: FH3 works with the real `vcruntime140` (`docs/journey.md` §3.20); FH4, which
-   current `cl.exe` emits, is untested for want of a test title built by it.
+4. **MSVC C++ exceptions**: FH3 works with the real `vcruntime140` (`docs/journey.md` §3.20), and FH4, which
+   current `cl.exe` emits, with the real `vcruntime140_1` since Desire (MSVC 14.38) threw and caught through it
+   ([desire.md](desire.md#progress), D2).
 5. **Audio**: PCM, XMA2 and Opus voices play (FFmpeg); each XMA buffer is decoded whole when it is submitted,
    so XMA streamed across buffers is not handled, and XAudio2 has no device callbacks yet.
 6. **Speed**: lifted code runs ~1.3–6× native on our micro-benchmarks. Next: keep flags lazily, register
@@ -63,6 +64,15 @@ gamepad, from the page), saves kept in OPFS in the browser and in a folder in No
 - **The graphics ladder's steps 1–2**: SimpleTriangleDesktop (both builds, through DXGI, with Microsoft's C++
   runtime DLLs lifted and MSVC C++ exceptions) and SimplePBR (DirectXTK12, PBR with image-based lighting, HDR)
   render in headless Chrome (§3.20, §3.21).
+- **Desire** (DESI:Re v0.1, a maze escape on its author's C++20 / Direct3D 12 engine), the first third-party
+  D3D12 game: census and oracle done ([desire.md](desire.md)). `pisco build` makes its image from the zip and the
+  user's C++ runtime DLLs; under Wine it runs on vkd3d and lavapipe, and Wine's log gives the seeds of its random
+  maze. In Node, strict, it now runs from its logo to the maze and its end pictures, with Wine's start-up calls
+  and, from Wine's seeds, Wine's maze (D1: a window with a message queue, WIC on stb_image, D3D12 Memory
+  Allocator's methods, shaders compiled by `pisco build`); its C++ exceptions, MSVC's FH4, are caught (D2).
+  Played in Node on the virtual clock with the keyboard (D3): logo, GAME OVER, the goal, with Wine's titles and
+  Direct3D 12 methods; in headless Chrome its still screens are within 0.3 of 255 of Wine's (D4). Next: played
+  by hand in a desktop browser on a real GPU.
 
 ## Windows x86
 
@@ -109,7 +119,7 @@ by `pisco` into a title image whose layers make the C: drive and whose config gi
 What they had after M5: FMOD 3 (`rt/windows-x86/fmod3.c`: samples, streams, channels as FMOD numbers them,
 3D with several listeners) on the runtime's one sound output (`rt/mixer.c`, shared with XAudio2; mixed on the title's
 thread under a virtual clock), sound files decoded by `rt/windows-x86/audio_decode.c`; input from the page (keyboard,
-Pointer Lock mouse) through a ring `rt/windows-x86/input.c` drains when DirectInput reads; a writable top layer over the
+Pointer Lock mouse) through a ring `rt/input.c` drains when DirectInput reads; a writable top layer over the
 title's own folder that the host keeps (`SW_SAVES/@game` in Node, OPFS in the browser). Not yet: ADPCM WAVs, Doppler,
 reverb, the other FSOUND functions (none of the 33 imports is missing, but FMOD has hundreds), deleting a title's own
 files across runs.
@@ -184,6 +194,8 @@ Still to do: playing it by hand on a real GPU (T6 of [the plan](plan.md)); the l
 - **neofetch 7.1.0** ([its page](neofetch.md)) on bash 5.2.37 and busybox 1.36.1, each lifted into a module of its
   own: 83 processes a run (82 forks, 10 programs executed), in strict mode in Node and in headless Chrome
   (`tests/run.sh neofetch`). The page is a terminal (a cursor that moves).
+- **cowsay 3.8.4** ([its page](cowsay.md)) on perl 5.44.0: six runs print what the same perl prints natively, in
+  Node and in headless Chrome (`tests/run.sh cowsay`).
 - **`fixtures/linux-proc`** (in `tests/run.sh linux`): fork, a pipe from child to parent, execve, a script run
   through its `#!`, wait4, a longjmp across a fork, against its native run.
 - A process is an instance of its program's module with memory of its own; the host keeps the process table and
@@ -201,13 +213,15 @@ Still to do: playing it by hand on a real GPU (T6 of [the plan](plan.md)); the l
    binaries can be titles, and function discovery good enough for a stripped one.
 5. **Input**: the page's keyboard as standard input, and answers to a terminal's queries; then an interactive shell.
 6. **Fork without copying everything**: a fork copies the whole memory (64 MiB for bash, about 20 ms).
+7. **Smaller modules for large programs**: perl's is 34 MB, some of its code decoded into more than one function.
 
 ## Known limits
 
 - 64-bit exceptions resume at the landing pads the lifter finds: GCC / LLVM LSDA, C scope tables, MSVC FH3 catch
-  and cleanup funclets and catch continuations. FH4 tables are not read. 32-bit titles have no exception
+  and cleanup funclets and catch continuations, and FH4's compressed tables (handlers named by a local
+  `__GSHandlerCheck_EH4` too). 32-bit titles have no exception
   dispatch yet.
-- AVX and later instructions trap where they are; titles never reach them, since CPUID does not report AVX.
+- AVX, AVX2, FMA and BMI are lifted (`avx.rs`, `rt/avx.h`; `tests/avx.sh` checks 120 results against the CPU). A VEX instruction `avx.rs` does not handle still traps. CPUID still does not report AVX, so titles that check it take their SSE paths; a PS5 title does not ask.
 - x87 is emulated with doubles (no 80-bit precision) for Windows and console titles, which run it at 53 bits; a
   Linux title's registers keep 64 bits (`rt/cpu.h` `fpx`), its transcendental instructions compute in doubles.
 - Memory protection, guard pages and write watches do not exist; the VFS keeps S:\ and (Windows desktop titles) what a

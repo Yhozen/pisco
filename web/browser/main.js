@@ -299,7 +299,7 @@ else {
   else dir = new URL(q.get('exe'), location.href).href.replace(/[^/]*$/, ''); // the title's folder
   memory = new WebAssembly.Memory({ initial: 1024, maximum: 65536, shared: true });
   const tids = new Int32Array(new SharedArrayBuffer(4)); tids[0] = 1;
-  const args = [...(image ? image.settings.args : []), ...(q.get('args') || '').split(' ').filter(Boolean)];
+  const given = (q.get('args') || '').split(' ').filter(Boolean), args = given.length || !image ? given : image.settings.args;   // (arguments given replace the image's)
   status.textContent = 'running';
   ctl = new Int32Array(new SharedArrayBuffer(16 * POOL));
   const env = { ...(image ? image.settings.env : {}) }; for (const [k, v] of q) if (k.startsWith('SW_')) env[k] = k === 'SW_REGISTRY' && env[k] ? `${env[k]}\n${v}` : v;

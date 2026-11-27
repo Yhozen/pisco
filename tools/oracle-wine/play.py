@@ -1,8 +1,10 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 # usage: play.py DISPLAY SESSION.json OUTDIR — plays a session script on an X display through XTEST and saves
-# its screenshots as OUTDIR/<name>.png (the title's client area) and OUTDIR/<name>.full.png (the screen).
+# its screenshots as OUTDIR/<name>.png (the title's client area) and OUTDIR/<name>.full.png (the screen). When Wine's
+# log (OUTDIR/wine.log) has SetWindowTextW calls (+relay with RelayInclude user32.SetWindowTextW), the window's last
+# title at each shot goes to OUTDIR/<name>.title.txt: a title that shows its state there (Desire) is compared by it.
 # The session format is in README.md. Needs python-xlib.
-import json, struct, sys, time, zlib
+import json, os, re, struct, sys, time, zlib
 from Xlib import X, XK, display
 from Xlib.ext import xtest
 
@@ -67,6 +69,13 @@ for step in session['steps']:
     elif 'shot' in step:
         s = d.screen(); png(f"{out}/{step['shot']}.full.png", 0, 0, s.width_in_pixels, s.height_in_pixels)
         x, y, w, h = client(); png(f"{out}/{step['shot']}.png", x, y, w, h)
-        print(f"{time.time() - start:7.1f}s shot {step['shot']} client {w}x{h} at ({x},{y})", flush=True)
+        title = ''
+        if os.path.exists(f'{out}/wine.log'):
+            with open(f'{out}/wine.log', errors='replace') as f:
+                for line in f:
+                    m = re.search(r'Call user32\.SetWindowTextW\([0-9a-f]+,[0-9a-f]+ L"(.*)"\) ret=', line)
+                    if m: title = m.group(1)
+            if title: open(f"{out}/{step['shot']}.title.txt", 'w').write(title + '\n')
+        print(f"{time.time() - start:7.1f}s shot {step['shot']} client {w}x{h} at ({x},{y})" + (f' title "{title}"' if title else ''), flush=True)
     else: raise SystemExit(f'play.py: unknown step {step}')
 print(f'{time.time() - start:7.1f}s done', flush=True)

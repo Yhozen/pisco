@@ -56,8 +56,9 @@ IMP(dxgi, Device_SetPrivateData) { RET(S_OK); }
 IMP(dxgi, Device_GetPrivateData) { RET(DXGI_ERROR_NOT_FOUND); }
 IMP(dxgi, Adapter_QueryInterface) {
   u64 riid = ARG(1), ppv = ARG(2); if (!ppv) { RET(E_POINTER); return; }
-  // IUnknown, IDXGIObject, IDXGIAdapter, IDXGIAdapter1
-  if (iid(riid, 0x00000000, 0, 0, 0xC000000000000046ull) || iid(riid, 0xaec22fb8, 0x76f3, 0x4639, 0x9be028eb43a67a2eull) || iid(riid, 0x2411e7e1, 0x12ac, 0x4ccf, 0xbd149798e8534dc0ull) || iid(riid, 0x29038f61, 0x3839, 0x4626, 0x91fd086879011a05ull)) { self_of(c)->refs++; M64(ppv) = ARG(0); RET(S_OK); return; }
+  // IUnknown, IDXGIObject, IDXGIAdapter, IDXGIAdapter1 to 4 (the vtable is IDXGIAdapter4's)
+  if (iid(riid, 0x00000000, 0, 0, 0xC000000000000046ull) || iid(riid, 0xaec22fb8, 0x76f3, 0x4639, 0x9be028eb43a67a2eull) || iid(riid, 0x2411e7e1, 0x12ac, 0x4ccf, 0xbd149798e8534dc0ull) || iid(riid, 0x29038f61, 0x3839, 0x4626, 0x91fd086879011a05ull)
+      || iid(riid, 0x0aa1ae0a, 0xfa0e, 0x4b84, 0x8644e05ff8e5acb5ull) || iid(riid, 0x645967a4, 0x1392, 0x4310, 0xa7988053ce3e93fdull) || iid(riid, 0x3c8d99d1, 0x4fbf, 0x4181, 0xa82caf66bf7bd24eull)) { self_of(c)->refs++; M64(ppv) = ARG(0); RET(S_OK); return; }
   M64(ppv) = 0; RET(E_NOINTERFACE);
 }
 IMP(dxgi, Adapter_AddRef) { RET(++self_of(c)->refs); }

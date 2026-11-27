@@ -30,6 +30,21 @@ Tag: The Power of Paint was slow in Chrome on an M1 (menu "horrible", the frame 
 
 Node never showed the first problem: there a file check is a local call of microseconds.
 
+## The second case: Desire in Chrome
+
+Desire (Direct3D 12, [desire.md](desire.md)) on an M1 ran at 18–21 frames a second. A 45 s trace: the page's main
+thread busy 37.6 s, 25.3 s of it in `queue.writeBuffer`. A root CBV has no size, so each of about 700 draws a frame
+uploaded 64 KiB from its offset in the title's 192 KiB constant ring: 48 MB in 736 calls a frame. **Fixed in
+`web/gpu/backend.js`**: a buffer's ranges are merged before upload (0.13 MB, one call), each pipeline's bind group
+layouts are kept, and within a segment a bind group of the same objects is made once.
+
+After (11.7 s trace, walking the maze): about 38 frames a second, frame times 17 / 20 / 39 ms at p10 / p50 / p90.
+The title's thread is 61 % asleep in Present's 60 Hz pacing, 29 % waiting on its fence for the page, under 10 % in
+the game. The page's main thread is 43 % idle; inclusive, `draw` 25 %, `bindGroups` 15 %, `execute` 15 %,
+`createBindGroup` 5 %, `writeBuffer` under 1 %. The GPU process was busy 2.5 s of 11.7. If a Direct3D 12 title needs
+more, the next steps are ours again: bind groups cached across segments (or keyed by the descriptor heap's
+contents), and pipelining, so the page runs frame N while the title records frame N+1 (the fence wait).
+
 ## What in the browser is a real limit
 
 | Limit | What it costs | Who it hits |

@@ -1,7 +1,7 @@
 #!/bin/bash
 # SPDX-License-Identifier: GPL-2.0-or-later
 # tests/run.sh [step...]: the one entry point. Builds the test titles from their sources, then runs the checks.
-#   build    hello, threads, bench (cargo) and cxx, dll (llvm-mingw), where tests/regress.sh looks for them;
+#   build    pisco's unit tests; hello, threads, bench (cargo) and cxx, dll (llvm-mingw), where tests/regress.sh looks for them;
 #            the 32-bit titles: hello again for i686, and fixtures/x87
 #   layout   tests/layout.sh: the runtime's files are listed only by the bases, and every one is in some base
 #   node     tests/regress.sh: every title in Node (XCL's title and Stockfish too when their files are there)
@@ -23,6 +23,10 @@
 #            records it again). Then its image, built by `pisco build` and run by `pisco run`, must print the same
 #   avx      tests/avx.sh: fixtures/avx (AVX, AVX2, FMA and BMI, built for Zen 2 with musl) lifted, its results against
 #            what it printed on the CPU (fixtures/avx/expected.txt); skipped without musl
+#   cowsay   cowsay on perl (docs/cowsay.md), when tools/build-cowsay.sh has built its root into out/cowsay: its image
+#            built by `pisco build`, run by `pisco run` in strict mode with several cows and options; each must print
+#            what the same root's perl prints here (the oracle), and the first the same in headless Chrome
+#   changelog  tools/changelog.mjs: every entry in changelog/ (the changelog on GitHub Pages) is well formed
 #   chrome   hello, threads and cxx again in headless Chrome (WebGPU on SwiftShader), the 32-bit titles and linux-hello
 #   nd       Narbacular Drop, when the installed game is there (ND: its folder; default: the oracle's prefix):
 #            built with its recipe and run in strict mode. Its calls until it asks for Direct3D 9 must be the
@@ -65,9 +69,13 @@
 #            tools/build-gdk-sample.sh) or the MSVC runtime DLLs (REDIST)
 #   pbr      tests/gfx/pbr.sh: Microsoft's SimplePBR (Windows x64) in Chrome; skipped without the sample (built from
 #            the SDKs in WINSDK by tools/build-gdk-sample-pbr.sh) or REDIST (minutes)
+#   desireplay  tests/gfx/desireplay.sh: Desire (Windows x64, Direct3D 12) from the user's zip (DESIRE_ZIP) and REDIST, in
+#            Node, strict: its calls until its main loop are Wine's, and its maze from Wine's seeds is Wine's (minutes)
+#   desire   tests/gfx/desire.sh: Desire's sessions in headless Chrome, strict: a PNG at every checkpoint, the still
+#            screens close to the oracle's screenshots (needs out/img-desire: the desireplay step; half an hour)
 #   xcl      tests/gfx/xcl.sh: XCL's console test title in Chrome, when it has been built into out/xcltitle-game
 #   audio    tests/audio/run.sh: the XMA2 / Opus decoders (builds FFmpeg's the first time)
-# Default: build layout node bench win32 linux avx ffp sm gdi. Needs tools/setup-toolchain.sh to have run. Exit status 1 if a step fails.
+# Default: build layout node bench win32 linux avx ffp sm gdi changelog. Needs tools/setup-toolchain.sh to have run. Exit status 1 if a step fails.
 set -uo pipefail
 root=$(cd "$(dirname "$0")/.." && pwd); cd "$root"; mkdir -p out
 MINGW=${MINGW:-$HOME/tools/llvm-mingw-20261117-ucrt-ubuntu-22.04-x86_64}; CXX=$MINGW/bin/x86_64-w64-mingw32-clang++
@@ -81,6 +89,7 @@ step() { # name, command...: one line, the log's tail on failure
 }
 build() {
   cargo build -q --release -p pisco-lifter -p pisco-shaders -p pisco || return 1
+  cargo test -q --release -p pisco > out/test-pisco-unit.log 2>&1 || { tail -20 out/test-pisco-unit.log; return 1; }   # pisco's own (the zip reader)
   for t in hello threads bench bench-native; do (cd "fixtures/$t" && cargo build -q --release) || return 1; done
   # one C++ runtime inside each image (-static): nothing but the title's own DLL is shipped beside it
   "$CXX" -O2 -static fixtures/cxx/eh.cpp -o fixtures/cxx/eh.exe || return 1
@@ -156,6 +165,30 @@ neofetch() {
   local trim="awk 1 | sed -e :a -e '/^\\n*\$/{\$d;N;ba' -e '}'"   # (the page's console has no last newline, nor the blank lines at the end)
   diff <(eval "$trim" < $want) <(eval "$trim" < $d/got-chrome.txt) > $d/chrome.diff || { echo "in Chrome it prints something else (< recorded, > Chrome):"; head -8 $d/chrome.diff; return 1; }
   echo "neofetch: $(wc -l < $want) lines as recorded, in strict mode, in Node and in Chrome; $forks processes forked, $execs programs executed"
+}
+cowsay() {
+  local d=out/cowsay R=$PWD/out/cowsay/root n=0
+  target/release/pisco build recipes/cowsay --out out/images/cowsay > out/cowsay.image.log 2>&1 || { echo "pisco build failed (out/cowsay.image.log)"; return 1; }
+  # natively: the root's own perl, its library and its cows where they are here
+  native() { local prog=$1; shift; PERL5LIB=$R/usr/lib/perl5/5.44.0/x86_64-linux:$R/usr/lib/perl5/5.44.0 COWPATH=$R/usr/share/cowsay/cows COWSAY_ONLY_COWPATH=1 $R/usr/bin/perl $R/usr/bin/$prog "$@"; }
+  while IFS='|' read -r prog args; do
+    n=$((n + 1)); eval "set -- $args"
+    native "$prog" "$@" > $d/native-$n.txt 2>&1
+    if [ "$prog" = cowsay ]; then SW_STRICT=1 timeout 300 target/release/pisco run out/images/cowsay -- "${@}" > $d/got-$n.txt 2>&1
+    else SW_STRICT=1 SW_EXE=/usr/bin/$prog timeout 300 target/release/pisco run out/images/cowsay -- "${@}" > $d/got-$n.txt 2>&1; fi
+    cmp -s $d/got-$n.txt $d/native-$n.txt || { echo "$prog $args: not what perl prints here (< ours, > native):"; diff $d/got-$n.txt $d/native-$n.txt | head -10; return 1; }
+  done <<'RUNS'
+cowsay|"Hello from PISCO"
+cowsay|-f tux "a penguin, lifted"
+cowsay|-e "^^" -T " U" -W 20 "a cow with other eyes and a tongue, its words wrapped at twenty columns"
+cowsay|-f dragon -b "moo"
+cowthink|"think different"
+cowsay|-l
+RUNS
+  SW_STRICT=1 TIMEOUT=300 node tools/run-chrome.mjs out/images/cowsay 2>&1 | grep -v -e '^gpu: ' -e '^image: ' > $d/got-chrome.txt
+  local trim="awk 1 | sed -e :a -e '/^\\n*\$/{\$d;N;ba' -e '}'"
+  diff <(eval "$trim" < $d/native-1.txt) <(eval "$trim" < $d/got-chrome.txt) > $d/chrome.diff || { echo "in Chrome it prints something else (< native, > Chrome):"; head -8 $d/chrome.diff; return 1; }
+  echo "cowsay: $n runs (cows, eyes, wrapping, cowthink, the list of cows) print what perl prints here; the first in Chrome too"
 }
 fastfetch() {
   local d=out/fastfetch want=recipes/fastfetch/traces/pipe.txt
@@ -244,7 +277,7 @@ ND=${ND:-$HOME/.pisco/oracle/prefix-narbacular-drop/drive_c/Program Files (x86)/
 D3DX_DLL=${D3DX_DLL:-$HOME/untrusted/tag/cab/d3dx9_35.dll}
 REDIST=${REDIST:-$HOME/untrusted/vcredist/x/Contents/VC/Redist/MSVC/14.44.35112/x64/Microsoft.VC143.CRT}; export REDIST
 WINSDK=${WINSDK:-$HOME/winsdk}
-for s in ${*:-build layout node bench win32 linux avx ffp sm gdi}; do case $s in
+for s in ${*:-build layout node bench win32 linux avx ffp sm gdi changelog}; do case $s in
   build)  step build build ;;
   layout) step layout tests/layout.sh ;;
   node)   LINES_SHOWN=8 step node tests/regress.sh ;;
@@ -252,6 +285,7 @@ for s in ${*:-build layout node bench win32 linux avx ffp sm gdi}; do case $s in
   win32)  LINES_SHOWN=4 step win32 win32 ;;
   avx)    if [ -x "$MUSL/bin/musl-gcc" ]; then step avx tests/avx.sh; else echo "skip  avx: no musl in MUSL=$MUSL (tools/setup-toolchain.sh musl)"; fi ;;
   linux)  if [ -x "$MUSL/bin/musl-gcc" ]; then LINES_SHOWN=2 step linux linux; else echo "skip  linux: no musl in MUSL=$MUSL (tools/setup-toolchain.sh musl)"; fi ;;
+  cowsay) if [ -x out/cowsay/root/usr/bin/perl ]; then step cowsay cowsay; else echo "skip  cowsay: out/cowsay/root is not built (tools/build-cowsay.sh)"; fi ;;
   neofetch) if [ -x out/neofetch/root/bin/bash ]; then step neofetch neofetch; else echo "skip  neofetch: out/neofetch/root is not built (tools/build-neofetch.sh)"; fi ;;
   fastfetch) if [ -x out/fastfetch/fastfetch ]; then step fastfetch fastfetch; else echo "skip  fastfetch: out/fastfetch/fastfetch is not built (tools/build-fastfetch.sh)"; fi ;;
   chrome) LINES_SHOWN=6 step chrome chrome ;;
@@ -259,6 +293,7 @@ for s in ${*:-build layout node bench win32 linux avx ffp sm gdi}; do case $s in
   ffp)    if command -v naga > /dev/null; then step ffp tests/gfx/d3d9-ffp.sh; else echo "skip  ffp: naga is not installed (tools/setup-toolchain.sh naga)"; fi ;;
   sm)     if command -v naga > /dev/null; then step sm tests/gfx/d3d9-sm.sh ${SM_CAPTURED:+$SM_CAPTURED/*}; else echo "skip  sm: naga is not installed (tools/setup-toolchain.sh naga)"; fi ;;
   gdi)    LINES_SHOWN=5 step gdi gdi ;;
+  changelog) step changelog node tools/changelog.mjs ;;
   d3dx)   if [ -f "$D3DX_DLL" ]; then step d3dx d3dx; else echo "skip  d3dx: no d3dx9_35.dll in D3DX_DLL=$D3DX_DLL (Tag's installer has one)"; fi ;;
   ndgfx)  if [ -f "$ND/Narbacular Drop.exe" ]; then LINES_SHOWN=16 ND=$ND step ndgfx tests/gfx/nd.sh; else echo "skip  ndgfx: the game is not installed (ND=$ND)"; fi ;;
   ndplay) if [ -f "$ND/Narbacular Drop.exe" ]; then LINES_SHOWN=16 ND=$ND step ndplay tests/gfx/ndplay.sh; else echo "skip  ndplay: the game is not installed (ND=$ND)"; fi ;;
@@ -273,6 +308,10 @@ for s in ${*:-build layout node bench win32 linux avx ffp sm gdi}; do case $s in
           elif [ ! -f out/gdk-samples/pbr-local/SimplePBR.exe ] && [ ! -d "$WINSDK/xwin" ]; then echo "skip  pbr: the sample is not built and there are no SDKs to build it in WINSDK=$WINSDK"
           else LINES_SHOWN=3 step pbr tests/gfx/pbr.sh; fi ;;
   images) LINES_SHOWN=9 step images tests/images.sh ;;
+  desire) if [ -f out/img-desire/index.json ]; then LINES_SHOWN=12 step desire tests/gfx/desire.sh; else echo "skip  desire: out/img-desire is not built (the desireplay step builds it)"; fi ;;
+  desireplay) if [ ! -f "${DESIRE_ZIP:-$HOME/games/DESI-Re-v0.1-Windows-x64.zip}" ]; then echo "skip  desireplay: no zip at DESIRE_ZIP=${DESIRE_ZIP:-$HOME/games/DESI-Re-v0.1-Windows-x64.zip}"
+          elif [ ! -f "$REDIST/vcruntime140.dll" ]; then echo "skip  desireplay: no MSVC runtime DLLs in REDIST=$REDIST"
+          else LINES_SHOWN=4 step desireplay tests/gfx/desireplay.sh; fi ;;
   audio)  step audio tests/audio/run.sh ;;
   xcl)    if [ -f out/xcltitle-game/xcl_testtitle.exe ]; then LINES_SHOWN=3 step xcl tests/gfx/xcl.sh; else echo "skip  xcl: out/xcltitle-game/xcl_testtitle.exe is not built"; fi ;;
   *) echo "unknown step: $s"; fail=1 ;;

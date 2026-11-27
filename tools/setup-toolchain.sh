@@ -49,11 +49,14 @@ for step in ${*:-wasi mingw rust naga dxil wine dxc upx reuse innoextract cabext
     rm -rf "$T/$HEADERS"; mkdir -p "$T/$HEADERS"; mv "$tmp/h/usr/include" "$T/$HEADERS/include"; mv "$tmp/d/usr/include/libdrm" "$T/$HEADERS/include/drm"; rm -rf "$tmp"
   fi ;;
   musl)
-    if [ -x "$T/musl-1.2.5/bin/musl-gcc" ]; then echo "have $T/musl-1.2.5"; else
+    # for the baseline x86-64 the runtime's virtual CPU is (rt/linux-x64/), whatever gcc defaults to (Ubuntu 26.04's
+    # amd64v3 gcc emits AVX2 and MOVBE): musl itself, and musl-gcc's default for what it compiles
+    if grep -qs -- -march=x86-64 "$T/musl-1.2.5/bin/musl-gcc"; then echo "have $T/musl-1.2.5"; else
       tmp=$(mktemp -d "$T/.fetch.XXXXXX"); curl -fsSL -o "$tmp/musl.tar.gz" https://musl.libc.org/releases/musl-1.2.5.tar.gz
       echo "a9a118bbe84d8764da0ea0d28b3ab3fae8477fc7e4085d90102b8596fc7c75e4  $tmp/musl.tar.gz" | sha256sum -c --quiet
       tar -xzf "$tmp/musl.tar.gz" -C "$tmp"
-      (cd "$tmp/musl-1.2.5" && ./configure --prefix="$T/musl-1.2.5" --disable-shared > /dev/null && make -s -j "$(nproc)" > /dev/null && make -s install > /dev/null); rm -rf "$tmp"
+      (cd "$tmp/musl-1.2.5" && CFLAGS="-march=x86-64 -mtune=generic" ./configure --prefix="$T/musl-1.2.5" --disable-shared > /dev/null && make -s -j "$(nproc)" > /dev/null && make -s install > /dev/null); rm -rf "$tmp"
+      sed -i 's|" "\$@" -specs|" -march=x86-64 -mtune=generic "$@" -specs|' "$T/musl-1.2.5/bin/musl-gcc"
     fi ;;
   innoextract)
     if [ -x "$T/innoextract/bin/amd64/innoextract" ]; then echo "have $T/innoextract"; else

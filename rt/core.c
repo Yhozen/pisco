@@ -4,10 +4,13 @@
 #include <stdarg.h>
 #include "rt.h"
 
-void rt_log(const char *fmt, ...) {
+void rt_log(const char *fmt, ...) { // a line longer than the buffer is written whole (D3DCompile logs whole shader sources)
   char buf[1024]; va_list ap; va_start(ap, fmt); int n = vsnprintf(buf, sizeof buf, fmt, ap); va_end(ap);
-  if (n > (int)sizeof buf - 1) n = sizeof buf - 1;
-  host_log(buf, (u32)n);
+  if (n < 0) return;
+  if (n < (int)sizeof buf) { host_log(buf, (u32)n); return; }
+  char *big = malloc((size_t)n + 1); if (!big) { host_log(buf, sizeof buf - 1); return; }
+  va_start(ap, fmt); vsnprintf(big, (size_t)n + 1, fmt, ap); va_end(ap);
+  host_log(big, (u32)n); free(big);
 }
 void rt_fatal(const char *fmt, ...) {
   char buf[1024]; va_list ap; va_start(ap, fmt); int n = vsnprintf(buf, sizeof buf, fmt, ap); va_end(ap);

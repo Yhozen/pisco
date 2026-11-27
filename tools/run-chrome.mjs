@@ -14,7 +14,7 @@
 //   there (OPFS: what titles stored) and use it again next time, with PORT=<n> for the same origin (OPFS is per origin);
 //   SCREENSHOT=<out.png> the page as it is when the title ends (a title that prints: its text, in the page's colours)
 import { spawn } from 'node:child_process'; import path from 'node:path'; import fs from 'node:fs'; import os from 'node:os';
-import { sessionSteps } from '../web/session.mjs';
+import { sessionEnv, sessionSteps } from '../web/session.mjs';
 import { isImageDir } from '../web/image.mjs';
 const argv = process.argv.slice(2), image = (await isImageDir(argv[0])) ? path.resolve(argv[0]) : null;
 const [wasm, exe, ...args] = image ? [null, null, ...argv.slice(1)] : argv;
@@ -27,7 +27,11 @@ const server = spawn(process.execPath, [path.join(root, 'tools/serve.mjs'), port
   '--shots', shots], { stdio: 'inherit' });
 // the runtime's settings for the page: every SW_* of the environment (SW_TRACE has its own, older, page option), the session as its steps
 const settings = Object.entries(process.env).filter(([k]) => k.startsWith('SW_') && k !== 'SW_TRACE' && k !== 'SW_SESSION');
-if (process.env.SW_SESSION) settings.push(['SW_SESSION_STEPS', sessionSteps(JSON.parse(fs.readFileSync(process.env.SW_SESSION, 'utf8')))]);
+if (process.env.SW_SESSION) {
+  const s = JSON.parse(fs.readFileSync(process.env.SW_SESSION, 'utf8'));
+  settings.push(['SW_SESSION_STEPS', sessionSteps(s)]);
+  for (const [k, v] of Object.entries(sessionEnv(s))) if (!process.env[k]) settings.push([k, v]);
+}
 const keepProfile = !!process.env.CHROME_PROFILE;
 const profile = keepProfile ? path.resolve(process.env.CHROME_PROFILE) : fs.mkdtempSync(path.join(os.tmpdir(), 'pisco-chrome-'));
 fs.mkdirSync(profile, { recursive: true });

@@ -12,7 +12,12 @@ pub enum RegData { Dword(u32), Sz(String) }
 #[derive(Clone, Debug)]
 pub struct RegValue { pub key: String, pub name: String, pub data: RegData }
 
-pub struct Source { pub file: String, pub sha256: Option<String>, pub extract: String, pub app: Option<String>, pub map: BTreeMap<String, String>, pub cabs: Vec<Cab> }
+pub struct Source { pub file: String, pub sha256: Option<String>, pub extract: String, pub app: Option<String>, pub map: BTreeMap<String, String>, pub cabs: Vec<Cab>,
+    pub root: Option<String>, pub adds: Vec<Add> }
+/// [[source.add]]: further files of the user's that the title needs and its download does not carry (Microsoft's
+/// C++ runtime DLLs beside a title built with /MD), taken from a folder named on the command line
+/// (`pisco build --with NAME=<folder>`) or by the environment variable NAME, put in a folder of C:
+pub struct Add { pub from: String, pub files: Vec<String>, pub to: String }
 /// [[source.cab]]: files taken out of a cabinet among the installer's files (cabextract), put in a folder of C:
 pub struct Cab { pub cab: String, pub files: Vec<String>, pub to: String }
 pub struct Recipe {
@@ -21,7 +26,12 @@ pub struct Recipe {
     pub cpu: Option<Vec<String>>, pub dll: BTreeMap<String, String>, pub registry: Vec<RegValue>,
     pub split: usize, pub entries: Vec<u64>, pub base_address: Option<u64>, pub opt: String,
     pub heap_fill: Option<u8>, // [quirks] heap_fill: the byte a heap block the title did not ask to be zeroed holds
+    pub shaders: Option<Shaders>,
 }
+/// [shaders]: the HLSL a title compiles at run time (D3DCompile), compiled when the image is built: the image is run
+/// once in Node for `frames` frames (with the `session`, if one is given), the sources it logged are compiled with
+/// dxc and translated, and the results become a layer of the image (docs/images.md)
+pub struct Shaders { pub frames: u64, pub session: Option<String> }
 pub struct Library { pub description: String, pub sources: Vec<String> }
 pub struct Base {
     pub dir: PathBuf, pub name: String, pub version: i64, pub architecture: String, pub os: String,
@@ -92,7 +102,7 @@ pub fn load_recipe(dir: &Path) -> R<Recipe> {
     let path = if dir.is_dir() { dir.join("title.toml") } else { dir.to_path_buf() };
     let t = load(&path)?;
     let dir = path.parent().unwrap().to_path_buf();
-    let known = ["name", "from", "libraries", "source", "run", "cpu", "dll", "registry", "lifter", "build", "quirks"];
+    let known = ["name", "from", "libraries", "source", "run", "cpu", "dll", "registry", "lifter", "build", "quirks", "shaders"];
     if let Some(k) = t.keys().find(|k| !known.contains(&k.as_str())) { return Err(format!("{}: {k} is not a recipe key ({})", path.display(), known.join(", "))); }
     let src = table(&t, "source")?.ok_or(format!("{}: no [source]", path.display()))?;
     let run = table(&t, "run")?.ok_or(format!("{}: no [run]", path.display()))?;
@@ -110,6 +120,17 @@ pub fn load_recipe(dir: &Path) -> R<Recipe> {
         },
         Some(_) => return Err("[[source.cab]]: an array of tables".into()),
     }
+    let mut adds = Vec::new();
+    match src.get("add") {
+        None => {}
+        Some(Value::Array(a)) => for c in a {
+            let c = c.as_table().ok_or("[[source.add]]: tables")?;
+            adds.push(Add { from: s(c, "from").ok_or("[[source.add]] from = \"NAME\" (pisco build --with NAME=<folder>, or the environment variable NAME)")?,
+                files: strs(c, "files")?.filter(|f| !f.is_empty()).ok_or("[[source.add]] files = [\"name.dll\"]")?,
+                to: s(c, "to").ok_or("[[source.add]] to = 'C:\\...'")? });
+        },
+        Some(_) => return Err("[[source.add]]: an array of tables".into()),
+    }
     let mut dll = BTreeMap::new();
     for (k, v) in table(&t, "dll")?.into_iter().flatten() {
         let how = v.as_str().ok_or("[dll]: \"name.dll\" = \"builtin\"")?;
@@ -120,7 +141,8 @@ pub fn load_recipe(dir: &Path) -> R<Recipe> {
         name: s(&t, "name").ok_or("recipe: no name")?,
         from: s(&t, "from").ok_or("recipe: no from (a base, e.g. \"base/windows-x86:1\")")?,
         libraries: strs(&t, "libraries")?.unwrap_or_default(),
-        source: Source { file: s(src, "file").ok_or("[source] file")?, sha256: s(src, "sha256").map(|x| x.to_ascii_lowercase()), extract: s(src, "extract").unwrap_or("file".into()), app: s(src, "app"), map, cabs },
+        source: Source { file: s(src, "file").ok_or("[source] file")?, sha256: s(src, "sha256").map(|x| x.to_ascii_lowercase()), extract: s(src, "extract").unwrap_or("file".into()), app: s(src, "app"), map, cabs,
+            root: s(src, "root").map(|r| r.trim_matches('/').to_string()), adds },
         exe: s(run, "exe").ok_or("[run] exe")?,
         display: s(run, "display"),
         args: strs(run, "args")?.unwrap_or_default(),
@@ -134,6 +156,10 @@ pub fn load_recipe(dir: &Path) -> R<Recipe> {
         heap_fill: match table(&t, "quirks")?.and_then(|q| q.get("heap_fill")) {
             None => None,
             Some(v) => Some(v.as_integer().filter(|n| (0..=255).contains(n)).ok_or("quirks.heap_fill: a byte, 0 to 255")? as u8),
+        },
+        shaders: match table(&t, "shaders")? {
+            None => None,
+            Some(sh) => Some(Shaders { frames: sh.get("frames").and_then(|v| v.as_integer()).filter(|n| *n > 0).ok_or("[shaders] frames = <presents to run for>")? as u64, session: s(sh, "session") }),
         },
         dir,
     })

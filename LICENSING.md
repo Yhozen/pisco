@@ -24,6 +24,7 @@ Every file's licence is recorded for tools in [`REUSE.toml`](REUSE.toml) and in 
 | `rt/windows-x86/third_party/stb_truetype.h` | MIT OR Unlicense | Sean Barrett's TrueType rasteriser, unchanged; gdi32 draws text with it |
 | `rt/windows-x86/third_party/stb_vorbis.c` | MIT OR Unlicense | Sean Barrett's Ogg Vorbis decoder, unchanged; FMOD 3 plays Ogg files with it |
 | `rt/windows-x86/third_party/minimp3.h` | CC0-1.0 | lieff's MP3 decoder, unchanged; FMOD 3 plays MP3 files with it |
+| `rt/windows-x64/third_party/stb_image.h` | MIT OR Unlicense | Sean Barrett's image loader, unchanged (built for PNG only); WIC reads Windows x64 titles' PNGs with it |
 | [`rt/windows-x86/fonts/`](rt/windows-x86/fonts) | OFL-1.1 | Liberation Sans 2.1.5, regular and italic, unchanged, with its `LICENSE`: the font gdi32 draws with, built into Windows desktop titles |
 
 When you add code from another project, keep its licence line, add a row here and in `REUSE.toml`, and credit
@@ -47,6 +48,7 @@ each **program**:
 | wasi-libc, compiler-rt | Apache-2.0 WITH LLVM-exception, MIT | yes (the exception covers GPL-2.0) | yes |
 | stb_truetype | MIT OR Unlicense | yes, in any build | yes |
 | stb_vorbis | MIT OR Unlicense | yes, in any build (Windows desktop titles) | yes |
+| stb_image | MIT OR Unlicense | yes, in any build (Windows x64 titles) | yes |
 | minimp3 | CC0-1.0 (public domain dedication) | yes, in any build (Windows desktop titles) | yes |
 | Liberation fonts | OFL-1.1 (a font embedded in a program: the OFL allows it with any software, the font itself staying under the OFL) | yes, in any build (Windows desktop titles) | yes |
 | XCL | GPL-2.0-only | only in a build with no GPL-3.0 or LGPL-3.0 code | yes (as today: `crates/shaders`) |
