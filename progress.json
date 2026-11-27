@@ -1,12 +1,12 @@
 {
  "updated": "2026-11-26",
  "d3d12": [
-  223,
+  232,
   353
  ],
  "imports": [
-  954,
-  1050
+  1027,
+  1098
  ],
  "xcl": [
   50,
@@ -41,22 +41,29 @@
   {
    "name": "SimpleTriangleDesktop (clang-cl)",
    "runtime": "Windows x64",
-   "done": 190,
+   "done": 213,
    "total": 265,
    "shipped": 0
   },
   {
    "name": "SimpleTriangleDesktop (MSVC)",
    "runtime": "Windows x64",
-   "done": 191,
+   "done": 214,
    "total": 266,
    "shipped": 0
   },
   {
    "name": "SimplePBR (clang-cl)",
    "runtime": "Windows x64",
-   "done": 201,
+   "done": 226,
    "total": 280,
+   "shipped": 0
+  },
+  {
+   "name": "Desire (DESI:Re v0.1)",
+   "runtime": "Windows x64",
+   "done": 254,
+   "total": 283,
    "shipped": 0
   },
   {
