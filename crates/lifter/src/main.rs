@@ -9,6 +9,9 @@ use object::{LittleEndian as LE, Object, ObjectSection};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 
+mod avx;
+mod ps5;
+
 /// Guest addresses handed out for imports (the IAT slots hold these).
 const IMPORT_BASE: u64 = 0x0F80_0000;
 
@@ -39,10 +42,17 @@ struct Image {
     seeds: Vec<u64>,
     /// an ELF: the C library's setjmp (1), sigsetjmp (2) and longjmp (3), by their symbols
     jumps: BTreeMap<u64, u8>,
+    /// a PS5 title (ps5.rs): imports from the system's libraries by NID, relocations whose values the image keeps
+    ps5: bool,
+    /// a PS5 title: the value each relocation (`relocs`, in the same order) makes, at the image's base
+    reloc_values: Vec<u64>,
 }
 
 impl Image {
     fn load(data: &[u8]) -> Result<Image, String> {
+        if ps5::is_ps5(data) {
+            return Image::from_ps5_elf(data);
+        }
         if data.starts_with(b"\x7fELF") {
             return Image::from_elf(data);
         }
@@ -97,7 +107,7 @@ impl Image {
         let size = u64::from(object::read::pe::ImageOptionalHeader::size_of_image(opt));
         let characteristics = pe.nt_headers().file_header().characteristics.get(LE);
         let mut img = Image { bits, base, entry, sections, text, pdata: BTreeMap::new(), unwind: BTreeMap::new(), imports: Vec::new(), relocs, raw, orig_base: base, dirs, stack_reserve,
-            fixed: characteristics & 1 != 0, size, is_dll: characteristics & 0x2000 != 0, exports: Vec::new(), ranges: vec![(base, base + size)], elf: false, seeds: Vec::new(), jumps: BTreeMap::new() };
+            fixed: characteristics & 1 != 0, size, is_dll: characteristics & 0x2000 != 0, exports: Vec::new(), ranges: vec![(base, base + size)], elf: false, seeds: Vec::new(), jumps: BTreeMap::new(), ps5: false, reloc_values: Vec::new() };
         if let Some(Some(table)) = pe.export_table().ok() {
             if let Ok(list) = table.exports() {
                 for e in list {
@@ -165,7 +175,7 @@ impl Image {
         let base = sections.iter().map(|s| s.0).min().ok_or("no loadable segment")? & !0xFFF;
         let size = ((sections.iter().map(|s| s.0 + s.2).max().unwrap() + 0xFFF) & !0xFFF) - base;
         let mut img = Image { bits: 64, base, entry: h.e_entry(en), sections, text, pdata: BTreeMap::new(), unwind: BTreeMap::new(), imports: Vec::new(), relocs: Vec::new(), raw, orig_base: base,
-            dirs: Vec::new(), stack_reserve: 8 << 20, fixed: true, size, is_dll: false, exports: Vec::new(), ranges: vec![(base, base + size)], elf: true, seeds: Vec::new(), jumps: BTreeMap::new() };
+            dirs: Vec::new(), stack_reserve: 8 << 20, fixed: true, size, is_dll: false, exports: Vec::new(), ranges: vec![(base, base + size)], elf: true, seeds: Vec::new(), jumps: BTreeMap::new(), ps5: false, reloc_values: Vec::new() };
         // symbols: functions, and the labels of hand-written assembly (no type)
         for sym in file.symbols() {
             let a = sym.address();
@@ -247,6 +257,9 @@ impl Image {
         self.unwind = self.unwind.iter().map(|(b, u)| (b.wrapping_add(d), u.wrapping_add(d))).collect();
         self.imports.iter_mut().for_each(|i| mv(&mut i.0));
         self.relocs.iter_mut().for_each(mv);
+        self.reloc_values.iter_mut().for_each(mv);
+        self.seeds.iter_mut().for_each(mv);
+        self.jumps = self.jumps.iter().map(|(a, k)| (a.wrapping_add(d), *k)).collect();
         self.exports.iter_mut().for_each(|e| mv(&mut e.2));
         self.ranges.iter_mut().for_each(|r| { mv(&mut r.0); mv(&mut r.1) });
         Ok(())
@@ -1156,7 +1169,11 @@ impl Emit<'_> {
             }
         }
         if i.encoding() != iced_x86::EncodingKind::Legacy && i.encoding() != iced_x86::EncodingKind::D3NOW {
+            if let Some(s) = avx::avx(i) {
+                return s;
+            }
             self.avx += 1;
+            *self.unimpl.entry(format!("{:?}", i.code())).or_default() += 1;
             return format!("rt_unimpl(0x{:x}ull); /* AVX or later */", i.ip());
         }
         let bits = if i.op_count() > 0 && matches!(i.op_kind(0), OpKind::Register | OpKind::Memory) && !i.op0_register().is_xmm() { opsize(i, 0) * 8 } else { 64 };
@@ -2074,7 +2091,7 @@ fn lift() {
     } else {
         // 64-bit: several images start at 0x10000000, above the runtime's data; a 32-bit exe keeps its own base (its
         // layout leaves the runtime room below and above the images: tools/build-title.sh)
-        let mut next = first.unwrap_or(if mods[0].1.base >= 0x1_0000_0000 || (mods.len() > 1 && bits == 64) { 0x1000_0000 } else { mods[0].1.base });
+        let mut next = first.unwrap_or(if mods[0].1.base >= 0x1_0000_0000 || (mods.len() > 1 && bits == 64) || mods[0].1.ps5 { 0x1000_0000 } else { mods[0].1.base });
         for (name, img) in mods.iter_mut() {
             let from = img.base;
             img.rebase(next).unwrap_or_else(|e| panic!("{name}: {e}"));
@@ -2242,6 +2259,10 @@ fn lift() {
     }
     writeln!(out, "const ModuleDef rt_modules[]={{{}}};const unsigned rt_module_count={};", defs.join(","), mods.len()).unwrap();
     writeln!(out, "const u64 import_base=0x{import_base:x}ull;const unsigned import_count={};", import_slots.len()).unwrap();
+    if img.ps5 {
+        // a PS5 title: what its relocations hold once the image is at its base (the file has 0 there: RELA)
+        writeln!(out, "const u64 rt_reloc_values[]={{{}0}};", mods.iter().flat_map(|(_, m)| m.reloc_values.iter()).map(|v| format!("0x{v:x}ull,")).collect::<String>()).unwrap();
+    }
     writeln!(out, "const u64 import_slots[]={{{}0}};", import_slots.iter().map(|(s, _, _)| format!("0x{s:x}ull,")).collect::<String>()).unwrap();
     writeln!(out, "const u64 import_targets[]={{{}0}};", import_slots.iter().map(|(_, _, t)| format!("0x{t:x}ull,")).collect::<String>()).unwrap();
     writeln!(out, "const char*const import_names[]={{{}0}};", import_slots.iter().map(|(_, n, _)| format!("\"{n}\",")).collect::<String>()).unwrap();
@@ -2261,7 +2282,7 @@ fn lift() {
         write(&format!("{stem}_{k}.c"), b);
     }
     // what a build needs to know about the title, for the shell: the guest's width and where its images are
-    write(&format!("{stem}.env"), &format!("GUEST_BITS={bits}\nIMAGE_LOW=0x{image_low:x}\nIMAGE_HIGH=0x{image_high:x}\nFIXED_BASE={}\nOS={}\n", u32::from(mods.iter().any(|(_, m)| m.fixed)), if img.elf { "linux" } else { "windows" }));
+    write(&format!("{stem}.env"), &format!("GUEST_BITS={bits}\nIMAGE_LOW=0x{image_low:x}\nIMAGE_HIGH=0x{image_high:x}\nFIXED_BASE={}\nOS={}\n", u32::from(mods.iter().any(|(_, m)| m.fixed)), if img.elf { "linux" } else if img.ps5 { "ps5" } else { "windows" }));
 
     if let Some(found) = &found32 {
         census32(&img, &mods, found, &funcs, &em, resolved.len());
@@ -2274,7 +2295,7 @@ fn lift() {
         eprintln!("lifted {} functions ({} from the exception tables) in {} images, {} instructions, {} imports ({} between the images)", entries.len(), img.pdata.len(), mods.len(), total, img.imports.len(), resolved.len());
     }
     eprintln!("{} jump tables recovered; {} `jmp reg` left as indirect calls (tail calls through pointers, or switches not recognised)", funcs.values().map(|f| f.tables.len()).sum::<usize>(), em.unresolved);
-    eprintln!("{} AVX-or-later instructions become traps (the virtual CPU does not report AVX: code that checks CPUID takes its SSE paths)", em.avx);
+    eprintln!("{} AVX-or-later instructions avx.rs does not handle become traps (the virtual CPU does not report AVX: code that checks CPUID takes its SSE paths)", em.avx);
     eprintln!("not lifted yet, in the other functions: {missing} instructions ({:.2} %)", 100.0 * f64::from(missing) / total.max(1) as f64);
     let mut v: Vec<_> = em.unimpl.iter().collect();
     v.sort_by(|a, b| b.1.cmp(a.1));
@@ -2342,7 +2363,7 @@ fn census32(img: &Image, mods: &[(String, Image)], found: &Found, funcs: &BTreeM
                 100.0 * code as f64 / size, 100.0 * table as f64 / size, 100.0 * pad as f64 / size, 100.0 * rest as f64 / size);
         }
     }
-    eprintln!("{} AVX-or-later instructions become traps (the virtual CPU does not report AVX)", em.avx);
+    eprintln!("{} AVX-or-later instructions avx.rs does not handle become traps (the virtual CPU does not report AVX)", em.avx);
     let missing: u32 = em.unimpl.values().sum();
     eprintln!("not lifted, each stops the title if reached: {missing} instructions ({:.2} % of the distinct ones)", 100.0 * f64::from(missing) / unique.max(1) as f64);
     let mut v: Vec<_> = em.unimpl.iter().collect();

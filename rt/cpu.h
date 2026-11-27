@@ -39,6 +39,7 @@ typedef struct Cpu {
   fpx st[8];      // x87 registers: doubles, or for a Linux title 64 bits of precision (fpx, below)
   struct Landing *landing; // the innermost frame an exception can resume in (rt/seh.c)
   u64 resume;     // a Linux title: the return address the function entered next goes on from (0: its entry)
+  V yh[16];       // AVX: the high 128 bits of ymm0..15 (rt/avx.h)
 } Cpu;
 // A lifted function with landing pads registers one while it runs. `jb` is a jmp_buf in its frame.
 typedef struct Landing { void *jb; u64 entry_rsp; u64 resume; struct Landing *prev; } Landing;
@@ -440,3 +441,4 @@ static inline V pcmpstrm(u32 r, u8 imm) {
 static inline void ptest(Flags *f, V a, V b) { f->zf = ((a.q[0] & b.q[0]) | (a.q[1] & b.q[1])) == 0; f->cf = ((~a.q[0] & b.q[0]) | (~a.q[1] & b.q[1])) == 0; f->of = f->sf = f->af = f->pf = 0; }
 static inline s32 cvt_f2i32(double v) { return (v >= -2147483648.0 && v < 2147483648.0) ? (s32)v : (s32)0x80000000; }
 static inline s64 cvt_f2i64(double v) { return (v >= -9223372036854775808.0 && v < 9223372036854775808.0) ? (s64)v : (s64)0x8000000000000000ull; }
+#include "avx.h"

@@ -1,0 +1,54 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# NID -> function name, for the PS5 functions rt/ps5/ answers for (crates/lifter/src/ps5.rs).
+# A NID is the first 8 bytes of SHA-1(name + a fixed suffix), little-endian, in base64 with '-' for '/'; AnyPS5's
+# tools/nid_names.py computes them. Grouped by the library that exports them.
+
+# libkernel
+pO96TwzOm5E sceKernelGetDirectMemorySize
+rTXw65xmLIA sceKernelAllocateDirectMemory
+L-Q3LEjIbgA sceKernelMapDirectMemory
+1jfXLRVzisc sceKernelUsleep
+4J2sUJmuHZQ sceKernelGetProcessTime
+6UgtwV+0zb4 scePthreadCreate
+T72hz6ffq08 scePthreadYield
+onNY9Byn-W8 scePthreadJoin
+MhC53TKmjVA sysctlbyname
+Mv1zUObHvXI sceKernelGetSystemSwVersion
+FN4gaPmuFV8 write
+# libSceLibcInternal
+Ovb2dSJOAuE strcmp
+j4ViWNHEgww strlen
+8zTFvBIAIN8 memset
+gQX+4GDQjpM malloc
+cVSk9y8URbc posix_memalign
+tIhsqj0qsFE free
+bzQExy189ZI _init_env
+8G2LB+A3rzg atexit
+uMei1W9uyNo exit
+Q3VBxCXhUHs memcpy
++P6FRGH4LfA memmove
+2X5agFjKxMc calloc
+Y7aJ1uydPMo realloc
+# libSceSystemService
+Vo5V8KAwCmk sceSystemServiceHideSplashScreen
+# libSceVideoOut
+Up36PTk687E sceVideoOutOpen
+CBiu4mCE1DA sceVideoOutSetFlipRate
+PjS5uASwcV8 sceVideoOutSetBufferAttribute2
+rKBUtgRrtbk sceVideoOutRegisterBuffers2
+U46NwOiJpys sceVideoOutSubmitFlip
+j6RaAUlaLv0 sceVideoOutWaitVblank
+uquVH4-Du78 sceVideoOutClose
+# libSceUserService
+j3YMu1MVNNo sceUserServiceInitialize
+CdWp0oHWGr0 sceUserServiceGetInitialUser
+# libScePad
+hv1luiJrqQM scePadInit
+xk0AcarP3V4 scePadOpen
+YndgXqQVV7c scePadReadState
+clVvL4ZDntw scePadSetMotionSensorState
+yFVnOdGxvZY scePadSetVibration
+# libSceAudioOut
+JfEPXVxhFqA sceAudioOutInit
+ekNvsT22rsY sceAudioOutOpen
+QOQtbeDqsT4 sceAudioOutOutput
