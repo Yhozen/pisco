@@ -976,6 +976,11 @@ fn decode_func(img: &Image, entry: u64, entries: &BTreeSet<u64>) -> (Func, BTree
                 if ins.mnemonic() == Mnemonic::Lea && ins.is_ip_rel_memory_operand() && img.is_code(ins.ip_rel_memory_address()) {
                     taken.insert(ins.ip_rel_memory_address());
                 }
+                // a program that is not position-independent takes a function's address as an immediate too
+                // (`mov $f, %eax`: musl's libc_start_main_stage2); with no symbols, that is how it is found
+                if !m32 && img.elf && ins.mnemonic() == Mnemonic::Mov && ins.op_count() == 2 && matches!(ins.op_kind(1), OpKind::Immediate32 | OpKind::Immediate32to64 | OpKind::Immediate64) && img.is_code(ins.immediate(1)) {
+                    taken.insert(ins.immediate(1));
+                }
                 // 32-bit code has no RIP-relative `lea`: an address is taken as an immediate (`push offset f`, `mov [x], offset f`)
                 if m32 && matches!(ins.mnemonic(), Mnemonic::Push | Mnemonic::Mov) {
                     for n in 0..ins.op_count() {

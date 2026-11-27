@@ -281,7 +281,9 @@ reasoning and the measurements: [research/kernel-as-a-title.md](research/kernel-
 - **K9, done**: bash (GPL-3.0) in a wasm module of its own, loaded by the host beside the kernel's
   (`web/side.mjs`, `[lifter] modules`), runs as on QEMU.
 - **K10, done**: in Node, a program no build lifted is lifted when it first runs (`web/lift.mjs`, `out/lift-cache`).
-- **Next**: a network, programs from the disk, snapshots.
+- **K11, done**: the program's image is taken from memory at its entry point, so a static program runs from the disk
+  or anywhere, lifted when it first runs.
+- **Next**: position-independent and dynamically linked programs (a distribution's), a network, snapshots.
 
 ## Known limits
 

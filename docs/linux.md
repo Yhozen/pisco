@@ -279,23 +279,31 @@ bash is GPL-3.0-or-later and cannot be linked into the GPL-2.0-only kernel's mod
   title's module exports what the side modules import (`pisco` reads their import sections).
 - `/init` runs bash as it runs on QEMU, in Node and in headless Chrome.
 
-## What it took (K10): programs lifted when they first run
+## What it took (K10, K11): programs lifted when they first run
 
-A program no build lifted can run now, in Node. When the machine meets user code that no program it has holds, it
-hands the page there to the host (`program_missing`). `web/lift.mjs` finds the program of the initramfs whose code
-page at that address is the same, byte for byte. It lifts it into a module of its own (`tools/build-side.sh`: the
-lifter, wasi-sdk, `wasm-ld -shared`), caches it by the file's sha256 in `out/lift-cache`, and loads it, and the
-machine goes on. A machine's title therefore exports whatever a lifted program may import
+A program no build lifted can run now, in Node, from wherever its file is: the initramfs, the disk, a pipe. When the
+machine meets a program no module of its holds, it is at the program's entry point, and the program is in memory as
+the kernel loaded it. Its stack's auxiliary vector says where its program headers are (`AT_PHDR`); its segments'
+bytes, read from memory (its pages faulted in as reads would), are its file again, as the file has them when it
+starts. The machine hands that image to the host (`program_image`). `web/lift.mjs` lifts it into a module of its
+own (`tools/build-side.sh`: the lifter, wasi-sdk, `wasm-ld -shared`), caches it by the image's sha256 in
+`out/lift-cache`, and loads it, and the machine goes on. (K10 found the file in the initramfs by its code page; K11
+needs no file.)
+
+An image from memory has no symbols, so the lifter now also takes a function's address from an immediate (`mov
+$f, %eax`, as musl's start does for `libc_start_main_stage2`). A machine's title therefore exports whatever a lifted program may import
 (`rt/microvm-x64/side-exports.txt`), not only what the programs of its build import.
 
 `/init` runs `/bin/proc` (`fixtures/linux-proc`), which is in the initramfs but in no recipe list: it is lifted in
-2.7 s the first time and taken from the cache after, and prints what it prints on QEMU. The page cannot lift (it
+under 3 s the first time and taken from the cache after, and prints what it prints on QEMU; with a disk, `/init`
+copies it there and runs it from the disk. The page cannot lift (it
 has no lifter): there such a program stops the machine.
 
 ## Limits
 
-- In the page only programs lifted when the image is built run; in Node a program of the initramfs is lifted when it
-  first runs. Programs on the disk, or written while the machine runs, are not found yet.
+- In the page only programs lifted when the image is built run; in Node any static program that is not
+  position-independent is lifted when it first runs. Position-independent and dynamically linked programs (most of a
+  distribution's) are not yet: they are somewhere else each time.
 - Model-specific registers the machine does not know read as 0 where a CPU raises #GP, which some of the kernel's
   `rdmsr_safe` callers would want.
 - A store that faults between its read and its write (an add to memory whose page must be copied) reads again after
@@ -320,4 +328,5 @@ has no lifter): there such a program stops the machine.
 | K8 | real programs on it: fastfetch, and cowsay on perl, as on QEMU | done |
 | K9 | a program in a module of its own: bash (GPL-3.0) beside the kernel, as on QEMU | done |
 | K10 | programs lifted when they first run (Node: from the initramfs, cached by sha256) | done |
-| K11 | a network, programs from the disk, snapshots | next |
+| K11 | programs lifted from their image in memory: from the disk, a pipe, anywhere | done |
+| K12 | position-independent and dynamically linked programs, a network, snapshots | next |

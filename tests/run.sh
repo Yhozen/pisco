@@ -223,7 +223,7 @@ kernel() {
   # (the machine's and the host's own notes left out: the first run may lift a program, web/lift.mjs)
   cmp -s <(grep -v '^pisco: ' $d/boot1.txt) <(grep -v '^pisco: ' $d/boot2.txt) || { echo "two boots of the lifted kernel differ ($d/boot1.txt, $d/boot2.txt)"; return 1; }
   # the boot up to /init, without the machine's own notes and what depends on the compiler that built the kernel
-  norm() { sed -n '1,/^Run \/init as init process/p' "$1" | grep -v '^pisco: ' | sed -E 's/^(Linux version [^ ]+ \(pisco@pisco\)).*/\1/; s/^Memory: .*/Memory: (sizes)/'; }
+  norm() { sed -n '1,/^Run \/init as init process/p' "$1" | grep -v '^pisco: ' | sed -E 's/^(Linux version [^ ]+ \(pisco@pisco\)).*/\1/; s/^Memory: .*/Memory: (sizes)/; s/^(sched_clock: Marking stable).*/\1 (times)/'; }
   [ -z "${KERNEL_RECORD:-}" ] || norm $d/boot1.txt > $boot
   norm $d/boot1.txt | cmp -s - $boot || { echo "the lifted kernel's boot differs from $boot (< now, > recorded):"; diff <(norm $d/boot1.txt) $boot | head -8; return 1; }
   sed -n '/^Run \/init as init process/,$p' $d/boot1.txt | sed 1d | grep -v '^pisco: ' > $d/lifted-programs.txt
@@ -240,6 +240,7 @@ kernel() {
   # a disk: virtio's block device, formatted, written, mounted again and read by /init
   SW_DISK=16M timeout 600 target/release/pisco run out/images/linux < /dev/null 2>&1 | tr -d '\r' > $d/disk.txt
   grep -qx 'disk: on the disk, 1000 lines, 16777216 bytes' $d/disk.txt || { echo "with a disk, /init did not read back what it wrote ($d/disk.txt):"; grep -E 'vda|disk|virtio' $d/disk.txt | tail -4; return 1; }
+  grep -qx 'disk: a program run from the disk' $d/disk.txt || { echo "with a disk, /init did not run a program from it ($d/disk.txt)"; return 1; }
   echo "lifted (pisco run): $(wc -l < $boot) lines of boot to /init, twice the same, equal to $boot; /init's programs print what they print on QEMU; a shell typed into answers as $con; 500 programs in a row; a virtio disk formatted, written and read again"
 }
 neofetch() {

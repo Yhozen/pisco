@@ -98,7 +98,7 @@ io scheduler kyber registered
 Serial: 8250/16550 driver, 1 ports, IRQ sharing disabled
 serial8250: ttyS0 at I/O 0x3f8 (irq = 4, base_baud = 115200) is a 16550A
 microcode: Current revision: 0xffffffff
-sched_clock: Marking stable (40002188, 269340)->(43592380, -3320852)
+sched_clock: Marking stable (times)
 Freeing initrd memory: 10004K
 Freeing unused kernel image (initmem) memory: 580K
 Write protecting the kernel read-only data: 8192k

@@ -41,7 +41,8 @@ for i in 1 2 3 4 5 6 7 8 9 10; do /bin/true; done; echo "exec: 10 programs run"
 if [ -b /dev/vda ]; then
   mke2fs -q /dev/vda > /dev/null 2>&1; mkdir -p /mnt
   mount -t ext2 /dev/vda /mnt && seq 1000 > /mnt/numbers && echo "on the disk" > /mnt/note && sync && umount /mnt
-  mount -t ext2 /dev/vda /mnt && echo "disk: $(cat /mnt/note), $(wc -l < /mnt/numbers) lines, $(blockdev --getsize64 /dev/vda) bytes" && umount /mnt
+  mount -t ext2 /dev/vda /mnt && echo "disk: $(cat /mnt/note), $(wc -l < /mnt/numbers) lines, $(blockdev --getsize64 /dev/vda) bytes"
+  cp /bin/proc /mnt/proc && echo "disk: $(/mnt/proc --echo a program run from the disk)" && umount /mnt
 fi
 
 echo "init: done"

@@ -69,17 +69,49 @@ static u64 code_hash(Cpu *c, u64 pc, u64 lo, u64 hi) {
   phys_read(pa + (from - page), b, (unsigned)(to - from));
   u64 h = 0xcbf29ce484222325ull; for (u64 k = 0; k < to - from; k++) h = (h ^ b[k]) * 0x100000001b3ull; return h;
 }
-// no program holds the code there: the host may lift the one that does (web/lift.mjs: a program of the initramfs
-// whose page there is this one), load it and register it; 1 when it did
-HOST("program_missing") int host_program_missing(u64 pc, u32 page);
-static u8 missing_page[4096];
+// No program holds the code there: the program that does is in memory, as the kernel loaded it. A static program
+// that is not position-independent has its ELF header at the start of its first segment, below its code: its
+// headers and its segments' bytes, read from memory (its pages faulted in as reads would), are its file again,
+// as the file has them when it starts (the machine meets a program first at its entry point). The host lifts that
+// into a module of its own (web/lift.mjs, cached by the image's sha256), loads it and registers it; 1 when it did.
+HOST("program_image") int host_program_image(u32 image, u32 len);
 static const ProgramDef *program_at(Cpu *c, u64 pc);
+// fault: a page not mapped yet is faulted in (only inside the program's segments: there the kernel maps it); else
+// 0 when a page is not there (the stack, which the kernel has just written at a program's start)
+static int user_read(Cpu *c, u64 va, void *out, unsigned n, int fault) {
+  for (unsigned k = 0; k < n;) {
+    u64 a = va + k, pa; int w; unsigned m = 4096 - (unsigned)(a & 4095); if (m > n - k) m = n - k;
+    if (fault && mmu_walk(a, 0, 1, &pa, &w) >= 0) { u8 b; mmu_read(c, mmu_u, a, 1, a, &b); }
+    if (mmu_walk(a, 0, 1, &pa, &w) >= 0) return 0;
+    phys_read(pa, (u8 *)out + k, m); k += m;
+  }
+  return 1;
+}
 static int ask_host(Cpu *c, u64 pc) {
-  u64 pa; int w;
-  if (mmu_walk(pc & ~0xFFFull, 0, 1, &pa, &w) >= 0) { u8 b; mmu_read(c, mmu_u, pc, 1, pc, &b); }
-  if (mmu_walk(pc & ~0xFFFull, 0, 1, &pa, &w) >= 0) return 0;
-  phys_read(pa, missing_page, 4096); uart_flush();
-  return host_program_missing(pc, (u32)(uptr)missing_page);
+  // its auxiliary vector, on its stack at its entry point: where its program headers are (AT_PHDR) and its entry
+  u64 sp = R[RSP], argc, v, phdr = 0, phnum = 0, entry = 0;
+  if (!user_read(c, sp, &argc, 8, 0) || argc > 4096) return 0;
+  u64 at = sp + 8 * (argc + 2);
+  for (int k = 0; k < 4096; k++, at += 8) { if (!user_read(c, at, &v, 8, 0)) return 0; if (!v) break; }   // the environment
+  for (int k = 0; k < 64; k++) {
+    u64 kv[2]; at += 8; if (!user_read(c, at, kv, 16, 0)) return 0; at += 8;
+    if (kv[0] == 0) break; if (kv[0] == 3) phdr = kv[1]; if (kv[0] == 5) phnum = kv[1]; if (kv[0] == 9) entry = kv[1];
+  }
+  if (entry != pc || !phdr || !phnum || phnum > 64) return 0;   // (only a program that starts: then it is as its file has it)
+  u8 ph[64 * 56]; if (!user_read(c, phdr, ph, 56u * (unsigned)phnum, 1)) return 0;
+  // its first segment (file offset 0) holds its ELF header; the image is its segments' bytes at their offsets
+  u64 size = 0, base = ~0ull; int holds = 0;
+  for (unsigned i = 0; i < phnum; i++) { u32 t, fl; u64 off, va, fs, ms; memcpy(&t, ph + 56 * i, 4); memcpy(&fl, ph + 56 * i + 4, 4); memcpy(&off, ph + 56 * i + 8, 8); memcpy(&va, ph + 56 * i + 16, 8); memcpy(&fs, ph + 56 * i + 32, 8); memcpy(&ms, ph + 56 * i + 40, 8);
+    if (t != 1) continue; if (off + fs > size) size = off + fs; if (off == 0) base = va; if ((fl & 1) && pc >= va && pc < va + ms) holds = 1; }
+  if (!holds || base == ~0ull || size > (256u << 20)) return 0;
+  u8 h[64]; if (!user_read(c, base, h, 64, 1) || memcmp(h, "\x7f" "ELF\x02\x01", 6)) return 0;
+  u16 type; memcpy(&type, h + 16, 2); if (type != 2) return 0;   // (ET_EXEC: a position-independent program is elsewhere each time)
+  u8 *img = calloc(1, size); if (!img) return 0;
+  for (unsigned i = 0; i < phnum; i++) { u32 t; u64 off, va, fs; memcpy(&t, ph + 56 * i, 4); memcpy(&off, ph + 56 * i + 8, 8); memcpy(&va, ph + 56 * i + 16, 8); memcpy(&fs, ph + 56 * i + 32, 8);
+    if (t == 1 && fs && !user_read(c, va, img + off, (unsigned)fs, 1)) { free(img); return 0; } }
+  memset(img + 40, 0, 8); memset(img + 60, 0, 4);   // (no section headers: what memory has is the segments)
+  uart_flush();
+  int r = host_program_image((u32)(uptr)img, (u32)size); free(img); return r;
 }
 static const ProgramDef *program_at(Cpu *c, u64 pc) {
   unsigned linked = &rt_program_count ? rt_program_count : 0;
