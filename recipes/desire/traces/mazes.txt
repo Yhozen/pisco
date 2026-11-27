@@ -1,0 +1,5 @@
+# Three runs of Desire under Wine (docs/desire.md): the values its two std::random_device calls returned (Wine's relay of
+# msvcp140's _Random_device), and the sha256 of the maze each run wrote to Assets/Maps/generated-stage01.map.
+aee69d51,b9466b87 25e502dd9b97ce2ecb805f3ab8e83886d410e02045d297512a4c0fa6a7672e75
+f63e8205,55254cc0 efda754e0c16a9c71356f08118683f3df484e5ac7597e8d61b94f39133a2d9c5
+76dcf081,5c498163 08e46a14815dc35a0a9e9110b71fea5ece69aa4e0562ecc15abd7db11c47c9a1

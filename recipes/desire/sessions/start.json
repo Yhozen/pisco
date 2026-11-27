@@ -1,0 +1,34 @@
+{
+ "title": "desire",
+ "about": "From the start: the engine's boot logo, skipped with Enter, then the maze before any other input (the player at the start cell, facing along the corridor). The window's title says the scene: 'BootLogo | Enter: Skip / Esc: Quit', then 'Maze | WASD: Move / Arrows : Look / F2: Retry / Esc: Quit | Enemy: FIND ...'. Under Wine with a software renderer the logo lasts a few seconds; the first wait takes the shot inside it. `random`: the seeds of the Wine run its screenshots were taken from (out/oracle/desire/start1), so that the maze is that run's.",
+ "steps": [
+  {
+   "wait": 1500
+  },
+  {
+   "focus": true
+  },
+  {
+   "shot": "logo"
+  },
+  {
+   "key": "Return"
+  },
+  {
+   "wait": 2000
+  },
+  {
+   "shot": "stage"
+  },
+  {
+   "key": "Escape"
+  },
+  {
+   "wait": 1000
+  }
+ ],
+ "random": [
+  "f63e8205",
+  "55254cc0"
+ ]
+}

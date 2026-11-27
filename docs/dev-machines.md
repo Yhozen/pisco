@@ -1,4 +1,8 @@
-# Developing on boat.dev sandboxes (2026-11-27)
+# Developing on boat.dev sandboxes (2026-11-27, experimental)
+
+**Experimental and optional.** Nothing requires it: `tests/run.sh` on your own machine (and CI) stays the check a
+change passes. An agent or a person may use `tools/boat.sh` when it helps, mostly to run the slow steps on several
+machines at once, or to try a change on Ubuntu's gcc 13, and may as well not.
 
 The slow part of working on PISCO is compiling lifted C: a lifter change means clang again over every lifted
 function of every title touched (a minute or two a program on four cores). [boat.dev](https://boat.dev) sandboxes

@@ -159,13 +159,6 @@ IMP(kernel32, EnumSystemLocalesA) {
   RET(1);
 }
 IMP(kernel32, GetConsoleCP) { RET(437); }
-IMP(kernel32, IsDebuggerPresent) { RET(0); }
-// The last of an exception's handlers: on Windows the process ends (or a debugger is asked); here the run stops
-// with what was raised, where.
-IMP(kernel32, UnhandledExceptionFilter) { // (EXCEPTION_POINTERS*)
-  u64 ep = ARG(0), rec = ep ? MP(ep) : 0;
-  rt_fatal("unhandled exception 0x%08x at 0x%llx", rec ? M32(rec) : 0, rec ? (u64)MP(rec + 12) : 0);
-}
 
 // ---- resources: the .rsrc of a lifted image, found through its PE header's data directory 2 ----
 static u32 resource_dir(const ModuleDef *m, u32 *size) { // the directory's RVA, read from the image's file (its headers are not loaded)

@@ -10,7 +10,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { Worker, isMainThread, workerData, parentPort } from 'node:worker_threads';
-import { sessionSteps } from './session.mjs';
+import { sessionEnv, sessionSteps } from './session.mjs';
 import { isImageDir, openImageDir, driveName, blobPath } from './image.mjs';
 import { createKernel, processImports } from './kernel.mjs';
 
@@ -50,7 +50,7 @@ if (isMainThread) {
   // the image's settings for the runtime (its registry values: SW_REGISTRY), with the environment's after them
   if (image) for (const [k, v] of Object.entries(image.settings.env)) env[k] = k === 'SW_REGISTRY' && env[k] ? `${v}\n${env[k]}` : env[k] ?? v;
   const imageDir = image ? path.resolve(first) : null, folder = image ? image.settings.folder : null;
-  if (process.env.SW_SESSION) env.SW_SESSION_STEPS = sessionSteps(JSON.parse(fs.readFileSync(process.env.SW_SESSION, 'utf8')));
+  if (process.env.SW_SESSION) { const s = JSON.parse(fs.readFileSync(process.env.SW_SESSION, 'utf8')); env.SW_SESSION_STEPS = sessionSteps(s); for (const [k, v] of Object.entries(sessionEnv(s))) if (!(k in env)) env[k] = v; }
   GPU_OPEN.onmessage = async (e) => {
     const { startNull } = await import('./gpu/null.js');
     gpu = startNull(memory, e.data, { dir, log: say });

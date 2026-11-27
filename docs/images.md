@@ -113,7 +113,9 @@ libraries = ["d3d9", "dinput8", "fmod3"]  # the base's libraries this title link
 file = "narbacular_drop_setup.exe"        # looked for beside the recipe unless `pisco build --source` names it
 sha256 = "0966948f..."                    # checked before anything else; without it the build says so and goes on
 extract = "innosetup"                     # innoextract (tools/setup-toolchain.sh innoextract); or "file": the source is the exe;
-                                          # or "folder": the source is a folder (a title the user built), copied to {app}
+                                          # or "folder": the source is a folder (a title the user built), copied to {app};
+                                          # or "zip": the archive's files (stored or deflated) to {app} (recipes/desire)
+# root = "Game-v1"                        # zip: only the files under this folder of the archive, without it
 # app = 'C:\Program Files\Narbacular Drop'  where {app} goes (default: the exe's folder)
 # map = { commonappdata = 'C:\Documents and Settings\All Users\Application Data' }  the installer's other folders
 
@@ -121,6 +123,11 @@ extract = "innosetup"                     # innoextract (tools/setup-toolchain.s
 cab = 'C:\Program Files\Tag\DirectX\AUG2007_d3dx9_35_x86.cab'   # machine: tools/setup-toolchain.sh cabextract,
 files = ["d3dx9_35.dll"]                  # or CABEXTRACT=<path>), taken out into a folder of C: (recipes/tag)
 to = 'C:\WINDOWS\system32'
+
+[[source.add]]                            # files of the user's the title needs and its download leaves to the system
+from = "REDIST"                           # their folder: `pisco build --with REDIST=<folder>`, or $REDIST
+files = ["msvcp140.dll", "vcruntime140.dll", "vcruntime140_1.dll"]   # found without regard to case
+to = 'C:\Games\Desire'                    # in {app} or under it: DLLs there are lifted with the title (recipes/desire)
 
 [run]
 exe = 'C:\Program Files\Narbacular Drop\Narbacular Drop.exe'   # a Linux title: a path from the root, "/usr/bin/fastfetch"
@@ -147,6 +154,12 @@ opt = "-O1"                               # clang's level for the lifted C (defa
 [quirks]
 heap_fill = 0xCD                          # what a heap block the title did not ask to be zeroed holds (default: whatever
                                           # the runtime's allocator left); Narbacular Drop depends on it being non-zero
+
+[shaders]                                 # HLSL the title compiles at run time (D3DCompile), compiled by the build:
+frames = 30                               # the image is run in Node until this many presents (SW_EXIT_FRAMES), with
+# session = "sessions/start.json"         # D3DCompile logging each source (SW_HLSL_CAPTURE=1); tools/hlsl-prep.mjs
+                                          # compiles them (dxc: DXC, or ~/tools/dxc/dxc under Wine) and translates
+                                          # them (dxil2spv, naga): the image's "shaders" layer, in the title's folder
 ```
 
 `tools/build-title.sh` reads the same recipe (`RECIPE=...`: `[cpu]`, `[registry]` built into the module, `[dll]`,
@@ -161,7 +174,7 @@ layout` checks that no other list exists and that every file is in a base):
 | Base | Runtime | Sources | Titles (recipes) |
 |---|---|---|---|
 | `base/windows-x86:1` | Windows x86 | `rt/*.c`, `rt/windows-x86/*.c` | hello32, Narbacular Drop |
-| `base/windows-x64:1` | Windows x64 | `rt/*.c`, `rt/gdk/*.c`, `rt/windows-x64/*.c` | hello64, SimpleTriangleDesktop, SimplePBR (folders the user built) |
+| `base/windows-x64:1` | Windows x64 | `rt/*.c`, `rt/gdk/*.c`, `rt/windows-x64/*.c` | hello64, SimpleTriangleDesktop, SimplePBR (folders the user built), Desire (a zip) |
 | `base/xbox-series:1` | Xbox Series | `rt/*.c`, `rt/gdk/*.c`, `rt/xbox-series/*.c` | Doom (`out/doom/game`, built by tests/gfx/doom.sh) |
 
 `base/windows-x86:1` has:
@@ -184,7 +197,9 @@ manifest digest is the last line on stdout):
 2. **extraction**: `innoextract` into `<cache>/extract/<sha256>-innosetup`, once per installer. `--compare <folder>`
    sets the extracted `{app}` against another installation (a Wine prefix's) and prints the differences. Each
    `[[source.cab]]` is taken out of its cabinet with `cabextract`, once per cabinet and list of files, into
-   `<cache>/extract/<sha256>-innosetup-cab-<key>`; a missing `cabextract` stops the build and says how to get it;
+   `<cache>/extract/<sha256>-innosetup-cab-<key>`; a missing `cabextract` stops the build and says how to get it.
+   A zip is read by `pisco` itself (`<cache>/extract/<sha256>-zip`). `[[source.add]]` files are copied into the
+   extraction, whose folder then ends in `-add-<key>`, the key being their names and sha256s;
 3. **lifting**: the lifter and clang on the lifted C, once per **lift key**: the sha256 of the images the lifter
    reads (the exe and every shipped DLL that is not `builtin`), the lifter (its version and a hash of its sources
    and `Cargo.lock`; `pisco` builds it first), `rt/cpu.h` and `rt/modules.h`, the lifter's options, clang's version and

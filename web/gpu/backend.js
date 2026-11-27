@@ -103,6 +103,10 @@ export async function startBackend({ memory, ring: ringAddr, device, canvas, dir
   ctx.configure({ device, format: canvasFormat, alphaMode: 'opaque' });
   let samplerCache = new Map(), pipelineCache = new Map(), presents = 0;
   const stats = { executes: 0, draws: 0, presents: 0, segments: 0, readbacks: 0, errors, skipped: {} };
+  // bind groups: each pipeline's layouts kept, and within a segment a group of the same objects made once (a draw
+  // each made one, at hundreds of draws a frame; resources are not destroyed inside a segment)
+  const layouts = new WeakMap(), ids = new WeakMap(); let nextId = 1;
+  const idOf = (o) => { let i = ids.get(o); if (!i) ids.set(o, i = nextId++); return i; };
   const skip = (why) => { stats.skipped[why] = (stats.skipped[why] || 0) + 1; };
 
   const findVA = (va) => {
@@ -284,8 +288,9 @@ export async function startBackend({ memory, ring: ringAddr, device, canvas, dir
     const w = words(g, at, n >> 2);
     const st = { pso: null, root: [null, null], args: [[], []], rts: [], dsv: null, vp: null, sc: null, topo: 4, vbs: [], ib: null, blend: [1, 1, 1, 1], stencil: 0, bias: null, active: new Set() };
     const clears = new Map(), sums = new Map(); // occlusion: query key -> samples, over the whole submission
-    let enc, uniforms, uploads, written, temps, pass, passKey, passSize, passFormats, passDepth, passSamples, qs, qn, drawQueries, resolves;
+    let groupCache, enc, uniforms, uploads, written, temps, pass, passKey, passSize, passFormats, passDepth, passSamples, qs, qn, drawQueries, resolves;
     const begin = () => {
+      groupCache = new Map();
       enc = device.createCommandEncoder(); uniforms = []; uploads = new Map(); written = new Map(); temps = [];
       pass = null; passKey = ''; passSize = null; passFormats = null; passDepth = null; passSamples = 1; qs = null; qn = 0; drawQueries = []; resolves = [];
       st.uniformBuffer = device.createBuffer({ size: 256 * 1024, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
@@ -386,7 +391,12 @@ export async function startBackend({ memory, ring: ringAddr, device, canvas, dir
         if (!groups[i]) continue;
         const entries = [];
         for (const [binding, resource] of groups[i]) { if (!resource) return null; entries.push({ binding, resource }); }
-        try { out.push([i, device.createBindGroup({ layout: pl.getBindGroupLayout(i), entries })]); } catch (e) { log(`gpu: bind group ${i}: ${e.message}`); return null; }
+        let ls = layouts.get(pl); if (!ls) layouts.set(pl, ls = []);
+        const layout = ls[i] ??= pl.getBindGroupLayout(i);
+        const key = idOf(layout) + entries.map((e) => `|${e.binding}:` + (e.resource.buffer ? `${idOf(e.resource.buffer)}@${e.resource.offset ?? 0}/${e.resource.size ?? ''}` : idOf(e.resource))).join('');
+        let bg = groupCache.get(key);
+        if (!bg) { try { bg = device.createBindGroup({ layout, entries }); } catch (e) { log(`gpu: bind group ${i}: ${e.message}`); return null; } groupCache.set(key, bg); }
+        out.push([i, bg]);
       }
       return out;
     };
@@ -421,9 +431,15 @@ export async function startBackend({ memory, ring: ringAddr, device, canvas, dir
     const flush = async () => {
       endPass(); flushClears();
       if (uniforms.length) { const u = new Uint32Array(uniforms.length * 64); uniforms.forEach((v, k) => u.set(v.subarray(0, 64), k * 64)); device.queue.writeBuffer(st.uniformBuffer, 0, u); }
+      // each buffer's ranges merged first: they all read guest memory now, so overlaps carry the same bytes (a root
+      // CBV has no size and reads 64 KiB from its offset; one draw each into a constant ring made that 48 MB a frame)
       for (const [r, list] of uploads) {
-        if (list.some(([o, s]) => o === 0 && s >= r.size)) { writeBuf(r.gpu, 0, guestBytes(r.backing, Math.ceil(r.size / 4) * 4)); continue; }
-        for (const [o, s] of list) { const a = Math.floor(o / 4) * 4, e = Math.min(Math.ceil(r.size / 4) * 4, Math.ceil((o + s) / 4) * 4); if (e > a) writeBuf(r.gpu, a, guestBytes(r.backing + a, e - a)); }
+        const end = Math.ceil(r.size / 4) * 4, spans = [];
+        for (const [o, s] of list) { const a = Math.floor(o / 4) * 4, e = Math.min(end, Math.ceil((o + s) / 4) * 4); if (e > a) spans.push([a, e]); }
+        spans.sort((x, y) => x[0] - y[0]);
+        let cur = null;
+        for (const sp of spans) { if (cur && sp[0] <= cur[1]) cur[1] = Math.max(cur[1], sp[1]); else { if (cur) writeBuf(r.gpu, cur[0], guestBytes(r.backing + cur[0], cur[1] - cur[0])); cur = sp; } }
+        if (cur) writeBuf(r.gpu, cur[0], guestBytes(r.backing + cur[0], cur[1] - cur[0]));
       }
       // read back: ranges of written buffers, then the occlusion results, into one staging buffer
       const back = []; let total = 0;

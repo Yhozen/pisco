@@ -16,7 +16,8 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Instant;
 
-pub struct Opts { pub recipe: PathBuf, pub source: Option<PathBuf>, pub out: Option<PathBuf>, pub cache: Option<PathBuf>, pub compare: Option<PathBuf> }
+pub struct Opts { pub recipe: PathBuf, pub source: Option<PathBuf>, pub out: Option<PathBuf>, pub cache: Option<PathBuf>, pub compare: Option<PathBuf>,
+    pub with: Vec<(String, PathBuf)> }
 
 pub fn say(s: &str) { eprintln!("pisco: {s}"); }
 fn io<T>(r: std::io::Result<T>, what: &Path) -> R<T> { r.map_err(|e| format!("{}: {e}", what.display())) }
@@ -74,7 +75,7 @@ fn publish(tmp: &Path, dst: &Path) -> R<()> {
 fn tmp_name(p: &Path) -> PathBuf { let mut s = p.as_os_str().to_owned(); s.push(format!(".tmp{}", std::process::id())); PathBuf::from(s) }
 
 // ---- 1. the source ----
-pub struct Extracted { pub files: BTreeMap<String, PathBuf>, pub dirs: Vec<String>, pub app_guest: String }
+pub struct Extracted { pub files: BTreeMap<String, PathBuf>, pub dirs: Vec<String>, pub app_guest: String, pub added: Vec<String> }
 fn innoextract() -> PathBuf {
     if let Ok(p) = std::env::var("INNOEXTRACT") { return p.into(); }
     let p = home().join("tools/innoextract/bin/amd64/innoextract");
@@ -90,10 +91,68 @@ fn walk(dir: &Path, rel: &str, files: &mut Vec<(String, PathBuf)>, dirs: &mut Ve
     }
     Ok(())
 }
-fn extract(r: &Recipe, src: &Path, sha: &str, cache: &Path) -> R<Extracted> {
+/// extract = "zip": the archive's files (stored or deflated) into `to`; with `root`, only those under that folder of
+/// the archive, without it. A name that leaves the folder (absolute, or with ..) is refused.
+fn unzip(src: &Path, root: Option<&str>, to: &Path) -> R<()> {
+    let z = io(std::fs::read(src), src)?;
+    let u16at = |o: usize| -> R<usize> { z.get(o..o + 2).map(|b| u16::from_le_bytes([b[0], b[1]]) as usize).ok_or(format!("{}: not a zip archive (cut short)", src.display())) };
+    let u32at = |o: usize| -> R<usize> { z.get(o..o + 4).map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]) as usize).ok_or(format!("{}: not a zip archive (cut short)", src.display())) };
+    // the end of central directory record: in the last 64 KiB + 22 bytes
+    let lo = z.len().saturating_sub(65557);
+    let eocd = (lo..z.len().saturating_sub(21)).rev().find(|&o| z[o..o + 4] == [0x50, 0x4b, 5, 6]).ok_or(format!("{}: not a zip archive", src.display()))?;
+    let (count, mut o) = (u16at(eocd + 10)?, u32at(eocd + 16)?);
+    let mut n = 0;
+    for _ in 0..count {
+        if u32at(o)? != 0x02014b50 { return Err(format!("{}: a broken central directory", src.display())); }
+        let (flags, method, csize, size) = (u16at(o + 8)?, u16at(o + 10)?, u32at(o + 20)?, u32at(o + 24)?);
+        let (nlen, xlen, clen, local) = (u16at(o + 28)?, u16at(o + 30)?, u16at(o + 32)?, u32at(o + 42)?);
+        let name = String::from_utf8_lossy(z.get(o + 46..o + 46 + nlen).ok_or("zip: cut short")?).replace('\\', "/");
+        o += 46 + nlen + xlen + clen;
+        if flags & 1 != 0 { return Err(format!("{}: {name} is encrypted", src.display())); }
+        let rel = match root { Some(r) => match name.strip_prefix(r).and_then(|x| x.strip_prefix('/')) { Some(x) => x.to_string(), None => continue }, None => name.clone() };
+        if rel.is_empty() { continue; }
+        if rel.starts_with('/') || rel.split('/').any(|p| p == ".." || p.contains(':')) { return Err(format!("{}: {name} leaves the folder", src.display())); }
+        let dst = to.join(rel.trim_end_matches('/'));
+        if name.ends_with('/') { io(std::fs::create_dir_all(&dst), &dst)?; continue; }
+        let data_at = local + 30 + u16at(local + 26)? + u16at(local + 28)?;
+        let raw = z.get(data_at..data_at + csize).ok_or(format!("{}: {name} cut short", src.display()))?;
+        let data = match method {
+            0 => raw.to_vec(),
+            8 => miniz_oxide::inflate::decompress_to_vec(raw).map_err(|e| format!("{}: {name}: {e:?}", src.display()))?,
+            m => return Err(format!("{}: {name}: compression method {m} (only stored and deflate are read)", src.display())),
+        };
+        if data.len() != size { return Err(format!("{}: {name}: {} bytes, the archive says {size}", src.display(), data.len())); }
+        if let Some(p) = dst.parent() { io(std::fs::create_dir_all(p), p)?; }
+        io(std::fs::write(&dst, data), &dst)?;
+        n += 1;
+    }
+    if n == 0 { return Err(format!("{}: no files{}", src.display(), root.map(|r| format!(" under {r}/")).unwrap_or_default())); }
+    Ok(())
+}
+/// [[source.add]]: each file from its folder (--with NAME=<folder>, or $NAME), found without regard to case;
+/// returns (where it goes on C:, its path here) and the material of the cache key (names and sha256s)
+fn added(r: &Recipe, with: &[(String, PathBuf)]) -> R<(Vec<(String, PathBuf)>, String)> {
+    let (mut out, mut key) = (Vec::new(), String::new());
+    for a in &r.source.adds {
+        let dir = with.iter().find(|(n, _)| *n == a.from).map(|x| x.1.clone()).or_else(|| std::env::var_os(&a.from).map(PathBuf::from))
+            .ok_or(format!("[[source.add]] from = \"{0}\": say where its files are: pisco build --with {0}=<folder> (or the environment variable {0})", a.from))?;
+        let to = recipe::drive_path(&a.to)?;
+        let list: Vec<_> = io(std::fs::read_dir(&dir), &dir)?.filter_map(|e| e.ok()).collect();
+        for f in &a.files {
+            let p = list.iter().find(|e| e.file_name().to_string_lossy().eq_ignore_ascii_case(f)).map(|e| e.path()).ok_or(format!("[[source.add]] {f}: not in {} ({})", dir.display(), a.from))?;
+            key.push_str(&format!("{to}/{f} {}\n", oci::sha256(&io(std::fs::read(&p), &p)?)));
+            out.push((format!("{to}/{f}"), p));
+        }
+    }
+    Ok((out, key))
+}
+fn extract(r: &Recipe, src: &Path, sha: &str, cache: &Path, with: &[(String, PathBuf)]) -> R<Extracted> {
     let exe_guest = recipe::drive_path(&r.exe)?;
     let app_guest = match &r.source.app { Some(a) => recipe::drive_path(a)?, None => exe_guest.rsplit_once('/').map(|x| x.0.to_string()).unwrap_or_default() };
-    let dir = cache.join("extract").join(format!("{sha}-{}", r.source.extract));
+    // added files go into the extraction (the lifter takes the DLLs it finds beside the exe): its key says which
+    let (adds, add_key) = added(r, with)?;
+    let suffix = if adds.is_empty() { String::new() } else { format!("-add-{}", &oci::sha256(add_key.as_bytes())[..16]) };
+    let dir = cache.join("extract").join(format!("{sha}-{}{suffix}", r.source.extract));
     let t = Instant::now();
     if dir.is_dir() { say(&format!("extract: cached ({})", dir.display())); } else {
         let tmp = tmp_name(&dir); let _ = std::fs::remove_dir_all(&tmp); io(std::fs::create_dir_all(&tmp), &tmp)?;
@@ -116,7 +175,14 @@ fn extract(r: &Recipe, src: &Path, sha: &str, cache: &Path) -> R<Extracted> {
                 io(std::fs::create_dir_all(tmp.join("app")), &tmp)?;
                 for (rel, p) in fs { io(std::fs::copy(&p, tmp.join("app").join(&rel)), &p)?; }
             }
-            x => return Err(format!("[source] extract = \"{x}\": known are \"innosetup\", \"file\" and \"folder\"")),
+            "zip" => unzip(src, r.source.root.as_deref(), &tmp.join("app"))?,
+            x => return Err(format!("[source] extract = \"{x}\": known are \"innosetup\", \"file\", \"folder\" and \"zip\"")),
+        }
+        for (guest, host) in &adds {
+            let rel = if guest.eq_ignore_ascii_case(&app_guest) { "" } else { match guest.get(..app_guest.len() + 1) { Some(p) if p.eq_ignore_ascii_case(&format!("{app_guest}/")) => &guest[app_guest.len() + 1..], _ => return Err(format!("[[source.add]] {guest}: files are added in the title's folder ({app_guest}) or under it")) } };
+            let dst = tmp.join("app").join(rel);
+            if let Some(p) = dst.parent() { io(std::fs::create_dir_all(p), p)?; }
+            io(std::fs::copy(host, &dst), host)?;
         }
         publish(&tmp, &dir)?;
         say(&format!("extract: {} with {} ({:.1} s)", src.display(), r.source.extract, t.elapsed().as_secs_f64()));
@@ -135,7 +201,7 @@ fn extract(r: &Recipe, src: &Path, sha: &str, cache: &Path) -> R<Extracted> {
         for (rel, host) in fs { files.insert(join(&rel), host); }
     }
     for c in &r.source.cabs { uncab(c, &mut files, &mut dirs, &dir)?; }
-    Ok(Extracted { files, dirs, app_guest })
+    Ok(Extracted { files, dirs, app_guest, added: add_key.lines().map(String::from).collect() })
 }
 fn cabextract() -> PathBuf {
     if let Ok(p) = std::env::var("CABEXTRACT") { return p.into(); }
@@ -338,7 +404,7 @@ pub fn build(root: &Path, o: &Opts) -> R<()> {
         Some(_) => say(&format!("source: {} has the recipe's sha256", src.display())),
         None => say(&format!("source: the recipe gives no sha256 for {} (it has {sha}): not checked", src.display())),
     }
-    let ex = extract(&r, &src, &sha, &cache)?;
+    let ex = extract(&r, &src, &sha, &cache, &o.with)?;
     if let Some(c) = &o.compare { compare(&ex, c)?; }
     let exe_guest = recipe::drive_path(&r.exe)?;
     let exe = ex.files.iter().find(|(g, _)| g.eq_ignore_ascii_case(&exe_guest)).map(|x| x.1.clone()).ok_or(format!("{}: not among the installer's files", r.exe))?;
@@ -434,7 +500,8 @@ pub fn build(root: &Path, o: &Opts) -> R<()> {
     let wasms: Vec<PathBuf> = lifts.iter().map(|l| link_module(l)).collect::<R<_>>()?;
     let wasm = wasms[main_lift].clone();
 
-    // 5. the image
+    // 5. the image; with [shaders], written twice: once to run it and collect the shaders it compiles, then with them
+    let write = |extra: Option<&Tree>| -> R<String> {
     let tmp_out = tmp_name(&out);
     let lay = Layout::create(&tmp_out)?;
     let mut layers = Vec::new();
@@ -449,6 +516,7 @@ pub fn build(root: &Path, o: &Opts) -> R<()> {
     for d in &ex.dirs { if !d.is_empty() { game.dir(d); } }
     for (g, h) in &ex.files { game.file(g, io(std::fs::read(h), h)?); }
     layers.push(lay.put(LAYER, &game.tar(), &[(ROLE, "game"), (TITLE, &r.name), (LOCAL, "true")])?);
+    if let Some(t) = extra { layers.push(lay.put(LAYER, &t.tar(), &[(ROLE, "shaders"), (TITLE, &format!("{} shaders", r.name)), (LOCAL, "true")])?); }
     let module = lay.put(MODULE, &io(std::fs::read(&wasm), &wasm)?, &[(ROLE, "module"), (TITLE, "title.wasm"), (LOCAL, "true")])?;
     // a Linux title's other programs: a module each (the first module above is the one its first process starts in)
     let mut program_layers = Vec::new(); let mut digest_of: BTreeMap<usize, String> = BTreeMap::new();
@@ -472,7 +540,7 @@ pub fn build(root: &Path, o: &Opts) -> R<()> {
             RegData::Sz(s) => json!({ "key": v.key, "name": v.name, "type": "sz", "value": s }) }).collect::<Vec<_>>(),
         "imports": lifted.imports,
         "programs": if program_map.is_empty() { serde_json::Value::Null } else { json!(program_map) },
-        "source": { "sha256": sha, "extract": r.source.extract },
+        "source": { "sha256": sha, "extract": r.source.extract, "added": ex.added },
         "build": { "lift": lifted.key, "lifter": t.lifter_hash, "clang": t.clang_version, "opt": r.opt, "runtime_opt": base.opt },
     });
     let cfg = lay.put_json(oci::CONFIG, &config, &[])?;
@@ -489,9 +557,59 @@ pub fn build(root: &Path, o: &Opts) -> R<()> {
     for (b, what) in layers.iter().zip(std::iter::repeat("layer")).chain([(&module, "module")]).chain(program_layers.iter().zip(std::iter::repeat("module"))).chain([(&cfg, "config")]) {
         say(&format!("  {what:6} {:8} sha256:{} {:>10} bytes  {}", b.annotations.get(ROLE).map(|s| s.as_str()).unwrap_or(""), b.digest, b.size, b.annotations.get(TITLE).map(|s| s.as_str()).unwrap_or("")));
     }
-    say(&format!("image {}: manifest sha256:{} ({:.1} s)", out.display(), man.digest, start.elapsed().as_secs_f64()));
-    println!("sha256:{}", man.digest);
+    Ok(man.digest.clone())
+    };
+    let digest = match &r.shaders {
+        None => write(None)?,
+        Some(sh) => {
+            let first = write(None)?;
+            let tree = shaders_layer(root, &r, sh, &out, &first, &ex.app_guest, &cache)?;
+            write(Some(&tree))?
+        }
+    };
+    say(&format!("image {}: manifest sha256:{} ({:.1} s)", out.display(), digest, start.elapsed().as_secs_f64()));
+    println!("sha256:{digest}");
     Ok(())
+}
+
+/// [shaders]: the image run once in Node (SW_HLSL_CAPTURE: D3DCompile logs each source it has no shader for and
+/// answers with a placeholder; SW_EXIT_FRAMES: the run ends after that many presents), the logged sources compiled
+/// by tools/hlsl-prep.mjs (dxc, then tools/shader-prep.mjs: dxil2spv and naga) into <cache>/shaders/<key>, once per
+/// image and session; returned as a layer: the files under the title's folder, `shaders/`
+fn shaders_layer(root: &Path, r: &Recipe, sh: &recipe::Shaders, image: &Path, image_digest: &str, app_guest: &str, cache: &Path) -> R<Tree> {
+    let session = sh.session.as_ref().map(|s| r.dir.join(s));
+    let mut key = format!("image {image_digest}\nframes {}\n", sh.frames);
+    if let Some(s) = &session { key.push_str(&format!("session {}\n", oci::sha256(&io(std::fs::read(s), s)?))); }
+    for f in ["tools/hlsl-prep.mjs", "tools/shader-prep.mjs", "target/dxil2spv"] { let p = root.join(f); if let Ok(d) = std::fs::read(&p) { key.push_str(&format!("{f} {}\n", oci::sha256(&d))); } }
+    let key = oci::sha256(key.as_bytes());
+    let dir = cache.join("shaders").join(&key[..32]);
+    let t = Instant::now();
+    if dir.is_dir() { say(&format!("shaders: cached ({})", &key[..16])); } else {
+        let tmp = tmp_name(&dir); let _ = std::fs::remove_dir_all(&tmp); io(std::fs::create_dir_all(&tmp), &tmp)?;
+        let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+        let mut cmd = Command::new(exe);
+        cmd.arg("run").arg(image).env("SW_HLSL_CAPTURE", "1").env("SW_EXIT_FRAMES", sh.frames.to_string()).env("SW_PACE", "off").env_remove("SW_STRICT");
+        if let Some(s) = &session { cmd.arg("--session").arg(s); }
+        let o = cmd.output().map_err(|e| format!("pisco run: {e}"))?;
+        let log = tmp.join("capture.log");
+        io(std::fs::write(&log, [&o.stdout[..], &o.stderr[..]].concat()), &log)?;
+        let sources = String::from_utf8_lossy(&std::fs::read(&log).unwrap_or_default()).matches("d3dcompile-source ").count();
+        if !o.status.success() && sources == 0 { return Err(format!("[shaders]: the run ended with {} and compiled nothing: see {}", o.status, log.display())); }
+        let title = tmp.join("title");
+        let o = Command::new("node").arg(root.join("tools/hlsl-prep.mjs")).arg(&log).arg("--title").arg(&title).output().map_err(|e| format!("node: {e}"))?;
+        io(std::fs::write(tmp.join("prep.log"), [&o.stdout[..], &o.stderr[..]].concat()), &tmp)?;
+        if !o.status.success() { return Err(format!("[shaders]: tools/hlsl-prep.mjs failed: see {}", tmp.join("prep.log").display())); }
+        publish(&tmp, &dir)?;
+        say(&format!("shaders: {sources} sources compiled and translated ({:.1} s)", t.elapsed().as_secs_f64()));
+    }
+    let (mut fs, mut ds) = (Vec::new(), Vec::new());
+    let src = dir.join("title");
+    if src.is_dir() { walk(&src, "", &mut fs, &mut ds)?; }
+    let mut tree = Tree::default();
+    let join = |rel: &str| if app_guest.is_empty() { rel.to_string() } else { format!("{app_guest}/{rel}") };
+    for d in ds { tree.dir(&join(&d)); }
+    for (rel, h) in fs { tree.file(&join(&rel), io(std::fs::read(&h), &h)?); }
+    Ok(tree)
 }
 
 /// The base's layer: its folder, the folders it names, its fonts, a placeholder for each DLL of the core
@@ -509,4 +627,51 @@ fn base_layer(root: &Path, base: &Base, cen: &Census) -> R<Tree> {
 fn placeholders(tree: &mut Tree, base: &Base, dlls: &[String], from: &str) {
     let dir = recipe::drive_path(&format!("C:\\{}", base.system32)).unwrap_or_default();
     for d in dlls { tree.file(&format!("{dir}/{d}"), format!("pisco: {d} is built into the runtime ({from}); there is no code in this file.\r\n").into_bytes()); }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::unzip;
+    // a zip of (name, data, deflate?) built here: local headers, the central directory, its end record
+    fn zip(entries: &[(&str, &[u8], bool)]) -> Vec<u8> {
+        let (mut out, mut dir) = (Vec::new(), Vec::new());
+        for (name, data, deflate) in entries {
+            let body = if *deflate { miniz_oxide::deflate::compress_to_vec(data, 6) } else { data.to_vec() };
+            let at = out.len() as u32;
+            let h = |sig: u32, central: bool| { let mut v = sig.to_le_bytes().to_vec();
+                if central { v.extend(20u16.to_le_bytes()); }
+                v.extend(20u16.to_le_bytes()); v.extend(0u16.to_le_bytes()); v.extend((if *deflate { 8u16 } else { 0 }).to_le_bytes());
+                v.extend([0u8; 8]); v.extend((body.len() as u32).to_le_bytes()); v.extend((data.len() as u32).to_le_bytes());
+                v.extend((name.len() as u16).to_le_bytes()); v.extend(0u16.to_le_bytes());
+                if central { v.extend([0u8; 10]); v.extend(at.to_le_bytes()); }
+                v.extend(name.as_bytes()); v };
+            out.extend(h(0x04034b50, false)); out.extend(&body);
+            dir.extend(h(0x02014b50, true));
+        }
+        let (at, n) = (out.len() as u32, entries.len() as u16);
+        out.extend(&dir);
+        out.extend(0x06054b50u32.to_le_bytes()); out.extend([0u8; 4]); out.extend(n.to_le_bytes()); out.extend(n.to_le_bytes());
+        out.extend((dir.len() as u32).to_le_bytes()); out.extend(at.to_le_bytes()); out.extend(0u16.to_le_bytes());
+        out
+    }
+    fn tmp(name: &str) -> std::path::PathBuf { let d = std::env::temp_dir().join(format!("pisco-test-{name}-{}", std::process::id())); let _ = std::fs::remove_dir_all(&d); std::fs::create_dir_all(&d).unwrap(); d }
+    #[test]
+    fn zip_stored_deflated_and_root() {
+        let d = tmp("zip");
+        let text = b"maze maze maze maze maze maze".repeat(20);
+        std::fs::write(d.join("a.zip"), zip(&[("Game/", b"", false), ("Game/Game.exe", b"MZ", false), ("Game/Assets/map.txt", &text, true), ("other.txt", b"x", false)])).unwrap();
+        unzip(&d.join("a.zip"), Some("Game"), &d.join("app")).unwrap();
+        assert_eq!(std::fs::read(d.join("app/Game.exe")).unwrap(), b"MZ");
+        assert_eq!(std::fs::read(d.join("app/Assets/map.txt")).unwrap(), text);
+        assert!(!d.join("app/other.txt").exists());
+        std::fs::remove_dir_all(&d).unwrap();
+    }
+    #[test]
+    fn zip_refuses_leaving_the_folder() {
+        let d = tmp("zipslip");
+        std::fs::write(d.join("b.zip"), zip(&[("../evil.txt", b"x", false)])).unwrap();
+        assert!(unzip(&d.join("b.zip"), None, &d.join("app")).unwrap_err().contains("leaves the folder"));
+        assert!(!d.join("evil.txt").exists());
+        std::fs::remove_dir_all(&d).unwrap();
+    }
 }

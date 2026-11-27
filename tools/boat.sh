@@ -1,6 +1,6 @@
 #!/bin/bash
 # SPDX-License-Identifier: GPL-2.0-or-later
-# boat.sh: develop on boat.dev sandboxes (docs/dev-machines.md). Bare-metal `large` machines (8 vCPU) lift, compile
+# boat.sh (experimental, optional): develop on boat.dev sandboxes (docs/dev-machines.md). Bare-metal `large` machines (8 vCPU) lift, compile
 # and test several times faster than a small VM, and a saved snapshot with the toolchains, the builds and pisco's
 # caches warm makes a new one ready in seconds. Needs the `boat` CLI, signed in (boat login, or BOAT_DEV_API_KEY).
 #   boat.sh bake [name]           a new sandbox from nothing: this working tree, the toolchains, the builds

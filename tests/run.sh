@@ -1,7 +1,7 @@
 #!/bin/bash
 # SPDX-License-Identifier: GPL-2.0-or-later
 # tests/run.sh [step...]: the one entry point. Builds the test titles from their sources, then runs the checks.
-#   build    hello, threads, bench (cargo) and cxx, dll (llvm-mingw), where tests/regress.sh looks for them;
+#   build    pisco's unit tests; hello, threads, bench (cargo) and cxx, dll (llvm-mingw), where tests/regress.sh looks for them;
 #            the 32-bit titles: hello again for i686, and fixtures/x87
 #   layout   tests/layout.sh: the runtime's files are listed only by the bases, and every one is in some base
 #   node     tests/regress.sh: every title in Node (XCL's title and Stockfish too when their files are there)
@@ -66,6 +66,10 @@
 #            tools/build-gdk-sample.sh) or the MSVC runtime DLLs (REDIST)
 #   pbr      tests/gfx/pbr.sh: Microsoft's SimplePBR (Windows x64) in Chrome; skipped without the sample (built from
 #            the SDKs in WINSDK by tools/build-gdk-sample-pbr.sh) or REDIST (minutes)
+#   desireplay  tests/gfx/desireplay.sh: Desire (Windows x64, Direct3D 12) from the user's zip (DESIRE_ZIP) and REDIST, in
+#            Node, strict: its calls until its main loop are Wine's, and its maze from Wine's seeds is Wine's (minutes)
+#   desire   tests/gfx/desire.sh: Desire's sessions in headless Chrome, strict: a PNG at every checkpoint, the still
+#            screens close to the oracle's screenshots (needs out/img-desire: the desireplay step; half an hour)
 #   xcl      tests/gfx/xcl.sh: XCL's console test title in Chrome, when it has been built into out/xcltitle-game
 #   audio    tests/audio/run.sh: the XMA2 / Opus decoders (builds FFmpeg's the first time)
 # Default: build layout node bench win32 linux ffp sm gdi. Needs tools/setup-toolchain.sh to have run. Exit status 1 if a step fails.
@@ -82,6 +86,7 @@ step() { # name, command...: one line, the log's tail on failure
 }
 build() {
   cargo build -q --release -p pisco-lifter -p pisco-shaders -p pisco || return 1
+  cargo test -q --release -p pisco > out/test-pisco-unit.log 2>&1 || { tail -20 out/test-pisco-unit.log; return 1; }   # pisco's own (the zip reader)
   for t in hello threads bench bench-native; do (cd "fixtures/$t" && cargo build -q --release) || return 1; done
   # one C++ runtime inside each image (-static): nothing but the title's own DLL is shipped beside it
   "$CXX" -O2 -static fixtures/cxx/eh.cpp -o fixtures/cxx/eh.exe || return 1
@@ -298,6 +303,10 @@ for s in ${*:-build layout node bench win32 linux ffp sm gdi}; do case $s in
           elif [ ! -f out/gdk-samples/pbr-local/SimplePBR.exe ] && [ ! -d "$WINSDK/xwin" ]; then echo "skip  pbr: the sample is not built and there are no SDKs to build it in WINSDK=$WINSDK"
           else LINES_SHOWN=3 step pbr tests/gfx/pbr.sh; fi ;;
   images) LINES_SHOWN=9 step images tests/images.sh ;;
+  desire) if [ -f out/img-desire/index.json ]; then LINES_SHOWN=12 step desire tests/gfx/desire.sh; else echo "skip  desire: out/img-desire is not built (the desireplay step builds it)"; fi ;;
+  desireplay) if [ ! -f "${DESIRE_ZIP:-$HOME/games/DESI-Re-v0.1-Windows-x64.zip}" ]; then echo "skip  desireplay: no zip at DESIRE_ZIP=${DESIRE_ZIP:-$HOME/games/DESI-Re-v0.1-Windows-x64.zip}"
+          elif [ ! -f "$REDIST/vcruntime140.dll" ]; then echo "skip  desireplay: no MSVC runtime DLLs in REDIST=$REDIST"
+          else LINES_SHOWN=4 step desireplay tests/gfx/desireplay.sh; fi ;;
   audio)  step audio tests/audio/run.sh ;;
   xcl)    if [ -f out/xcltitle-game/xcl_testtitle.exe ]; then LINES_SHOWN=3 step xcl tests/gfx/xcl.sh; else echo "skip  xcl: out/xcltitle-game/xcl_testtitle.exe is not built"; fi ;;
   *) echo "unknown step: $s"; fail=1 ;;
