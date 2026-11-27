@@ -585,6 +585,24 @@ described. Now each pull request adds its entry as a file in `changelog/` (the i
 of them), and on `main` `.github/workflows/changelog.yml` draws the page again with `tools/changelog.mjs` and publishes
 the draft release that holds the entry's video. The eleven entries written by hand became the first eleven files.
 
+### 3.29 Linux itself as a title: the groundwork (2026-11-27)
+
+The Linux runtime imitates the kernel one system call at a time, so it never has all of Linux. The way to all of
+it is a real kernel, and the question was how PISCO gets one. Three routes were weighed
+([research/kernel-as-a-title.md](research/kernel-as-a-title.md)): the kernel compiled to wasm from its source, as
+unkernel does; User-Mode Linux as a title of the Linux runtime; and the kernel lifted like any other title, on a
+runtime that imitates a small machine. The third was taken: it needs no kernel port, and it is what PISCO does.
+
+Before any design was trusted, three things were measured. Wasm stacks switch through JSPI in a quarter of a
+microsecond, each with its own C stack. Memory through a software TLB that a page fault can come back through
+costs 1.3 to 2.0 times today's lifted code. And Linux 6.18, configured to rewrite as little of itself as it can,
+boots on QEMU with only a local APIC, an IOAPIC and a serial port.
+
+The lifter's first look at a kernel found two things of its own. A kernel's executable segment holds its strings,
+so code is now what the sections say is code. And the 64-bit emitters took any register for a general one:
+`mov cr3, rax` was a write to RBX. That was wrong in every 64-bit title, and is fixed for all of them.
+([linux.md](linux.md) has the files and the ladder, K0 to K4.)
+
 ## 4. Roadblocks
 
 ### Resolved

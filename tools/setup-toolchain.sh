@@ -21,6 +21,9 @@
 #   musl   musl 1.2.5 in ~/tools/musl-1.2.5                 fixtures/linux-hello, tools/build-fastfetch.sh: Linux titles are
 #                                                          linked statically with it (built from its source, checked
 #                                                          by sha256; needs gcc and make)
+#   kernel  says which of the tools a kernel build needs are missing (gcc, make, flex, bison, bc, libelf's headers:
+#          system packages, so nothing is fetched)            tools/build-linux.sh
+#   qemu   says whether QEMU is there (a system package too)  tools/oracle-qemu: the Linux title's oracle
 # Environment: TOOLS (default ~/tools), DEPS (default ~/scratch/deps)
 set -euo pipefail
 root=$(cd "$(dirname "$0")/.." && pwd); T=${TOOLS:-$HOME/tools}; D=${DEPS:-$HOME/scratch/deps}; mkdir -p "$T" "$D"
@@ -37,7 +40,7 @@ untar() { # url, the folder under $T it unpacks to
   mv "$tmp/$2" "$T/$2"; rmdir "$tmp"
 }
 UPX=upx-5.3.0-amd64_linux
-for step in ${*:-wasi mingw rust naga dxil wine dxc upx reuse innoextract cabextract musl linux-headers}; do case $step in
+for step in ${*:-wasi mingw rust naga dxil wine dxc upx reuse innoextract cabextract musl linux-headers kernel qemu}; do case $step in
   linux-headers)
     HEADERS=linux-headers-6.6-r0; HEADERS_SHA=eac03f9d5ac52a86734f73bb444272aebf323e6dc03e9b69f87545f9da122f8a
     DRM=libdrm-dev-2.4.120-r0; DRM_SHA=b61c61279b28dc4827cf0b05f067a36bdf6a1672c4dfb2e07cee79b09307cdea
@@ -100,5 +103,11 @@ args=(); for a in "\$@"; do case \$a in /*) [ -e "\$(dirname "\$a")" ] && a="Z:\
 exec wine "$T/dxc/bin/x64/dxc.exe" "\${args[@]}"
 WRAP
     chmod +x "$T/dxc/dxc"; echo "have $T/dxc/dxc" ;;
+  kernel)
+    miss=""; for t in gcc make flex bison bc; do command -v $t > /dev/null || miss="$miss $t"; done
+    echo '#include <libelf.h>' | ${CC:-gcc} -E -x c - > /dev/null 2>&1 || miss="$miss libelf.h"
+    if [ -z "$miss" ]; then echo "have what a kernel build needs"
+    else echo "missing for tools/build-linux.sh:$miss (Fedora, Amazon Linux: sudo dnf install flex bison bc elfutils-libelf-devel; Debian, Ubuntu: sudo apt-get install flex bison bc libelf-dev)"; fi ;;
+  qemu)  "$root/tools/oracle-qemu/setup.sh" || true ;;
   *) echo "unknown step: $step" >&2; exit 2 ;;
 esac; done

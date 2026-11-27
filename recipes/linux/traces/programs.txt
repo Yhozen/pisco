@@ -1,0 +1,15 @@
+init: Linux 6.18.65 x86_64, process 1
+pipe: 3 words
+sub: 42 from a shell in a shell
+awk: 299995
+sha256: bb9f8df61474d25e of 4194304 bytes written to a file
+sort: apple fig pear 
+sed: the kernel is a program
+ls: bin dev etc init proc root sys tmp 
+id: 0:0
+kill: the child ended with 143
+trap: USR1 handled
+trap: the subshell ended with 3
+spawn: 20 loops
+exec: 10 programs run
+init: done

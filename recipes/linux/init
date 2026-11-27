@@ -1,0 +1,32 @@
+#!/bin/busybox sh
+# SPDX-License-Identifier: GPL-2.0-or-later
+# /init of the Linux title's initramfs (docs/linux.md): what the kernel starts first. It prints only what is the
+# same on every machine that runs this kernel, QEMU or PISCO: no times, no addresses, no sizes of memory.
+mount -t proc proc /proc
+mount -t sysfs sys /sys
+mount -t devtmpfs dev /dev
+echo 1 > /proc/sys/kernel/printk   # from here on the console is this script's: the kernel's own lines come when they come
+echo "init: $(uname -s) $(uname -r) $(uname -m), process $$"
+
+# processes, pipes and files, by the kernel itself
+echo "pipe: $(echo one two three | tr a-z A-Z | wc -w) words"
+echo "sub: $(sh -c 'echo $((6 * 7))') from a shell in a shell"
+echo "awk: $(awk 'BEGIN { for (i = 0; i < 100000; i++) s += i % 7; print s }')"
+head -c 4194304 /dev/zero > /tmp/zeros
+echo "sha256: $(sha256sum < /tmp/zeros | cut -c1-16) of $(wc -c < /tmp/zeros) bytes written to a file"
+echo "sort: $(printf 'pear\napple\nfig\n' | sort | tr '\n' ' ')"
+echo "sed: $(echo 'the kernel is a title' | sed 's/title/program/')"
+echo "ls: $(ls / | tr '\n' ' ')"
+echo "id: $(id -u):$(id -g)"
+
+# signals: a child killed, and a handler run. (The shell's own "Terminated" depends on when it looks: not shown.)
+( sleep 1000 & p=$!; kill -TERM $p; wait $p; echo "kill: the child ended with $?" ) 2>/dev/null
+( trap 'echo "trap: USR1 handled"; exit 3' USR1; sh -c 'kill -USR1 $PPID'; sleep 1000 ); echo "trap: the subshell ended with $?"
+n=0; for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do true && n=$((n + 1)); done; echo "spawn: $n loops"
+for i in 1 2 3 4 5 6 7 8 9 10; do /bin/true; done; echo "exec: 10 programs run"
+
+echo "init: done"
+# the end: the exit port (QEMU's isa-debug-exit at 0xf4; rt/microvm-x64 has the same)
+printf '\000' | dd of=/dev/port bs=1 seek=244 count=1 2>/dev/null
+echo "init: no exit port, halting"
+exec poweroff -f
