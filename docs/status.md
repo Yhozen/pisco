@@ -12,6 +12,32 @@ titles, its own next steps and its own goal:
 | [PS5](ps5.md) | the raymarching tech demo (CPU-drawn, AVX2): its three scenes, pad and music in the browser | more system functions, a GPU (AGC) title | PS5 homebrew |
 | [Microvm x64](#microvm-x64) | Linux 6.18 and busybox lifted, as an image: `/init`'s programs print what they print on QEMU; a shell typed into in a terminal or the page; a virtio disk | a network; programs found by content | Linux itself, lifted, and its programs |
 
+## Levels
+
+How far each recipe is checked, by the levels of [spec/sessions.md](spec/sessions.md#levels): **builds** (its
+inputs give its files, the same twice; *locked* when its `recipe.lock` holds their tree digest), **starts** (its first
+frame, or what it prints, as on the oracle), **plays** (its sessions' checkpoints and screens against the oracle's).
+
+| Recipe | Base | Level | Oracle | Checked by `tests/run.sh` |
+|---|---|---|---|---|
+| hello32 | windows-x86 | starts | Wine | `images`, `win32` |
+| narbacular-drop | windows-x86 | plays | Wine | `nd`, `ndgfx`, `ndplay`, `images` |
+| tag | windows-x86 | plays (into level 2) | Wine | `tag`, `tagplay` |
+| mohaa | windows-x86 | plays (menus and the level) | Wine | `mohaa`, `mohaagfx` |
+| hello64 | windows-x64 | starts | Wine | `images` |
+| simple-triangle-desktop | windows-x64 | starts | Wine | `st` |
+| simple-pbr | windows-x64 | starts | Wine | `pbr` |
+| desire | windows-x64 | plays | Wine | `desireplay`, `desire` |
+| doom | xbox-series | plays (its timedemo, frame by frame) | the same Doom built natively | `doom`, `images` |
+| linux-hello | linux-x64 | starts | this Linux | `linux`, `images` |
+| fastfetch | linux-x64 | starts | this Linux | `fastfetch` |
+| neofetch | linux-x64 | starts | this Linux | `neofetch` |
+| cowsay | linux-x64 | starts | this Linux | `cowsay` |
+| linux | microvm-x64 (experimental) | starts (`/init`'s programs) | QEMU | `kernel` |
+
+No recipe is locked yet: the four whose inputs are pinned (narbacular-drop, tag, mohaa, desire's download) are
+locked with `pisco build --lock` from the user's own copies; desire's C++ runtime input is not pinned.
+
 ## Shared: the recompiler, the core runtime, the packages
 
 - **Gate A (CPU and OS layer on synthetic titles): passed** in Node and headless Chrome — our own titles

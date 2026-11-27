@@ -1,5 +1,6 @@
 {
- "title": "desire",
+ "schema": 1,
+ "app": "desire",
  "about": "Into the maze and nothing more: the enemy, placed at random, finds the player standing at the start and touches them; the GAME OVER picture is shown ('GAME OVER | Enter: Quit / Esc: Quit'). Then Enter quits. How long the enemy takes depends on the seed and on the frame rate: the wait is long enough for the slowest seen. `random`: the seeds of the Wine run that recorded it (out/oracle/desire/caught), so that the maze and the enemy's start are that run's.",
  "steps": [
   {

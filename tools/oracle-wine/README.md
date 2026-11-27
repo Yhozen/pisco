@@ -34,10 +34,11 @@ python3 tools/oracle-wine/audio-compare.py out/nd.play.wav out/oracle/narbacular
 ## Session scripts
 
 One JSON file, played in order. The same file is meant to drive our own hosts (from milestone M3 on), so a
-session describes what a player does, not how a host does it.
+session describes what a player does, not how a host does it. Its format, schema 1, is the specification's
+([docs/spec/sessions.md](../../docs/spec/sessions.md)); `play.py` and `web/session.mjs` refuse anything else.
 
 ```json
-{ "title": "narbacular-drop", "about": "...", "steps": [
+{ "schema": 1, "app": "narbacular-drop", "about": "...", "steps": [
   {"wait": 40000}, {"focus": true}, {"shot": "menu"},
   {"move": [-208, -95], "ms": 600}, {"click": "left"}, {"key": "w", "ms": 2000} ] }
 ```

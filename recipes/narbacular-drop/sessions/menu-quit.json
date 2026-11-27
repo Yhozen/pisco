@@ -1,5 +1,6 @@
 {
- "title": "narbacular-drop",
+ "schema": 1,
+ "app": "narbacular-drop",
  "about": "Wait for the main menu and choose Quit: the game writes system.opt beside its exe (two flags and the two volumes, 20 bytes) and exits. The game's cursor follows the mouse at about 1.25 x and 0.95 y, more for fast motion: a move of (-1500, -1500) puts it in the top left corner, then a slow move to Quit.",
  "steps": [
   {

@@ -1,5 +1,6 @@
 {
- "title": "narbacular-drop",
+ "schema": 1,
+ "app": "narbacular-drop",
  "about": "menu-to-level's steps into the first level, then play: look down at the cage's floor and place the blue portal there (left button), look up and place the red one on a wall beyond the grate (right button), look down through the linked portals, then walk into the floor portal and out of the cage. Each shot is of a still view, a second or more after the last motion (the oracle's clock is the wall's, ours is virtual).",
  "steps": [
   {

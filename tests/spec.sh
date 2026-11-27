@@ -28,6 +28,18 @@ same "base keys" "$(marked docs/spec/base.md base-keys)" "$(of base-key)"
 # the image: the config's fields (docs/spec/image.md) are the schema's, and the layer roles are the ones pisco writes
 same "config fields" "$(marked docs/spec/image.md config)" "$(node -e 'console.log(Object.keys(JSON.parse(require("fs").readFileSync("docs/spec/config.schema.json")).properties).join("\n"))')"
 same "layer roles" "$(marked docs/spec/image.md roles)" "$(grep -ohE '\(ROLE, "[a-z]+"\)' crates/pisco/src/build.rs | sed 's/(ROLE, "\(.*\)")/\1/')"
+# sessions (docs/spec/sessions.md): the keys and steps are web/session.mjs's, every session of a recipe is read, and a
+# session with an unknown step, a key that does not go with its step, or no schema is refused
+same "session keys" "$(marked docs/spec/sessions.md session-keys)" "$(node --input-type=module -e 'import { SESSION_KEYS } from "./web/session.mjs"; console.log(SESSION_KEYS.join("\n"))')"
+same "session steps" "$(marked docs/spec/sessions.md session-steps)" "$(node --input-type=module -e 'import { STEPS } from "./web/session.mjs"; console.log(Object.keys(STEPS).join("\n"))')"
+sessions=$(node --input-type=module -e '
+import fs from "node:fs"; import { checkSession } from "./web/session.mjs";
+let n = 0, bad = 0;
+for (const r of fs.readdirSync("recipes")) { const d = `recipes/${r}/sessions`; if (!fs.existsSync(d)) continue;
+  for (const f of fs.readdirSync(d).filter((f) => f.endsWith(".json"))) { const s = JSON.parse(fs.readFileSync(`${d}/${f}`, "utf8")); try { checkSession(s); if (s.app !== r) throw new Error(`app ${s.app}, in recipes/${r}`); n++; } catch (e) { console.error(`${d}/${f}: ${e.message}`); bad++; } } }
+const wrong = [{ app: "x", steps: [] }, { schema: 1, app: "x", steps: [{ jump: 1 }] }, { schema: 1, app: "x", steps: [{ wait: 1, down: true }] }, { schema: 1, app: "x", title: "x", steps: [] }];
+for (const w of wrong) { try { checkSession(w); console.error(`accepted, and must not be: ${JSON.stringify(w)}`); bad++; } catch {} }
+console.log(n); process.exit(bad ? 1 : 0);') || fail=1
 n=0; for r in recipes/*/; do $P recipe "$r" --json > /dev/null 2> $T/err || { echo "$r: $(cat $T/err)"; fail=1; }; n=$((n + 1)); done
 # refused: each line a change made to recipes/tag/recipe.toml (sed), and a word the error must have
 bad=0
@@ -59,5 +71,5 @@ s/^sha256 = .*/sha256 = "abc"/|64 hex digits
 s/^name = "tag"/name = "Tag"/|lower-case
 s/^\[registry\]/[quirks]\nheap_fil = 1\n[registry]/|heap_fil: not a quirk
 EOF
-[ $fail = 0 ] && echo "the spec's lists are pisco's ($(echo "$keys" | wc -l) names); $n recipes read; $bad wrong recipes refused, each saying why"
+[ $fail = 0 ] && echo "the spec's lists are pisco's ($(echo "$keys" | wc -l) names); $n recipes read; $bad wrong recipes refused, each saying why; $sessions sessions read"
 exit $fail
