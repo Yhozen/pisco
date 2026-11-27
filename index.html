@@ -15,6 +15,14 @@ Videos: <a href="https://github.com/Yhozen/pisco/releases">releases</a></p>
 
 <h2>Changelog</h2>
 
+<h3>cowsay, on perl <span class="d">2026-11-27</span><span class="tag">in review: PR #37</span></h3>
+<p>cowsay 3.8.4 on perl 5.44, built from source as a static Linux program: six runs (cowsay and cowthink, several
+cows) print what native perl prints, in Node and in Chrome. The port found two recompiler gaps that a newer compiler
+(gcc 13) exposes: a <code>switch</code> table whose bound is far from its jump, and <code>notrack</code> jumps through
+tables. Without the fix, perl's parser was lifted as a recursion that overflowed Chrome's worker stack. Also
+included, as an experimental option: <code>tools/boat.sh</code> runs the test steps on several boat.dev sandboxes at
+once.</p>
+
 <h3>Desire: the first third-party Direct3D 12 game <span class="d">2026-11-27</span><span class="tag">in review: PRs #28–#34</span></h3>
 <p>Desire (DESI:Re v0.1), a free maze escape on its author's own Direct3D 12 engine, on the Windows x64 runtime.
 Played by hand in Chrome on an M1 MacBook Pro: the logo, the maze, the enemy, the CRT effect, GAME OVER.</p>
@@ -34,9 +42,10 @@ x86 runtime), WIC's PNG decoding (stb_image), and the D3D12 Memory Allocator's c
 </ul>
 
 <h3>neofetch: Linux processes <span class="d">2026-11-26</span><span class="tag">PR #35</span></h3>
+<video src="https://github.com/Yhozen/pisco/releases/download/linux-fetch-video-2026-11-27/fastfetch-and-neofetch-in-the-browser.mp4" poster="https://github.com/Yhozen/pisco/releases/download/linux-fetch-video-2026-11-27/poster.png" controls playsinline preload="metadata"></video>
 <p>neofetch 7.1.0, a bash script, runs on bash and busybox built as static Linux programs: 83 processes forked and
 executed (fork, execve, wait4, pipes), each in a worker with memory of its own. A title image can now hold several
-programs.</p>
+programs. In Chrome, fastfetch then neofetch, at real speed (<a href="https://github.com/Yhozen/pisco/releases/tag/linux-fetch-video-2026-11-27">video</a>).</p>
 
 <h3>A fourth runtime: Linux x64, with fastfetch <span class="d">2026-11-26</span><span class="tag">PR #31</span></h3>
 <p>Linux at its system calls, for one statically linked program: files, memory, the clock, a generated <code>/proc</code>.
