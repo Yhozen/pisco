@@ -69,9 +69,21 @@ static u64 code_hash(Cpu *c, u64 pc, u64 lo, u64 hi) {
   phys_read(pa + (from - page), b, (unsigned)(to - from));
   u64 h = 0xcbf29ce484222325ull; for (u64 k = 0; k < to - from; k++) h = (h ^ b[k]) * 0x100000001b3ull; return h;
 }
+// no program holds the code there: the host may lift the one that does (web/lift.mjs: a program of the initramfs
+// whose page there is this one), load it and register it; 1 when it did
+HOST("program_missing") int host_program_missing(u64 pc, u32 page);
+static u8 missing_page[4096];
+static const ProgramDef *program_at(Cpu *c, u64 pc);
+static int ask_host(Cpu *c, u64 pc) {
+  u64 pa; int w;
+  if (mmu_walk(pc & ~0xFFFull, 0, 1, &pa, &w) >= 0) { u8 b; mmu_read(c, mmu_u, pc, 1, pc, &b); }
+  if (mmu_walk(pc & ~0xFFFull, 0, 1, &pa, &w) >= 0) return 0;
+  phys_read(pa, missing_page, 4096); uart_flush();
+  return host_program_missing(pc, (u32)(uptr)missing_page);
+}
 static const ProgramDef *program_at(Cpu *c, u64 pc) {
   unsigned linked = &rt_program_count ? rt_program_count : 0;
-  if (!linked && !n_side) return 0;
+  if (!linked && !n_side) { if (ask_host(c, pc)) return program_at(c, pc); return 0; }
   if (prog_cur && pc >= prog_cur->lo && pc < prog_cur->hi) return prog_cur;
   prog_cur = 0;
   for (unsigned i = 0; i < linked + n_side; i++) {
@@ -80,6 +92,7 @@ static const ProgramDef *program_at(Cpu *c, u64 pc) {
     if (code_hash(c, pc, p->lo, p->hi) == p->page_hashes[((pc & ~0xFFFull) - (p->lo & ~0xFFFull)) >> 12]) { prog_cur = p; break; }
   }
   if (mc_trace && prog_cur) rt_log("machine: user code at 0x%llx is %s's", pc, prog_cur->name);
+  if (!prog_cur) { static u64 asked; if (asked != pc) { asked = pc; if (ask_host(c, pc)) return program_at(c, pc); } }
   if (mc_trace && !prog_cur) for (unsigned i = 0; i < linked + n_side; i++) { const ProgramDef *p = i < linked ? rt_programs[i] : side[i - linked];
     rt_log("machine: user code at 0x%llx: not %s's (0x%llx to 0x%llx, page hash 0x%llx here, 0x%llx there)", pc, p->name, p->lo, p->hi, code_hash(c, pc, p->lo, p->hi), pc >= p->lo && pc < p->hi ? p->page_hashes[((pc & ~0xFFFull) - (p->lo & ~0xFFFull)) >> 12] : 0); }
   return prog_cur;

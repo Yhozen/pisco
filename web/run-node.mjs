@@ -16,6 +16,7 @@ import { sessionEnv, sessionSteps } from './session.mjs';
 import { isImageDir, openImageDir, driveName, blobPath } from './image.mjs';
 import { createKernel, processImports } from './kernel.mjs';
 import { loadSide } from './side.mjs';
+import { programMissing } from './lift.mjs';
 
 const EXIT = new BroadcastChannel('pisco-exit');
 const GPU_OPEN = new BroadcastChannel('pisco-gpu'); // a title thread opened the GPU ring: the supervisor runs the null back end
@@ -252,6 +253,8 @@ if (isMainThread) {
       return mine;
     });
   }
+  const missing = { fn: null };
+  if (machine) host.program_missing = (pc, page) => (missing.fn ? missing.fn(pc, page) : 0);
   const instance = new WebAssembly.Instance(module, { env: { memory }, wasi_snapshot_preview1: wasi, wasi: { 'thread-spawn': spawn }, host });
   try {
     if (machine) {
@@ -262,6 +265,9 @@ if (isMainThread) {
         const bytes = drive ? drive.read(driveName(f, folder), 0, Infinity) : fs.readFileSync(path.resolve(f));
         loadSide(bytes, instance, memory, path.basename(f, '.wasm').replace(/[^A-Za-z0-9_]/g, '_').replace(/^(\d)/, '_$1'));
       }
+      // a program met when it first runs: lifted then, from the initramfs (web/lift.mjs)
+      missing.fn = programMissing({ instance, memory, log: (m) => fs.writeSync(2, `pisco: ${m}\n`),
+        readInitrd: () => { const f = env.SW_INITRD; if (!f) return null; try { return drive ? Buffer.from(drive.read(driveName(f, folder), 0, Infinity)) : fs.readFileSync(path.resolve(dir, f)); } catch { return null; } } });
       await WebAssembly.promising(instance.exports._start)(); exit(0);
     }
     else if (tid === 0 && mode === 'fork') { instance.exports.rt_fork_resume(); exit(0); }

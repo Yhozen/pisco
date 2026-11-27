@@ -89,3 +89,4 @@ A new runtime is a new folder and a new base; a new title of an existing runtime
 | K7 | signals delivered anywhere (nested runs for code sent elsewhere), tasks' stacks freed when they end: 4,000 programs in a row | done ([linux.md](linux.md#progress)) |
 | K8 | real programs on the lifted Linux: fastfetch and cowsay on perl, beside busybox, as on QEMU | done ([linux.md](linux.md#progress)) |
 | K9 | a program in a module of its own (a wasm side module the host loads): bash beside the GPL-2.0 kernel | done ([linux.md](linux.md#progress)) |
+| K10 | programs lifted when they first run: in Node, a program of the initramfs no build lifted, found by its code page, lifted, cached and loaded | done ([linux.md](linux.md#progress)) |

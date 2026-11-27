@@ -280,7 +280,8 @@ reasoning and the measurements: [research/kernel-as-a-title.md](research/kernel-
   kernel's own `/proc`.
 - **K9, done**: bash (GPL-3.0) in a wasm module of its own, loaded by the host beside the kernel's
   (`web/side.mjs`, `[lifter] modules`), runs as on QEMU.
-- **Next**: a network, programs lifted when they are first run, snapshots.
+- **K10, done**: in Node, a program no build lifted is lifted when it first runs (`web/lift.mjs`, `out/lift-cache`).
+- **Next**: a network, programs from the disk, snapshots.
 
 ## Known limits
 

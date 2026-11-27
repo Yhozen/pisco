@@ -39,7 +39,8 @@
 #            image (`pisco build recipes/linux`: the kernel and the initramfs's busybox lifted into one module, minutes
 #            the first time) booted by `pisco run` in Node: its console must be the same twice, its boot up to "Run
 #            /init as init process" recipes/linux/traces/boot.txt (the compiler's name and the kernel's sizes left
-#            out), and its programs what they print on QEMU (programs.txt). Then the kernel with /bin/sh as its first
+#            out), and its programs what they print on QEMU (programs.txt): /bin/proc among them, which no build lifts
+#            (the host lifts it when it first runs, web/lift.mjs; out/lift-cache keeps it). Then the kernel with /bin/sh as its first
 #            program, typed into through the console (recipes/linux/console-input.txt): what it prints from there must
 #            be traces/console.txt. Then with a disk (SW_DISK=16M: virtio's block device): /init formats it, writes it
 #            and reads it again. KERNEL_RECORD=1 records the traces again
@@ -219,7 +220,8 @@ kernel() {
   local boot=recipes/linux/traces/boot.txt k
   for k in 1 2; do timeout 600 target/release/pisco run out/images/linux < /dev/null 2>&1 | tr -d '\r' > $d/boot$k.txt; done
   grep -q '^Run /init as init process' $d/boot1.txt || { echo "the lifted kernel did not reach /init ($d/boot1.txt):"; tail -4 $d/boot1.txt; return 1; }
-  cmp -s $d/boot1.txt $d/boot2.txt || { echo "two boots of the lifted kernel differ ($d/boot1.txt, $d/boot2.txt)"; return 1; }
+  # (the machine's and the host's own notes left out: the first run may lift a program, web/lift.mjs)
+  cmp -s <(grep -v '^pisco: ' $d/boot1.txt) <(grep -v '^pisco: ' $d/boot2.txt) || { echo "two boots of the lifted kernel differ ($d/boot1.txt, $d/boot2.txt)"; return 1; }
   # the boot up to /init, without the machine's own notes and what depends on the compiler that built the kernel
   norm() { sed -n '1,/^Run \/init as init process/p' "$1" | grep -v '^pisco: ' | sed -E 's/^(Linux version [^ ]+ \(pisco@pisco\)).*/\1/; s/^Memory: .*/Memory: (sizes)/'; }
   [ -z "${KERNEL_RECORD:-}" ] || norm $d/boot1.txt > $boot

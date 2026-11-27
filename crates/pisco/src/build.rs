@@ -605,6 +605,8 @@ pub fn build(root: &Path, o: &Opts) -> R<()> {
     // 4. the modules: a machine's side modules first (what they import, the title's module exports)
     let wasm_ld = t.clang.parent().unwrap().join("wasm-ld");
     let mut side_wasms: Vec<(String, PathBuf)> = Vec::new(); let mut side_needs: BTreeSet<String> = BTreeSet::new();
+    // (a machine's title exports what any lifted program may import: one may be lifted when it first runs)
+    if base.os == "microvm" { let f = root.join("rt/microvm-x64/side-exports.txt"); for l in io(std::fs::read_to_string(&f), &f)?.lines().filter(|l| !l.starts_with('#')) { side_needs.extend(l.split_whitespace().map(String::from)); } }
     for (n, l) in &side_lifts {
         let mut key = format!("side 1\nname {n}\n"); for o in &l.objects { key.push_str(&format!("{}\n", oci::sha256(&io(std::fs::read(o), o)?))); }
         let key = oci::sha256(key.as_bytes()); let w = cache.join("link").join(format!("{key}-{n}.wasm"));

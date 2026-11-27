@@ -279,10 +279,23 @@ bash is GPL-3.0-or-later and cannot be linked into the GPL-2.0-only kernel's mod
   title's module exports what the side modules import (`pisco` reads their import sections).
 - `/init` runs bash as it runs on QEMU, in Node and in headless Chrome.
 
+## What it took (K10): programs lifted when they first run
+
+A program no build lifted can run now, in Node. When the machine meets user code that no program it has holds, it
+hands the page there to the host (`program_missing`). `web/lift.mjs` finds the program of the initramfs whose code
+page at that address is the same, byte for byte. It lifts it into a module of its own (`tools/build-side.sh`: the
+lifter, wasi-sdk, `wasm-ld -shared`), caches it by the file's sha256 in `out/lift-cache`, and loads it, and the
+machine goes on. A machine's title therefore exports whatever a lifted program may import
+(`rt/microvm-x64/side-exports.txt`), not only what the programs of its build import.
+
+`/init` runs `/bin/proc` (`fixtures/linux-proc`), which is in the initramfs but in no recipe list: it is lifted in
+2.7 s the first time and taken from the cache after, and prints what it prints on QEMU. The page cannot lift (it
+has no lifter): there such a program stops the machine.
+
 ## Limits
 
-- Only programs lifted when the image is built run: busybox, linux-hello, fastfetch and perl in the kernel's module,
-  bash in a module of its own.
+- In the page only programs lifted when the image is built run; in Node a program of the initramfs is lifted when it
+  first runs. Programs on the disk, or written while the machine runs, are not found yet.
 - Model-specific registers the machine does not know read as 0 where a CPU raises #GP, which some of the kernel's
   `rdmsr_safe` callers would want.
 - A store that faults between its read and its write (an add to memory whose page must be copied) reads again after
@@ -306,4 +319,5 @@ bash is GPL-3.0-or-later and cannot be linked into the GPL-2.0-only kernel's mod
 | K7 | signals delivered anywhere (on the way back from a fault or an interrupt); tasks' stacks freed when they end | done |
 | K8 | real programs on it: fastfetch, and cowsay on perl, as on QEMU | done |
 | K9 | a program in a module of its own: bash (GPL-3.0) beside the kernel, as on QEMU | done |
-| K10 | a network, programs lifted when they are first run, snapshots | next |
+| K10 | programs lifted when they first run (Node: from the initramfs, cached by sha256) | done |
+| K11 | a network, programs from the disk, snapshots | next |

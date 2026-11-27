@@ -64,7 +64,9 @@ for p in ${SIDE_PROGRAMS:-}; do
   "$W/wasm-ld" -shared --experimental-pic --shared-memory --export="${n}_program" --unresolved-symbols=import-dynamic -o "$out/$n.wasm" "$sd"/title*.c.o
   side_exports="$side_exports $(node -e 'const m = new WebAssembly.Module(require("fs").readFileSync(process.argv[1])); console.log(WebAssembly.Module.imports(m).filter((i) => (i.module === "env" && i.kind === "function") || i.module === "GOT.mem").map((i) => i.name).join(" "))' "$out/$n.wasm")"
 done
-SIDE_LINK=""; [ -z "${SIDE_PROGRAMS:-}" ] || SIDE_LINK="-Wl,--export-table,--growable-table,--export=__stack_pointer$(for x in $(echo $side_exports | tr ' ' '\n' | sort -u); do printf ',--export=%s' "$x"; done)"
+# (a machine's title always exports them, with rt/microvm-x64/side-exports.txt: a program may be lifted when it first runs)
+[ "$OS" = microvm ] && side_exports="$side_exports $(grep -v '^#' "$root/rt/microvm-x64/side-exports.txt")"
+SIDE_LINK=""; [ -z "${side_exports// }" ] || SIDE_LINK="-Wl,--export-table,--growable-table,--export=__stack_pointer$(for x in $(echo $side_exports | tr ' ' '\n' | sort -u); do printf ',--export=%s' "$x"; done)"
 # lifted code: freestanding, no libc
 for f in "$out"/title*.c $(for d in $progs; do ls "$d"/title*.c; done); do [ "$f.o" -nt "$f" ] && [ "$f.o" -nt "$root/rt/cpu.h" ] || echo "$f"; done | xargs -r -P "$JOBS" -I{} sh -c '"$0"/clang $1 -ffreestanding -c "{}" -o "{}.o"' "$W" "$CF"
 # XMA2 / Opus decoding: FFmpeg's decoders when tools/build-ffmpeg-audio.sh has built them (else silent voices)
