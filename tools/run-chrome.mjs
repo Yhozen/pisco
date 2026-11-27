@@ -31,7 +31,7 @@ if (process.env.SW_SESSION) settings.push(['SW_SESSION_STEPS', sessionSteps(JSON
 const keepProfile = !!process.env.CHROME_PROFILE;
 const profile = keepProfile ? path.resolve(process.env.CHROME_PROFILE) : fs.mkdtempSync(path.join(os.tmpdir(), 'pisco-chrome-'));
 fs.mkdirSync(profile, { recursive: true });
-const gpuFlags = ['--enable-unsafe-webgpu', '--enable-features=Vulkan', '--use-webgpu-adapter=swiftshader', '--enable-unsafe-swiftshader', '--use-angle=swiftshader', '--use-gl=angle', '--autoplay-policy=no-user-gesture-required'];
+const gpuFlags = ['--enable-unsafe-webgpu', '--enable-features=Vulkan', '--use-vulkan=swiftshader', '--use-webgpu-adapter=swiftshader', '--enable-unsafe-swiftshader', '--use-angle=swiftshader', '--use-gl=angle', '--autoplay-policy=no-user-gesture-required'];
 const chrome = spawn('google-chrome', ['--headless=new', `--remote-debugging-port=${dbg}`, `--user-data-dir=${profile}`, '--no-first-run', '--no-sandbox', '--window-size=1100,720', ...gpuFlags, 'about:blank'], { stdio: 'ignore' });
 let ending = false;
 const done = async (code) => {
