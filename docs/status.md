@@ -9,6 +9,7 @@ titles, its own next steps and its own goal:
 | [Windows x64](#windows-x64) | Stockfish 19, SimpleTriangleDesktop, SimplePBR; Desire, logo to ending, in Node and headless Chrome | Desire played by hand on a real GPU | desktop D3D12 titles |
 | [Windows x86](#windows-x86) | Narbacular Drop, playable; Tag: The Power of Paint into its second level | Tag played by hand on a real GPU, then its later levels | 32-bit Direct3D 9 games of the 2000s |
 | [Linux x64](#linux-x64) | fastfetch 2.71.0; neofetch 7.1.0 (bash, busybox); cowsay 3.8.4 (perl) | threads, signals, writes | statically linked command-line programs |
+| [PS5](ps5.md) | the raymarching tech demo (CPU-drawn, AVX2): its three scenes, pad and music in the browser | more system functions, a GPU (AGC) title | PS5 homebrew |
 
 ## Shared: the recompiler, the core runtime, the packages
 
@@ -220,7 +221,7 @@ Still to do: playing it by hand on a real GPU (T6 of [the plan](plan.md)); the l
   and cleanup funclets and catch continuations, and FH4's compressed tables (handlers named by a local
   `__GSHandlerCheck_EH4` too). 32-bit titles have no exception
   dispatch yet.
-- AVX and later instructions trap where they are; titles never reach them, since CPUID does not report AVX.
+- AVX, AVX2, FMA and BMI are lifted (`avx.rs`, `rt/avx.h`; `tests/avx.sh` checks 120 results against the CPU). A VEX instruction `avx.rs` does not handle still traps. CPUID still does not report AVX, so titles that check it take their SSE paths; a PS5 title does not ask.
 - x87 is emulated with doubles (no 80-bit precision) for Windows and console titles, which run it at 53 bits; a
   Linux title's registers keep 64 bits (`rt/cpu.h` `fpx`), its transcendental instructions compute in doubles.
 - Memory protection, guard pages and write watches do not exist; the VFS keeps S:\ and (Windows desktop titles) what a

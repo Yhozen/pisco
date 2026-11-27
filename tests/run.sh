@@ -21,6 +21,8 @@
 #            out/fastfetch: lifted, run in Node in strict mode on the virtual clock with its logo left out and its
 #            output as for a pipe; what it prints must be recipes/fastfetch/traces/pipe.txt (FASTFETCH_RECORD=1
 #            records it again). Then its image, built by `pisco build` and run by `pisco run`, must print the same
+#   avx      tests/avx.sh: fixtures/avx (AVX, AVX2, FMA and BMI, built for Zen 2 with musl) lifted, its results against
+#            what it printed on the CPU (fixtures/avx/expected.txt); skipped without musl
 #   cowsay   cowsay on perl (docs/cowsay.md), when tools/build-cowsay.sh has built its root into out/cowsay: its image
 #            built by `pisco build`, run by `pisco run` in strict mode with several cows and options; each must print
 #            what the same root's perl prints here (the oracle), and the first the same in headless Chrome
@@ -73,7 +75,7 @@
 #            screens close to the oracle's screenshots (needs out/img-desire: the desireplay step; half an hour)
 #   xcl      tests/gfx/xcl.sh: XCL's console test title in Chrome, when it has been built into out/xcltitle-game
 #   audio    tests/audio/run.sh: the XMA2 / Opus decoders (builds FFmpeg's the first time)
-# Default: build layout node bench win32 linux ffp sm gdi. Needs tools/setup-toolchain.sh to have run. Exit status 1 if a step fails.
+# Default: build layout node bench win32 linux avx ffp sm gdi changelog. Needs tools/setup-toolchain.sh to have run. Exit status 1 if a step fails.
 set -uo pipefail
 root=$(cd "$(dirname "$0")/.." && pwd); cd "$root"; mkdir -p out
 MINGW=${MINGW:-$HOME/tools/llvm-mingw-20261117-ucrt-ubuntu-22.04-x86_64}; CXX=$MINGW/bin/x86_64-w64-mingw32-clang++
@@ -275,12 +277,13 @@ ND=${ND:-$HOME/.pisco/oracle/prefix-narbacular-drop/drive_c/Program Files (x86)/
 D3DX_DLL=${D3DX_DLL:-$HOME/untrusted/tag/cab/d3dx9_35.dll}
 REDIST=${REDIST:-$HOME/untrusted/vcredist/x/Contents/VC/Redist/MSVC/14.44.35112/x64/Microsoft.VC143.CRT}; export REDIST
 WINSDK=${WINSDK:-$HOME/winsdk}
-for s in ${*:-build layout node bench win32 linux ffp sm gdi changelog}; do case $s in
+for s in ${*:-build layout node bench win32 linux avx ffp sm gdi changelog}; do case $s in
   build)  step build build ;;
   layout) step layout tests/layout.sh ;;
   node)   LINES_SHOWN=8 step node tests/regress.sh ;;
   bench)  step bench bench ;;
   win32)  LINES_SHOWN=4 step win32 win32 ;;
+  avx)    if [ -x "$MUSL/bin/musl-gcc" ]; then step avx tests/avx.sh; else echo "skip  avx: no musl in MUSL=$MUSL (tools/setup-toolchain.sh musl)"; fi ;;
   linux)  if [ -x "$MUSL/bin/musl-gcc" ]; then LINES_SHOWN=2 step linux linux; else echo "skip  linux: no musl in MUSL=$MUSL (tools/setup-toolchain.sh musl)"; fi ;;
   cowsay) if [ -x out/cowsay/root/usr/bin/perl ]; then step cowsay cowsay; else echo "skip  cowsay: out/cowsay/root is not built (tools/build-cowsay.sh)"; fi ;;
   neofetch) if [ -x out/neofetch/root/bin/bash ]; then step neofetch neofetch; else echo "skip  neofetch: out/neofetch/root is not built (tools/build-neofetch.sh)"; fi ;;

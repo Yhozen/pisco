@@ -3,7 +3,9 @@
 //                              or node run-node.mjs <image> [title arguments...] (a title image: web/image.mjs, docs/images.md;
 //                              its file layers are the title's C: drive, its config says which exe, its registry, ...)
 // Environment: SW_* variables reach the runtime (SW_TRACE, SW_STRICT, SW_CLOCK, ...); SW_SAVES, SW_SESSION and SW_AUDIO_WAV
-// are the host's too. SW_ROOT=<folder> (a Linux title): the folder is the root of its file system and every program
+// are the host's too. SW_DUMP_RAW=<file> writes each presented frame as packed RGBA (ffmpeg: -f rawvideo -pix_fmt rgba);
+// SW_KEYS=<json> is a scripted keyboard ([[ms, code, keyCode, down], ...], times on the virtual clock, as tools/run-chrome.mjs);
+// SW_MAX_FRAMES is the runtime's (videoout). SW_ROOT=<folder> (a Linux title): the folder is the root of its file system and every program
 // in it has its module beside it (bin/bash -> bin/bash.wasm), for execve; with SW_EXE=<path of the first program>.
 // The main thread only supervises: the title's threads (its main thread too) run in workers, so an exit
 // from any of them ends the process even while others are blocked.
@@ -147,6 +149,26 @@ if (isMainThread) {
     stat: (name, nlen) => BigInt(drive.stat(driveName(text(name, nlen), folder))),
     list: (name, nlen, buf, cap) => { const l = drive.list(driveName(text(name, nlen), folder)); if (l === null) return 0; const b = Buffer.from(l); if (buf && cap >= b.length) u8().set(b, buf); return b.length; },
   };
+  // SW_KEYS=<json>: [[ms, code, keyCode, down], ...] times in milliseconds on the virtual clock (SW_CLOCK)
+  // (the same list tools/run-chrome.mjs sends the page). Applied to the input block just after each flip, for the next frame.
+  const keyScript = env.SW_KEYS ? JSON.parse(env.SW_KEYS) : [];
+  let inputBlock = 0, held = new Map(), dumpRaw = null;
+  const applyKeys = (ms) => {
+    if (!inputBlock) return;
+    held.clear();
+    for (const ev of keyScript) {
+      const t = ev[0], code = ev[1], vk = ev[2], down = ev[3];
+      if (t <= ms) {
+        if (down) held.set(code, vk & 0xFF); else held.delete(code);
+      }
+    }
+    const view = new DataView(memory.buffer, inputBlock, 128);
+    const list = [...held.values()].slice(0, 16);
+    view.setUint32(4, list.length, true);
+    for (let i = 0; i < 16; i++) view.setUint32(8 + i * 4, i < list.length ? list[i] : 0, true);
+    view.setUint32(0, view.getUint32(0, true) + 1, true);
+  };
+
   const host = {
     fault: (kind, a) => { console.error(`pisco: ${kinds[kind]}${kind === 5 ? '' : ` at 0x${BigInt.asUintN(64, a).toString(16)}`}`); exit(120); },
     now_us: () => clock() * 1000,
@@ -175,7 +197,17 @@ if (isMainThread) {
     store_read: (i, dst) => { u8().set(store[i].data, dst); },
     store_save: (name, len, data, n) => { if (!saves) return; const p = savedPath(text(name, len)); fs.mkdirSync(path.dirname(p), { recursive: true }); fs.writeFileSync(p, new Uint8Array(memory.buffer, data, n)); },
     store_remove: (name, len) => { if (saves) fs.rmSync(savedPath(text(name, len)), { force: true }); },
-    input_open: () => {}, // no keyboard or gamepad: readings stay empty
+    frame_dump: (pixels, width, height, frame) => {
+      if (!dumpRaw && env.SW_DUMP_RAW) dumpRaw = fs.openSync(env.SW_DUMP_RAW, 'w');
+      if (dumpRaw) {
+        const n = Number(width) * Number(height) * 4;
+        fs.writeSync(dumpRaw, new Uint8Array(memory.buffer, Number(pixels), n), 0, n);
+      }
+      // SW_CLOCK=<us/frame>: the time of this flip, for the keys the next frame will see
+      const step = +(env.SW_CLOCK || 0);
+      if (step) applyKeys(Number(frame) * step / 1000);
+    },
+    input_open: (block) => { inputBlock = block >>> 0; applyKeys(0); }, // SW_KEYS writes here; otherwise readings stay empty
     win32_input_open: () => {}, // the same for a Windows desktop title (its sessions come from SW_SESSION)
     exit: (code) => exit(code),
     ...imageFiles,
