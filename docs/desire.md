@@ -230,3 +230,9 @@ browser's storage, as on a PC it stays in `Assets/Maps`.
   its two static samplers, root constants, the 128-bone skinning with `uint4` indices, `DiscardResource` all went
   through as SimplePBR's work left them. Not judged: `start`'s maze (Wine's shot, 2.6 s after Enter, is still the
   fade from black) and `goal`'s shots (Wine does not reach the goal); ours ends on the "To be continued?" picture.
+- **D5** (playable): played by hand in Chrome on an M1 MacBook Pro: the logo, the maze, GAME OVER all draw. The
+  first try ran at 18–21 frames a second; a Chrome trace put 25 s of the page's 45 in `queue.writeBuffer` (each
+  draw's root CBV uploaded 64 KiB of the constant ring: 48 MB a frame). The back end now merges a buffer's ranges
+  before upload and reuses bind groups within a segment: about 38 frames a second walking the maze (p50 20 ms).
+  The title is not the limit; where the time goes now is in [hosts.md](hosts.md#the-second-case-desire-in-chrome).
+  Still open: draws skipped as "a binding is missing" (193 in `start`, 253 later); the scene looks complete.
