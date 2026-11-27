@@ -562,6 +562,7 @@ pub fn build(root: &Path, o: &Opts) -> R<()> {
     let out = o.out.clone().unwrap_or(root.join("out/images").join(&r.name));
     if out.exists() && !oci::is_image(&out) && io(std::fs::read_dir(&out), &out)?.next().is_some() { return Err(format!("{}: not an image, and not empty: not replaced", out.display())); }
     let t = tools(root)?;
+    if base.stability == "experimental" { say(&format!("{} is experimental: what its platform page says may change in any pull request (docs/spec/README.md#stability)", base.reference())); }
     say(&format!("{}: FROM {}{}", r.name, base.reference(), if r.libraries.is_empty() { String::new() } else { format!(", libraries {}", r.libraries.join(" ")) }));
 
     // 1. the source, then its files

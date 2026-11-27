@@ -4,15 +4,19 @@
 # its own (rt/windows-x64/: DXGI's factory and swap chains, the PC GDK's objects).
 name = "base/windows-x64"
 version = 1
+platform = "windows-x64"
+stability = "stable"
 architecture = "amd64"   # as OCI names it: x86-64
 os = "windows"
+# the DLLs this base answers for without a library (docs/spec/base.md): tests/run.sh layout checks the list
+provides = ["advapi32.dll", "d3d12.dll", "d3d12_xs.dll", "d3dcompiler_47.dll", "dwmapi.dll", "dxgi.dll", "gameinput.dll", "kernel32.dll", "mfplat.dll", "msvcrt.dll", "ntdll.dll", "ole32.dll", "oleaut32.dll", "shell32.dll", "ucrtbase.dll", "user32.dll", "windowscodecs.dll", "xaudio2_9.dll", "xgameruntime.dll"]
 
 [cpu]
 # what a recipe without [cpu] gets: every feature the lifter supports
 features = ["fpu", "tsc", "cx8", "cmov", "mmx", "fxsr", "sse", "sse2", "sse3", "ssse3", "sse4.1", "sse4.2", "popcnt", "cx16", "pclmul"]
 
-[runtime]
-# paths from the repository's root, `*` within a file name
+[impl]
+# pisco's: the runtime's sources, paths from the repository's root, `*` within a file name
 sources = ["rt/*.c", "rt/gdk/*.c", "rt/windows-x64/*.c"]
 opt = "-O2"
 

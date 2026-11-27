@@ -3,6 +3,7 @@
 # tests/layout.sh: the runtime's files are listed in one place, the bases (bases/<runtime>/<version>/base.toml).
 #   - no script, test or program names runtime files by a glob of rt/ (they ask `pisco sources`)
 #   - every rt/*.c and rt/<runtime>/*.c is a source of at least one base, and each base resolves
+#   - each base's provides (and each library's) is what its sources answer for: the IMP() in them
 set -uo pipefail
 root=$(cd "$(dirname "$0")/.." && pwd); cd "$root"
 fail=0
@@ -12,6 +13,8 @@ all=$(mktemp); trap 'rm -f "$all"' EXIT
 for b in bases/*/*/base.toml; do
   ref="base/$(basename "$(dirname "$(dirname "$b")")"):$(basename "$(dirname "$b")")"
   target/release/pisco sources "$ref" --all-libraries >> "$all" || { echo "$ref does not resolve"; fail=1; }
+  # what the base promises (provides, docs/spec/base.md) is what its sources answer for
+  target/release/pisco base "$ref" --check > /dev/null || { target/release/pisco base "$ref" --check; fail=1; }
 done
 orphans=$(ls rt/*.c rt/*/*.c | grep -vxF -f <(sort -u "$all"))
 [ -z "$orphans" ] || { echo "runtime files no base links:"; echo "$orphans"; fail=1; }

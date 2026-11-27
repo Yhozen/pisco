@@ -26,7 +26,7 @@ fn root() -> PathBuf {
     PathBuf::from(".")
 }
 fn usage() -> ! {
-    eprintln!("usage:\n  pisco build <recipe dir> [--input <id>=<path>]... [--source <path>] [--out <image dir>] [--cache <dir>] [--compare <installed folder>]\n  pisco recipe <recipe dir> [--json | --keys]\n  pisco run <image> [--session <session.json>] [--saves <dir>] [--chrome] [-- app arguments]\n  pisco census <image | title.exe> [--recipe <recipe dir> | --from <base> --libraries a,b] [--all]\n  pisco inspect <image> [--files]\n  pisco sources <base | recipe dir> [--libraries a,b | --all-libraries]");
+    eprintln!("usage:\n  pisco build <recipe dir> [--input <id>=<path>]... [--source <path>] [--out <image dir>] [--cache <dir>] [--compare <installed folder>]\n  pisco recipe <recipe dir> [--json | --keys]\n  pisco base <base> [--check]\n  pisco run <image> [--session <session.json>] [--saves <dir>] [--chrome] [-- app arguments]\n  pisco census <image | title.exe> [--recipe <recipe dir> | --from <base> --libraries a,b] [--all]\n  pisco inspect <image> [--files]\n  pisco sources <base | recipe dir> [--libraries a,b | --all-libraries]");
     std::process::exit(2);
 }
 struct Args { pos: Vec<String>, opts: Vec<(String, Option<String>)>, rest: Vec<String> }
@@ -58,6 +58,7 @@ fn main() {
                 with: a.opts.iter().filter(|(n, _)| n == "with" || n == "input").filter_map(|(_, v)| v.as_ref()?.split_once('=').map(|(k, p)| (k.to_string(), PathBuf::from(p)))).collect() }) }
         "run" => run(&root, &parse(&args[1..], &["session", "saves"])),
         "recipe" => recipe_cmd(&parse(&args[1..], &[])),
+        "base" => base_cmd(&root, &parse(&args[1..], &[])),
         "census" => census(&root, &parse(&args[1..], &["from", "libraries", "recipe", "dll-dir"])),
         "inspect" => inspect(&parse(&args[1..], &[])),
         "sources" => sources(&root, &parse(&args[1..], &["libraries"])),
@@ -81,6 +82,24 @@ fn run(root: &Path, a: &Args) -> R<()> {
     std::process::exit(st.code().unwrap_or(1));
 }
 
+/// `pisco base <base> [--check]`: what a base promises (docs/spec/base.md); --check: its provides against what its
+/// sources answer for (tests/layout.sh)
+fn base_cmd(root: &Path, a: &Args) -> R<()> {
+    let Some(from) = a.pos.first() else { usage() };
+    let b = recipe::load_base(root, from)?;
+    if a.flag("check") {
+        let bad = recipe::check_provides(root, &b)?;
+        for l in &bad { println!("{l}"); }
+        if !bad.is_empty() { std::process::exit(1); }
+        println!("{}: provides is what its sources answer for ({} DLLs, {} libraries)", b.reference(), b.provides.len(), b.libraries.len());
+        return Ok(());
+    }
+    println!("{} ({}, {}): {} {}", b.reference(), b.platform, b.stability, b.os, b.architecture);
+    println!("  provides {}", if b.provides.is_empty() { "-".to_string() } else { b.provides.join(" ") });
+    for (n, l) in &b.libraries { println!("  library {n}: {} ({})", l.provides.join(" "), l.description); }
+    Ok(())
+}
+
 /// `pisco recipe <dir> --json`: the recipe as pisco reads it, the one reader of recipes (tools/recipe-gen.py and
 /// tools/build-title.sh take this); `--keys`: what schema 1 knows, for tests/run.sh spec
 fn recipe_cmd(a: &Args) -> R<()> {
@@ -91,6 +110,7 @@ fn recipe_cmd(a: &Args) -> R<()> {
         for k in recipe::CPU_FEATURES { println!("cpu-feature {k}"); }
         for k in recipe::DLL_CHOICES { println!("dll-choice {k}"); }
         for k in recipe::QUIRKS { println!("quirk {k}"); }
+        for k in recipe::BASE_KEYS { println!("base-key {k}"); }
         return Ok(());
     }
     let Some(dir) = a.pos.first() else { usage() };

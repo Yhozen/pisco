@@ -57,9 +57,10 @@ pub struct Recipe {
 /// once in Node for `frames` frames (with the `session`, if one is given), the sources it logged are compiled with
 /// dxc and translated, and the results become a layer of the image (docs/images.md)
 pub struct Shaders { pub frames: u64, pub session: Option<String> }
-pub struct Library { pub description: String, pub sources: Vec<String> }
+pub struct Library { pub description: String, pub sources: Vec<String>, pub provides: Vec<String> }
 pub struct Base {
     pub dir: PathBuf, pub name: String, pub version: i64, pub architecture: String, pub os: String,
+    pub platform: String, pub stability: String, pub provides: Vec<String>,
     pub cpu: Vec<String>, pub sources: Vec<String>, pub opt: String, pub registry: Vec<RegValue>,
     pub files_dir: PathBuf, pub dirs: Vec<String>, pub fonts: BTreeMap<String, String>, pub system32: String,
     pub libraries: BTreeMap<String, Library>,
@@ -302,21 +303,36 @@ pub fn load_recipe(dir: &Path) -> R<Recipe> {
 }
 
 /// "base/windows-x86:1" -> <root>/bases/windows-x86/1/base.toml
+/// Every key a base may have (docs/spec/base.md has the same list: tests/run.sh spec)
+pub const BASE_KEYS: &[&str] = &["name", "version", "platform", "stability", "architecture", "os", "provides", "cpu.features", "registry",
+    "files.dir", "files.dirs", "files.fonts", "files.system32", "libraries.<name>.description", "libraries.<name>.provides", "impl"];
 pub fn load_base(root: &Path, from: &str) -> R<Base> {
     let (name, version) = from.split_once(':').ok_or(format!("from = \"{from}\": <base>:<version>"))?;
     let short = name.strip_prefix("base/").ok_or(format!("from = \"{from}\": bases are named base/<name>"))?;
     let dir = root.join("bases").join(short).join(version);
+    let at = dir.join("base.toml").display().to_string();
     let t = load(&dir.join("base.toml"))?;
-    let rt = table(&t, "runtime")?.ok_or("base: no [runtime]")?;
+    // the contract's keys, then [impl] (pisco's own)
+    let top: Vec<&str> = BASE_KEYS.iter().map(|k| k.split('.').next().unwrap()).collect();
+    if let Some(k) = t.keys().find(|k| !top.contains(&k.as_str())) { return Err(format!("{at}: {k} is not a key of a base ({})", { let mut v = top.clone(); v.dedup(); v.join(", ") })); }
+    let sub = |tab: &str, keys: &[&str]| -> R<()> { if let Some(x) = table(&t, tab)? { if let Some(k) = x.keys().find(|k| !keys.contains(&k.as_str())) { return Err(format!("{at}: [{tab}] {k}: not one of its keys ({})", keys.join(", "))); } } Ok(()) };
+    sub("cpu", &["features"])?; sub("files", &["dir", "dirs", "fonts", "system32"])?; sub("impl", &["sources", "opt", "exclude", "libraries"])?;
+    let stability = s(&t, "stability").ok_or(format!("{at}: no stability (stable or experimental)"))?;
+    if stability != "stable" && stability != "experimental" { return Err(format!("{at}: stability = \"{stability}\": stable or experimental")); }
+    let rt = table(&t, "impl")?.ok_or(format!("{at}: no [impl]"))?;
     let files = table(&t, "files")?.cloned().unwrap_or_default();
     let exclude = strs(rt, "exclude")?.unwrap_or_default();
+    let impl_libs = table(rt, "libraries")?.cloned().unwrap_or_default();
     let mut libraries = BTreeMap::new();
     for (n, l) in table(&t, "libraries")?.into_iter().flatten() {
-        let l = l.as_table().ok_or("[libraries.<name>] tables")?;
+        let l = l.as_table().ok_or(format!("{at}: [libraries.<name>] tables"))?;
+        if let Some(k) = l.keys().find(|k| !["description", "provides"].contains(&k.as_str())) { return Err(format!("{at}: [libraries.{n}] {k}: not one of its keys (description, provides; its sources are [impl.libraries.{n}])")); }
+        let imp = impl_libs.get(n).and_then(|v| v.as_table()).ok_or(format!("{at}: library {n} has no [impl.libraries.{n}]"))?;
         let mut srcs = Vec::new();
-        for g in strs(l, "sources")?.unwrap_or_default() { srcs.extend(glob(root, &g)?); }
-        libraries.insert(n.clone(), Library { description: s(l, "description").unwrap_or_default(), sources: srcs });
+        for g in strs(imp, "sources")?.unwrap_or_default() { srcs.extend(glob(root, &g)?); }
+        libraries.insert(n.clone(), Library { description: s(l, "description").unwrap_or_default(), sources: srcs, provides: strs(l, "provides")?.unwrap_or_default() });
     }
+    if let Some(n) = impl_libs.keys().find(|n| !libraries.contains_key(*n)) { return Err(format!("{at}: [impl.libraries.{n}], but no [libraries.{n}]")); }
     let mut sources = Vec::new();
     for g in strs(rt, "sources")?.unwrap_or_default() { sources.extend(glob(root, &g)?); }
     sources.retain(|f| !exclude.contains(f) && !libraries.values().any(|l| l.sources.contains(f)));
@@ -325,14 +341,29 @@ pub fn load_base(root: &Path, from: &str) -> R<Base> {
     for (k, v) in table(&files, "fonts")?.into_iter().flatten() { fonts.insert(k.clone(), v.as_str().ok_or("files.fonts: strings")?.to_string()); }
     let b = Base {
         name: s(&t, "name").ok_or("base: no name")?, version: t.get("version").and_then(|v| v.as_integer()).ok_or("base: no version")?,
-        architecture: s(&t, "architecture").unwrap_or("386".into()), os: s(&t, "os").unwrap_or("windows".into()),
+        platform: s(&t, "platform").ok_or(format!("{at}: no platform"))?, stability, provides: strs(&t, "provides")?.unwrap_or_default(),
+        architecture: s(&t, "architecture").ok_or(format!("{at}: no architecture"))?, os: s(&t, "os").ok_or(format!("{at}: no os"))?,
         cpu: table(&t, "cpu")?.map(|c| strs(c, "features")).transpose()?.flatten().unwrap_or_default(),
         sources, opt: s(rt, "opt").unwrap_or("-O2".into()), registry: registry(table(&t, "registry")?)?,
         files_dir: dir.join(s(&files, "dir").unwrap_or("files".into())), dirs: strs(&files, "dirs")?.unwrap_or_default(), fonts,
         system32: s(&files, "system32").unwrap_or("WINDOWS\\system32".into()), libraries, dir,
     };
     if b.reference() != from { return Err(format!("{}: is {}, not {from}", b.dir.display(), b.reference())); }
+    if b.platform != short { return Err(format!("{at}: platform = \"{}\", but the base is {short}", b.platform)); }
     Ok(b)
+}
+/// What the base promises against what its sources answer for: a line for each DLL `provides` lists and the sources do
+/// not answer, or the reverse (tests/layout.sh)
+pub fn check_provides(root: &Path, b: &Base) -> R<Vec<String>> {
+    let dlls = |files: &[String]| -> R<Vec<String>> { let mut v: Vec<String> = implemented(root, files)?.iter().map(|f| f.split('!').next().unwrap().to_string()).collect(); v.sort(); v.dedup(); Ok(v) };
+    let mut out = Vec::new();
+    let mut cmp = |what: &str, said: &[String], have: Vec<String>| {
+        for d in &have { if !said.contains(d) { out.push(format!("{} {what}: its sources answer for {d}, which provides does not list", b.reference())); } }
+        for d in said { if !have.contains(d) { out.push(format!("{} {what}: provides lists {d}, which its sources do not answer for", b.reference())); } }
+    };
+    cmp("(the base)", &b.provides, dlls(&b.sources)?);
+    for (n, l) in &b.libraries { cmp(&format!("library {n}"), &l.provides, dlls(&l.sources)?); }
+    Ok(out)
 }
 
 /// "rt/windows-x86/d3d9*.c" -> the files it names, sorted (a `*` matches within one file name)

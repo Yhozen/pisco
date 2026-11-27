@@ -120,16 +120,13 @@ layout` checks that no other list exists and that every file is in a base):
 | `base/windows-x64:1` | Windows x64 | `rt/*.c`, `rt/gdk/*.c`, `rt/windows-x64/*.c` | hello64, SimpleTriangleDesktop, SimplePBR (folders the user built), Desire (a zip) |
 | `base/xbox-series:1` | Xbox Series | `rt/*.c`, `rt/gdk/*.c`, `rt/xbox-series/*.c` | Doom (`out/doom/game`, built by tests/gfx/doom.sh) |
 
-`base/windows-x86:1` has:
-
-- `[cpu] features`: the default virtual CPU (every feature the lifter supports);
-- `[runtime]`: the core runtime sources (`rt/*.c`, `rt/windows-x86/*.c` less the libraries'),
-  and their optimisation level;
-- `[registry]`: the defaults every title sees (Windows XP SP3's version values, `ProgramFilesDir`);
-- `[files]`: the layer: `files/` (C:\ at its top), empty folders, the fonts, the `system32` placeholders;
-- `[libraries.<name>]`: `d3d9` (`rt/windows-x86/d3d9*.c`), `dinput8`, `fmod3` (`fmod3.c`, `audio_decode.c`). The DLLs a
-  library answers for are the `IMP(dll, ...)` in its sources. `pisco build` refuses a title that imports from a
-  library its recipe does not name, and says which ones a title needs (`pisco census <exe>`).
+What a base promises its apps (`platform`, `stability`, `provides`, `[cpu]`, `[registry]`, `[files]`, each
+library's `provides`) is the specification's: [spec/base.md](spec/base.md). `[impl]` is `pisco`'s: the runtime's
+sources (`rt/*.c`, `rt/windows-x86/*.c` less the libraries'), their optimisation level, and each library's sources
+(`[impl.libraries.d3d9] sources = ["rt/windows-x86/d3d9*.c"]`). `pisco base <base>` prints what a base promises;
+`pisco base <base> --check` (in `tests/run.sh layout`) checks each `provides` against the `IMP(dll, ...)` of its
+sources. `pisco build` refuses an app that imports from a library its recipe does not name, and says which ones it
+needs (`pisco census <exe>`); it says so when a base is experimental.
 
 ## The build and its cache
 

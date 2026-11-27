@@ -4,6 +4,8 @@
 # the clock) and the machine (rt/microvm-x64/: one x86-64 CPU in long mode, its MMU, a local APIC, a 16550).
 name = "base/microvm-x64"
 version = 1
+platform = "microvm-x64"
+stability = "experimental"
 architecture = "amd64"   # as OCI names it: x86-64
 os = "microvm"
 
@@ -11,7 +13,7 @@ os = "microvm"
 # what CPUID reports is the machine's (rt/microvm-x64/apic.c); this list is what the lifter lifts
 features = ["fpu", "tsc", "cx8", "cmov", "mmx", "fxsr", "sse", "sse2", "sse3", "ssse3", "sse4.1", "sse4.2", "popcnt", "cx16", "pclmul"]
 
-[runtime]
-# paths from the repository's root, `*` within a file name
+[impl]
+# pisco's: the runtime's sources, paths from the repository's root, `*` within a file name
 sources = ["rt/builtins.c", "rt/core.c", "rt/clock.c", "rt/microvm-x64/*.c"]
 opt = "-O2"
