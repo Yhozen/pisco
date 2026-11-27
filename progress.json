@@ -1,12 +1,12 @@
 {
- "updated": "2026-11-26",
+ "updated": "2026-11-27",
  "d3d12": [
   232,
   353
  ],
  "imports": [
-  1027,
-  1098
+  1196,
+  1269
  ],
  "xcl": [
   50,
@@ -69,7 +69,7 @@
   {
    "name": "Narbacular Drop",
    "runtime": "Windows x86",
-   "done": 180,
+   "done": 185,
    "total": 186,
    "shipped": 0
   },
@@ -78,6 +78,13 @@
    "runtime": "Windows x86",
    "done": 306,
    "total": 315,
+   "shipped": 0
+  },
+  {
+   "name": "Medal of Honor: Allied Assault's demo",
+   "runtime": "Windows x86",
+   "done": 303,
+   "total": 310,
    "shipped": 0
   },
   {
