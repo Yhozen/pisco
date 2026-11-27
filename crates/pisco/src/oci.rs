@@ -17,6 +17,8 @@ pub const ROLE: &str = "org.pisco.layer.role";
 pub const TITLE: &str = "org.opencontainers.image.title";
 pub const REF: &str = "org.opencontainers.image.ref.name";
 pub const LOCAL: &str = "org.pisco.local-only";
+/// The host interface the modules are built for (docs/spec/host.md)
+pub const ABI: &str = "pisco.host/0";
 
 pub fn sha256(data: &[u8]) -> String { hex(&Sha256::digest(data)) }
 pub fn hex(b: &[u8]) -> String { b.iter().map(|x| format!("{x:02x}")).collect() }
@@ -45,6 +47,11 @@ impl Tree {
     pub fn file(&mut self, path: &str, data: Vec<u8>) {
         if let Some((d, _)) = path.rsplit_once('/') { self.dir(d); }
         self.entries.insert(path.to_string(), Entry::File(data));
+    }
+    /// The tree digest of these entries (docs/spec/image.md#the-tree-digest), in hex, and how many files they hold
+    pub fn digest(&self) -> (String, usize) {
+        let e: Vec<(String, Option<String>)> = self.entries.iter().map(|(p, e)| (p.clone(), match e { Entry::Dir => None, Entry::File(d) => Some(sha256(d)) })).collect();
+        (tree_digest(&e), e.iter().filter(|x| x.1.is_some()).count())
     }
     /// The tar: ustar headers (a pax header first when a name does not fit), directories "name/" mode 0755, files
     /// mode 0644, mtime, uid and gid 0, two zero blocks at the end.

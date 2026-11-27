@@ -54,7 +54,7 @@ fn main() {
     let root = root();
     let r = match cmd.as_str() {
         "build" => { let a = parse(&args[1..], &["source", "out", "cache", "compare", "with", "input"]); let Some(p) = a.pos.first() else { usage() };
-            build::build(&root, &build::Opts { recipe: p.into(), source: a.get("source"), out: a.get("out"), cache: a.get("cache"), compare: a.get("compare"),
+            build::build(&root, &build::Opts { recipe: p.into(), lock: a.flag("lock"), source: a.get("source"), out: a.get("out"), cache: a.get("cache"), compare: a.get("compare"),
                 with: a.opts.iter().filter(|(n, _)| n == "with" || n == "input").filter_map(|(_, v)| v.as_ref()?.split_once('=').map(|(k, p)| (k.to_string(), PathBuf::from(p)))).collect() }) }
         "run" => run(&root, &parse(&args[1..], &["session", "saves"])),
         "recipe" => recipe_cmd(&parse(&args[1..], &[])),

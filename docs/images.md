@@ -20,74 +20,28 @@ The model is OCI's, with three differences:
    with a fixed vocabulary: extract the installer, place its files, set registry values.
 2. **Code is layered at build time.** A title is one statically linked wasm module. A base's "libraries" are sets of
    runtime sources (with cached objects); the image carries only the linked module.
-3. **Game layers are never published.** The base and library layers and the recipe can be shared; the game layer
+3. **App layers are never published.** The base and library layers and the recipe can be shared; the app layer
    and the module are built locally from the user's own installer, checked by its sha256. They are marked
    `org.pisco.local-only` in the manifest. Nothing of them is ever committed (`out/` is ignored).
 
 ## The format
 
-An image is a directory in the [OCI image layout](https://github.com/opencontainers/image-spec/blob/main/image-layout.md):
+The image's layout, media types, layer roles (`base`, `library`, `app`, `shaders`, `module`, `program`), its file
+semantics, the tree digest and every field of the config are the specification's: [spec/image.md](spec/image.md),
+with the config's JSON Schema in [spec/config.schema.json](spec/config.schema.json) (`tools/check-config.mjs <image>`
+checks one). What is `pisco`'s own:
 
-```
-oci-layout                {"imageLayoutVersion":"1.0.0"}
-index.json                an image index with one manifest, its org.opencontainers.image.ref.name = the title's name
-blobs/sha256/<digest>     the manifest, the config, the layers and the module, each named by its sha256
-```
-
-The manifest is an ordinary `application/vnd.oci.image.manifest.v1+json` with an `artifactType`, a config and
-layers of our own media types:
-
-| Media type | What it is |
-|---|---|
-| `application/vnd.pisco.app.v1` | the manifest's `artifactType`: a PISCO app |
-| `application/vnd.pisco.app.config.v1+json` | the config (below) |
-| `application/vnd.pisco.layer.v1.tar` | a file layer: an uncompressed tar of files on the title's C: drive (paths relative to `C:\`) |
-| `application/vnd.pisco.module.v1.wasm` | the title's module: lifted code, runtime and import tables, linked (`title.wasm`) |
-
-The file layers come in this order, each with the annotation `org.pisco.layer.role`:
-
-| Role | Content | Shared |
-|---|---|---|
-| `base` | the base's C: drive: `C:\WINDOWS` (`win.ini`, `system.ini`, `Temp`, the fonts gdi32 draws with), the user's folders, and a placeholder in `C:\WINDOWS\system32` for every DLL the base's runtime answers for | by every title FROM the base |
-| `library` | one per library the recipe names: a placeholder for each DLL it answers for | by every title that names it |
-| `game` | the files the installer installs, where it installs them | never (local only) |
-
-then the module, also local only. A later layer's file replaces an earlier one's, and an entry `.wh.<name>`
-removes `<name>` from the layers below (OCI's whiteouts; no layer we build uses them yet).
-
-Layers are uncompressed so a host reads a file at its offset in the blob. They are deterministic: entries sorted,
-directories before what they hold, every mtime, uid and gid 0, mode 0755 for directories and 0644 for files, a pax
-`path` record for a name ustar cannot hold. All JSON documents are written with sorted keys and no white space,
-and nothing in them depends on the time or the machine, so the same inputs give the same digests.
-
-### The config
-
-```json
-{
-  "architecture": "386", "os": "windows", "base": "base/windows-x86:1", "name": "narbacular-drop",
-  "run": { "exe": "C:\\Program Files\\Narbacular Drop\\Narbacular Drop.exe", "display": "640x480", "args": [] },
-  "guest": { "bits": 32, "image": ["0x400000", "0x57c000"] },
-  "cpu": { "features": ["fpu", "tsc", "cx8"] },
-  "dll": { "fmod.dll": "builtin" },
-  "libraries": ["d3d9", "dinput8", "fmod3"],
-  "registry": [{ "key": "HKEY_LOCAL_MACHINE\\Software\\Microsoft\\Direct3D", "name": "DisableMMX", "type": "dword", "value": 1 }, ...],
-  "imports": ["advapi32.dll!RegCloseKey", ...],
-  "source": { "sha256": "0966948f...", "extract": "innosetup" },
-  "build": { "lift": "<lift key>", "lifter": "<hash of the lifter's sources>", "clang": "...", "opt": "-O1", "runtime_opt": "-O2" }
-}
-```
-
-A Linux title's config says `"os": "linux"`, and when its files hold more than one program (an ELF each:
-`recipes/neofetch`) it has `"programs": { "/bin/bash": "sha256:...", "/bin/busybox": "sha256:..." }`: each program
-is lifted into a module of its own, a layer of the manifest after the first module (role `program`), and `execve`
-starts the one its path names ([neofetch.md](neofetch.md)). Its `run.exe` may be a script: the first process starts
-in the first module and runs it through its `#!`. A recipe whose folder is the title's root says `app = "/"`. Arguments given when an image is run (`pisco run <image> -- ...`, the
-page's `&args=`) replace the config's `run.args`, as a container's command replaces its image's.
-
-The CPU features are built into the module (`rt_cpu_features`, by `tools/recipe-gen.py`); the registry is not:
-the host hands the config's values to the runtime at start (`SW_REGISTRY`, one value a line:
-`<key>\t<name>\tdword|sz\t<value>`), and `rt/windows-x86/advapi32.c` reads them. So a registry change leaves the module
-as it was. `imports` is the title's import table, for `pisco census`.
+- **One module per program.** The lifted code, the runtime and the import tables are linked into one module
+  (`title.wasm`); a Linux app's other programs are a module each (role `program`, named in the config's `programs`),
+  a machine's are in the kernel's module or in side modules (`side`).
+- **The CPU features are built into the module** (`rt_cpu_features`, by `tools/recipe-gen.py`); **the registry is
+  not**: the host hands the config's values to the runtime at start (`SW_REGISTRY`, one value a line:
+  `<key>\t<name>\tdword|sz\t<value>`), and `rt/windows-x86/advapi32.c` reads them. So a registry change leaves
+  the module as it was.
+- **`build`** in the config: the lift key, a hash of the lifter's sources, clang's version and levels, and the
+  versions of the extractors a recipe's steps ran (`tools`).
+- **The lock**: `pisco build --lock` writes `recipe.lock` (the tree digest of the app's files) for a recipe whose
+  inputs are all pinned; a build that finds one stops when its files differ.
 
 ### How hosts read an image
 

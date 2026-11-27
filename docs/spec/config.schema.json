@@ -1,0 +1,76 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Yhozen/pisco/docs/spec/config.schema.json",
+  "title": "The config of a PISCO image, schema 1 (docs/spec/image.md#the-config)",
+  "type": "object",
+  "required": ["schema", "name", "about", "platform", "base", "architecture", "os", "abi", "run", "libraries", "dll", "registry", "cpu", "tree", "source", "guest", "imports"],
+  "additionalProperties": false,
+  "properties": {
+    "schema": { "const": 1 },
+    "name": { "type": "string", "pattern": "^[a-z0-9-]+$" },
+    "about": {
+      "type": "object", "additionalProperties": false, "required": ["display_name", "version", "revision"],
+      "properties": {
+        "display_name": { "type": ["string", "null"] },
+        "version": { "type": ["string", "null"] },
+        "revision": { "type": ["integer", "null"], "minimum": 1 }
+      }
+    },
+    "platform": { "enum": ["windows-x86", "windows-x64", "xbox-series", "linux-x64", "microvm-x64", "ps5"] },
+    "base": { "type": "string", "pattern": "^base/[a-z0-9-]+:[0-9]+$" },
+    "architecture": { "enum": ["386", "amd64"] },
+    "os": { "enum": ["windows", "linux", "microvm", "ps5"] },
+    "abi": { "const": "pisco.host/0" },
+    "run": {
+      "type": "object", "additionalProperties": false, "required": ["exe", "args"],
+      "properties": {
+        "exe": { "type": "string" },
+        "args": { "type": "array", "items": { "type": "string" } },
+        "display": { "type": ["string", "null"], "pattern": "^[0-9]+x[0-9]+$" },
+        "initrd": { "type": ["string", "null"] },
+        "cmdline": { "type": ["string", "null"] }
+      }
+    },
+    "libraries": { "type": "array", "items": { "type": "string" } },
+    "dll": { "type": "object", "additionalProperties": { "const": "builtin" } },
+    "registry": {
+      "type": "array",
+      "items": {
+        "type": "object", "additionalProperties": false, "required": ["key", "name", "type", "value"],
+        "properties": {
+          "key": { "type": "string", "pattern": "^HKEY_(LOCAL_MACHINE|CURRENT_USER|CLASSES_ROOT|USERS)" },
+          "name": { "type": "string" },
+          "type": { "enum": ["dword", "sz"] },
+          "value": { "type": ["integer", "string"] }
+        }
+      }
+    },
+    "cpu": {
+      "type": "object", "additionalProperties": false, "required": ["features"],
+      "properties": { "features": { "type": "array", "items": { "type": "string" } } }
+    },
+    "tree": {
+      "type": "object", "additionalProperties": false, "required": ["digest", "files"],
+      "properties": { "digest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" }, "files": { "type": "integer", "minimum": 0 } }
+    },
+    "source": {
+      "type": "object", "additionalProperties": false, "required": ["sha256", "extract", "added"],
+      "properties": {
+        "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "extract": { "enum": ["innosetup", "zip", "wise", "file", "folder"] },
+        "added": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "guest": {
+      "type": "object", "additionalProperties": false, "required": ["bits", "image"],
+      "properties": {
+        "bits": { "enum": [32, 64] },
+        "image": { "type": "array", "items": { "type": "string", "pattern": "^0x[0-9a-f]+$" } }
+      }
+    },
+    "imports": { "type": "array", "items": { "type": "string" } },
+    "programs": { "type": ["object", "null"], "additionalProperties": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" } },
+    "side": { "type": ["object", "null"], "additionalProperties": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" } },
+    "build": { "type": "object" }
+  }
+}

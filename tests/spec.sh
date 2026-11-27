@@ -3,7 +3,8 @@
 # tests/spec.sh: the specification (docs/spec/) and what pisco does are the same lists.
 #   1. the keys of a recipe, pisco's hints, the extract kinds, CPU features, DLL choices and quirks: the rows between
 #      the markers of docs/spec/recipe.md, and what `pisco recipe --keys` prints, the same in both directions
-#   2. every recipe in recipes/ is read (schema 1); a recipe with a misspelt key in any of its tables, an unknown
+#   2. the config's fields and the layer roles of docs/spec/image.md: the schema's (config.schema.json) and pisco's
+#   3. every recipe in recipes/ is read (schema 1); a recipe with a misspelt key in any of its tables, an unknown
 #      schema, an input pinned twice or a name not in a list is refused
 set -uo pipefail
 root=$(cd "$(dirname "$0")/.." && pwd); cd "$root"
@@ -23,6 +24,9 @@ same "extract kinds" "$(marked docs/spec/recipe.md extract-kinds)" "$(of extract
 same "CPU features" "$(marked docs/spec/recipe.md cpu-features words)" "$(of cpu-feature)"
 same "DLL choices" "$(marked docs/spec/recipe.md dll-choices)" "$(of dll-choice)"
 same "quirks" "$(marked docs/spec/recipe.md quirks)" "$(of quirk)"
+# the image: the config's fields (docs/spec/image.md) are the schema's, and the layer roles are the ones pisco writes
+same "config fields" "$(marked docs/spec/image.md config)" "$(node -e 'console.log(Object.keys(JSON.parse(require("fs").readFileSync("docs/spec/config.schema.json")).properties).join("\n"))')"
+same "layer roles" "$(marked docs/spec/image.md roles)" "$(grep -ohE '\(ROLE, "[a-z]+"\)' crates/pisco/src/build.rs | sed 's/(ROLE, "\(.*\)")/\1/')"
 n=0; for r in recipes/*/; do $P recipe "$r" --json > /dev/null 2> $T/err || { echo "$r: $(cat $T/err)"; fail=1; }; n=$((n + 1)); done
 # refused: each line a change made to recipes/tag/recipe.toml (sed), and a word the error must have
 bad=0

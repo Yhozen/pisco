@@ -17,6 +17,8 @@ use std::process::Command;
 use std::time::Instant;
 
 pub struct Opts { pub recipe: PathBuf, pub source: Option<PathBuf>, pub out: Option<PathBuf>, pub cache: Option<PathBuf>, pub compare: Option<PathBuf>,
+    /// --lock: write the recipe's lock (recipe.lock) from this build
+    pub lock: bool,
     /// inputs named on the command line: --input <id>=<path> (and --with <ID>=<folder>), matched without regard to case
     pub with: Vec<(String, PathBuf)> }
 /// A folder's tree digest (docs/spec/image.md#the-tree-digest), over `only` of its files when they are named
@@ -284,6 +286,34 @@ fn extract(r: &Recipe, src: &Path, sha: &str, cache: &Path, with: &[(String, Pat
     for c in &r.source.cabs { uncab(c, &mut files, &mut dirs, &dir)?; }
     Ok(Extracted { files, dirs, app_guest, added: add_key.lines().map(String::from).collect() })
 }
+/// The versions of the extractors this recipe's steps ran (the config's build.tools: provenance, not identity)
+fn tool_versions(r: &Recipe) -> serde_json::Value {
+    let first = |p: PathBuf, arg: &str| Command::new(&p).arg(arg).output().ok().map(|o| String::from_utf8_lossy(if o.stdout.is_empty() { &o.stderr } else { &o.stdout }).lines().next().unwrap_or("").trim().to_string());
+    let mut m = serde_json::Map::new();
+    if r.source.extract == "innosetup" { if let Some(v) = first(innoextract(), "--version") { m.insert("innoextract".into(), json!(v)); } }
+    if !r.source.cabs.is_empty() { if let Some(v) = first(cabextract(), "--version") { m.insert("cabextract".into(), json!(v)); } }
+    serde_json::Value::Object(m)
+}
+/// recipe.lock (docs/spec/recipe.md#the-lock): checked when it is there; written with --lock, for a recipe whose
+/// inputs are all pinned
+fn lock(r: &Recipe, tree: &str, files: usize, write: bool) -> R<()> {
+    let path = r.dir.join("recipe.lock");
+    let want = format!("sha256:{tree}");
+    if write {
+        if let Some(i) = r.inputs.iter().find(|i| !matches!(i.pin, Pin::Sha256(_))) { return Err(format!("--lock: input {} is not pinned by a sha256, so the app's files are this machine's: a lock would not hold elsewhere", i.id)); }
+        let text = format!("# recipe.lock: the tree digest of the app's files that this recipe's inputs gave (docs/spec/recipe.md#the-lock).\n# Written by `pisco build --lock`; any conforming builder must give the same.\nschema = 1\ntree = \"{want}\"\nfiles = {files}\n");
+        io(std::fs::write(&path, text), &path)?;
+        say(&format!("lock: {} written: tree {want}, {files} files", path.display()));
+        return Ok(());
+    }
+    if !path.is_file() { return Ok(()); }
+    let t: toml::Table = io(std::fs::read_to_string(&path), &path)?.parse().map_err(|e| format!("{}: {e}", path.display()))?;
+    if t.get("schema").and_then(|v| v.as_integer()) != Some(1) { return Err(format!("{}: schema = 1 expected", path.display())); }
+    let got = t.get("tree").and_then(|v| v.as_str()).ok_or(format!("{}: no tree", path.display()))?;
+    if got != want { return Err(format!("{}: the app's files have tree digest {want} ({files} files), the lock says {got} ({}): not the files the recipe gave when it was locked", path.display(), t.get("files").and_then(|v| v.as_integer()).map(|n| format!("{n} files")).unwrap_or_default())); }
+    say(&format!("lock: the app's files are the lock's ({want})"));
+    Ok(())
+}
 fn cabextract() -> PathBuf {
     if let Ok(p) = std::env::var("CABEXTRACT") { return p.into(); }
     let p = home().join("tools/cabextract/bin/cabextract");
@@ -529,6 +559,16 @@ pub fn build(root: &Path, o: &Opts) -> R<()> {
         if let Some(k) = ex.files.keys().find(|k| k.eq_ignore_ascii_case(&guest)).cloned() { ex.files.remove(&k); }
         ex.files.insert(guest, host);
     }
+    // the app's files: its layer, and their tree digest against the recipe's lock (docs/spec/recipe.md#the-lock)
+    let mut game = Tree::default();
+    for d in &ex.dirs { if !d.is_empty() { game.dir(d); } }
+    for (g, h) in &ex.files { game.file(g, io(std::fs::read(h), h)?); }
+    if base.os != "linux" && base.os != "microvm" {   // a Windows drive: names are one without regard to case
+        let mut seen: BTreeMap<String, &String> = BTreeMap::new();
+        for p in game.entries.keys() { if let Some(o) = seen.insert(p.to_ascii_lowercase(), p) { say(&format!("warning: the app's files have {o} and {p}, one name on a drive that does not tell case apart: the host finds one of them")); } }
+    }
+    let (tree, tree_files) = game.digest();
+    lock(&r, &tree, tree_files, o.lock)?;
     let exe_guest = recipe::drive_path(&r.exe)?;
     let exe = ex.files.iter().find(|(g, _)| g.eq_ignore_ascii_case(&exe_guest)).map(|x| x.1.clone()).ok_or(format!("{}: not among the installer's files", r.exe))?;
 
@@ -688,10 +728,7 @@ pub fn build(root: &Path, o: &Opts) -> R<()> {
         placeholders(&mut tree, &base, &cen.dlls_of(l), &format!("library {l} of {}", base.reference()));
         layers.push(lay.put(LAYER, &tree.tar(), &[(ROLE, "library"), (TITLE, &format!("{}/{l}", base.reference()))])?);
     }
-    let mut game = Tree::default();
-    for d in &ex.dirs { if !d.is_empty() { game.dir(d); } }
-    for (g, h) in &ex.files { game.file(g, io(std::fs::read(h), h)?); }
-    layers.push(lay.put(LAYER, &game.tar(), &[(ROLE, "game"), (TITLE, &r.name), (LOCAL, "true")])?);
+    layers.push(lay.put(LAYER, &game.tar(), &[(ROLE, "app"), (TITLE, &r.name), (LOCAL, "true")])?);
     if let Some(t) = extra { layers.push(lay.put(LAYER, &t.tar(), &[(ROLE, "shaders"), (TITLE, &format!("{} shaders", r.name)), (LOCAL, "true")])?); }
     let module = lay.put(MODULE, &io(std::fs::read(&wasm), &wasm)?, &[(ROLE, "module"), (TITLE, "title.wasm"), (LOCAL, "true")])?;
     // a Linux title's other programs: a module each (the first module above is the one its first process starts in)
@@ -712,7 +749,10 @@ pub fn build(root: &Path, o: &Opts) -> R<()> {
     let program_map: BTreeMap<String, String> = if base.os == "linux" { lift_of.iter().map(|(g, k)| (format!("/{g}"), digest_of[k].clone())).collect() } else { BTreeMap::new() };
     let registry = recipe::merge_registry(&base.registry, &r.registry);
     let config = json!({
-        "architecture": base.architecture, "os": base.os, "base": base.reference(), "name": r.name,
+        "schema": 1, "name": r.name, "platform": r.platform, "abi": oci::ABI,
+        "about": { "display_name": r.display_name, "version": r.version, "revision": r.revision },
+        "architecture": base.architecture, "os": base.os, "base": base.reference(),
+        "tree": { "digest": format!("sha256:{tree}"), "files": tree_files },
         "run": { "exe": r.exe, "display": r.display, "args": r.args, "initrd": r.initrd, "cmdline": r.cmdline },
         "guest": { "bits": lifted.bits, "image": [format!("0x{:x}", lifted.low), format!("0x{:x}", lifted.high)] },
         "cpu": { "features": features },
@@ -724,7 +764,7 @@ pub fn build(root: &Path, o: &Opts) -> R<()> {
         "programs": if program_map.is_empty() { serde_json::Value::Null } else { json!(program_map) },
         "side": if side_map.is_empty() { serde_json::Value::Null } else { json!(side_map) },
         "source": { "sha256": sha, "extract": r.source.extract, "added": ex.added },
-        "build": { "lift": lifted.key, "lifter": t.lifter_hash, "clang": t.clang_version, "opt": r.opt, "runtime_opt": base.opt,
+        "build": { "lift": lifted.key, "lifter": t.lifter_hash, "clang": t.clang_version, "opt": r.opt, "runtime_opt": base.opt, "tools": tool_versions(&r),
             "programs": if user_lifts.is_empty() { serde_json::Value::Null } else { json!(user_lifts.iter().map(|(n, l)| (n.clone(), l.key.clone())).collect::<BTreeMap<_, _>>()) } },
     });
     let cfg = lay.put_json(oci::CONFIG, &config, &[])?;

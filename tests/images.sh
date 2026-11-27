@@ -27,7 +27,7 @@ if [ -z "${ND_SETUP:-}" ]; then
   for f in recipes/narbacular-drop/narbacular_drop_setup.exe "$HOME/Downloads/narbacular_drop_setup.exe" .context/attachments/*/narbacular_drop_setup.exe .context/attachments/*/*/narbacular_drop_setup.exe; do
     [ -f "$f" ] && { ND_SETUP=$f; break; }; done
 fi
-# the digest of an image's blob: its manifest's layer of a role (base, library, game, module), or "config"
+# the digest of an image's blob: its manifest's layer of a role (base, library, app, module), or "config"
 blob() { python3 -I -c 'import json, sys
 d = sys.argv[1]; idx = json.load(open(d + "/index.json"))
 m = json.load(open(d + "/blobs/sha256/" + idx["manifests"][0]["digest"][7:]))
@@ -76,6 +76,24 @@ if [ -x "$MUSL/bin/musl-gcc" ]; then
   diff <(sed 's|^exe: /hello$|exe: /usr/bin/hello|' fixtures/linux-hello/expected.txt) $T/linux-hello.run.log > $T/linux-hello.diff || { echo "linux-hello: its image does not print expected.txt (< expected, > the image):"; head -6 $T/linux-hello.diff; exit 1; }
   echo "linux-hello (base/linux-x64:1): two builds with empty caches give manifest $a; the image prints what fixtures/linux-hello/expected.txt says"
 else echo "linux-hello: no musl in MUSL=$MUSL (tools/setup-toolchain.sh musl): its image is not built"; fi
+
+# 1c. every config these builds made against the specification's schema (docs/spec/config.schema.json)
+node tools/check-config.mjs $(for d in $T/*-a; do [ -f $d/index.json ] && echo $d; done) > $T/configs.log || { echo "configs that do not conform:"; grep -v conforms $T/configs.log | head -8; exit 1; }
+echo "$(grep -c conforms $T/configs.log) configs conform to docs/spec/config.schema.json"
+# 1d. the lock (docs/spec/recipe.md#the-lock): hello32 with its input pinned, locked, built again; then its input with
+#     one byte changed (and pinned again): the build stops at the lock. A recipe with an input not pinned is not locked
+mkdir -p $T/lock; exe=fixtures/hello/target/i686-pc-windows-msvc/release/hello.exe; cp $exe $T/lock/hello.exe
+sed "s|^file = .*|file = \"hello.exe\"|; s|^built_by = .*|sha256 = \"$(sha256sum $exe | cut -c1-64)\"|" recipes/hello32/recipe.toml > $T/lock/recipe.toml
+build lock-1 $T/lock $T/lock/image $T/cache-a --lock > /dev/null || exit 1
+grep -q '^tree = "sha256:' $T/lock/recipe.lock || { echo "lock: --lock wrote no recipe.lock"; exit 1; }
+build lock-2 $T/lock $T/lock/image $T/cache-a > /dev/null && grep -q "^pisco: lock: the app's files are the lock's" $T/lock-2.log || { echo "lock: a build of the locked recipe did not check its lock"; exit 1; }
+[ "sha256:$(sed -n 's/^tree = "sha256:\(.*\)"/\1/p' $T/lock/recipe.lock)" = "$(node -e 'const fs=require("fs"),d=process.argv[1],b=(x)=>JSON.parse(fs.readFileSync(d+"/blobs/sha256/"+x.slice(7)));console.log(b(b(JSON.parse(fs.readFileSync(d+"/index.json")).manifests[0].digest).config.digest).tree.digest)' $T/hello32-a)" ] || { echo "lock: its tree is not the image's"; exit 1; }
+printf '\x01' | dd of=$T/lock/hello.exe bs=1 seek=1000 conv=notrunc status=none
+sed -i "s|^sha256 = .*|sha256 = \"$(sha256sum $T/lock/hello.exe | cut -c1-64)\"|" $T/lock/recipe.toml
+if build lock-3 $T/lock $T/lock/image $T/cache-a > /dev/null 2>&1; then echo "lock: an input with a byte changed gave the lock's files"; exit 1; fi
+grep -q 'not the files the recipe gave when it was locked' $T/lock-3.log || { echo "lock: the changed input failed for another reason:"; tail -2 $T/lock-3.log; exit 1; }
+if $SW build recipes/hello32 --out $T/lock/x --cache $T/cache-a --lock > /dev/null 2> $T/lock-4.log || ! grep -q 'is not pinned by a sha256' $T/lock-4.log; then echo "lock: a recipe built here was locked"; exit 1; fi
+echo "the lock: hello32 pinned and locked, built again against it; one byte of its input changed stops the build; a recipe built here is not locked"
 
 if [ -z "${ND_SETUP:-}" ] || [ ! -f "$ND_SETUP" ]; then echo "Narbacular Drop: no installer found (ND_SETUP): its image is not built"; exit 0; fi
 # 2. Narbacular Drop, twice from nothing
