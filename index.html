@@ -1,14 +1,94 @@
 <!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>series-web: Doom as an Xbox console title in the browser</title>
-<style>body{font:16px/1.5 system-ui,sans-serif;background:#111;color:#ddd;max-width:1000px;margin:2em auto;padding:0 1em}video{width:100%;background:#000}a{color:#8cf}</style>
-<h1>Doom as an Xbox console title, running in a web browser</h1>
+<title>PISCO: changelog</title>
+<style>body{font:16px/1.55 system-ui,sans-serif;background:#111;color:#ddd;max-width:1000px;margin:2em auto;padding:0 1em}video{width:100%;background:#000}a{color:#8cf}h2{margin-top:2.2em;border-bottom:1px solid #333;padding-bottom:.2em}h3{margin-bottom:.3em}.d{color:#999;font-weight:normal;font-size:.8em}.tag{font-size:.75em;background:#334;color:#ccd;border-radius:4px;padding:1px 6px;margin-left:.4em;vertical-align:middle}li{margin:.25em 0}</style>
+<h1>PISCO</h1>
+<p><b>PISCO Imitates Systems, Compiles Originals.</b> It runs x86 titles in WebAssembly, in a browser tab or in Node, by
+recompiling their code ahead of time and supplying the system they were written for: one recompiler, one package
+format (<code>pisco build</code> makes a title image from a recipe and your own copy of the title), and several
+compatibility runtimes. Nothing of a title is in the repository. Windows titles are checked against
+<a href="https://www.winehq.org">Wine</a>, screen by screen and call by call.</p>
+<p>Source: <a href="https://github.com/Yhozen/pisco">github.com/Yhozen/pisco</a> ·
+Progress map: <a href="progress.html">what each runtime implements against what titles use</a> ·
+Videos: <a href="https://github.com/Yhozen/pisco/releases">releases</a></p>
+
+<h2>Changelog</h2>
+
+<h3>Desire: the first third-party Direct3D 12 game <span class="d">2026-11-27</span><span class="tag">in review: PRs #28–#34</span></h3>
+<p>Desire (DESI:Re v0.1), a free maze escape on its author's own Direct3D 12 engine, on the Windows x64 runtime.
+Played by hand in Chrome on an M1 MacBook Pro: the logo, the maze, the enemy, the CRT effect, GAME OVER.</p>
+<ul>
+<li><b>Checked against Wine:</b> the calls up to the main loop are Wine's (77 steps); given the seeds a Wine run's
+<code>std::random_device</code> drew, the maze the game writes is Wine's byte for byte (3 of 3 runs); the window title at
+each checkpoint and the set of Direct3D 12 methods called (51) are Wine's. In headless Chrome the still screens are
+within 0.3 of 255 of Wine's screenshots.</li>
+<li><b><code>pisco build</code></b> reads a zip, adds your own files beside the exe (here Microsoft's C++ runtime DLLs), and
+compiles the title's HLSL into the image.</li>
+<li><b>The recompiler</b> reads MSVC's current FH4 exception tables (a missing texture is thrown, caught and shown as under
+Wine) and its two-level <code>switch</code> tables (78 recovered in Desire's images instead of 43).</li>
+<li><b>The Windows x64 runtime</b> gets a real window and message queue, the keyboard and the virtual clock (shared with the
+x86 runtime), WIC's PNG decoding (stb_image), and the D3D12 Memory Allocator's calls.</li>
+<li><b>The WebGPU back end</b> merges each buffer's uploads and reuses bind groups: a profile of the first hand play showed
+48 MB uploaded a frame; Desire went from 18–21 to about 38 frames a second.</li>
+</ul>
+
+<h3>neofetch: Linux processes <span class="d">2026-11-26</span><span class="tag">PR #35</span></h3>
+<p>neofetch 7.1.0, a bash script, runs on bash and busybox built as static Linux programs: 83 processes forked and
+executed (fork, execve, wait4, pipes), each in a worker with memory of its own. A title image can now hold several
+programs.</p>
+
+<h3>A fourth runtime: Linux x64, with fastfetch <span class="d">2026-11-26</span><span class="tag">PR #31</span></h3>
+<p>Linux at its system calls, for one statically linked program: files, memory, the clock, a generated <code>/proc</code>.
+The recompiler reads ELF; the core's system-neutral parts moved to files of their own. fastfetch 2.71.0 prints the
+machine it finds, a Linux x86-64 system imitated in WebAssembly, with its logo and colours, in Node and in the page.</p>
+
+<h3>Tag in the browser, faster <span class="d">2026-11-26</span><span class="tag">PRs #26, #27</span></h3>
+<ul>
+<li>Tag: The Power of Paint was played by hand through level 3. A Chrome profile showed its thread waiting on 21,000
+file checks to the server and its whole 384 KiB vertex buffer re-sent a dozen times a frame; file checks are now
+answered once and only the changed bytes are sent (50 GB to 1.1 GB over a session).</li>
+<li>Windows x64 titles get a window again; the docs say where every runtime stands, and what to do if the browser
+ever becomes the limit.</li>
+</ul>
+
+<h3>Tag: The Power of Paint, a Direct3D 9 shader game <span class="d">2026-11-25</span><span class="tag">PRs #18–#24</span></h3>
+<p>DigiPen's paint-gun game (2008), with Microsoft's own D3DX from its installer lifted beside it: its 16 effects compile
+at run time to the same 46 shaders as under Wine, Direct3D 9 shader bytecode is translated to WGSL, FMOD Ex's calls
+are Wine's, and in headless Chrome its first level is within 1.4 of 255 of Wine's screenshots on average.</p>
+
+<h3>PISCO: runtimes as peers <span class="d">2026-11-25</span><span class="tag">PRs #11–#17</span></h3>
+<ul>
+<li>The project is renamed PISCO, with its logo.</li>
+<li>A folder and a base per runtime (Xbox Series, Windows x64, Windows x86), one list of each runtime's files, recipes
+for every base; the 32-bit side of the shared runtime made right.</li>
+<li>CI for the tests that need no game files, and <code>reuse lint</code>.</li>
+</ul>
+
+<h3>Microsoft's desktop D3D12 samples <span class="d">2026-11-25</span></h3>
+<p>Steps 1 and 2 of the graphics ladder: Microsoft's SimpleTriangleDesktop (clang-cl and MSVC builds) and SimplePBR on
+the Windows x64 runtime, drawn with WebGPU.</p>
+
+<h3>Narbacular Drop, a 2005 Windows PC game <span class="d">2026-11-25</span><span class="tag">PRs #1–#10</span></h3>
+<p>The first Windows PC title, a 32-bit Direct3D 9 game, played by hand in Chrome on an M1 MacBook Pro
+(<a href="https://github.com/Yhozen/pisco/releases/tag/narbacular-drop-video-2026-11-25">video</a>). What it took: the
+recompiler's 32-bit mode with x87, a Win32 process for a 32-bit guest, fixed-function Direct3D 9 on WebGPU, GDI text,
+FMOD 3 on an AudioWorklet, DirectInput from the keyboard and a Pointer Lock mouse, saves in OPFS, and recipes that
+build title images. 103–355 frames a second on that machine.</p>
+
+<h3>XCL's console checks, 50 of 50 <span class="d">2026-11-24</span></h3>
+<p>Step 4 of the ladder: XCL's console test title passes all 50 of its checks in Chrome. The progress map shows what the
+runtime implements against what titles use.</p>
+
+<h3>Doom as an Xbox console title, in a web browser <span class="d">2026-11-24</span></h3>
 <video src="doom-series-web.mp4" controls playsinline preload="metadata"></video>
-<p>doomgeneric + Freedoom, built against D3D12.X, GameInput, XAudio2 and XGameSave; its x86-64 code recompiled to WebAssembly,
-D3D12.X translated to WebGPU, XAudio2 mixed into an AudioWorklet, saves kept in the browser (OPFS). Recorded in headless Chrome
-with WebGPU on SwiftShader (no GPU); every frame was read back from WebGPU. Shows: title and attract demo, a new game from scripted keys,
-the automap, a save, a page reload (a new title process), the save loaded back.</p>
-<p>Progress map: <a href="progress.html">what the runtime implements</a>. Source: <a href="https://github.com/Yhozen/series-web">github.com/Yhozen/series-web</a> (<code>fixtures/doom</code>, <code>docs/journey.md</code> §3.9).</p>
+<p>doomgeneric + Freedoom, built against D3D12.X, GameInput, XAudio2 and XGameSave; its x86-64 code recompiled to
+WebAssembly, D3D12.X translated to WebGPU, XAudio2 mixed into an AudioWorklet, saves kept in the browser (OPFS).
+Recorded in headless Chrome with WebGPU on SwiftShader (no GPU); every frame was read back from WebGPU. Shows: title
+and attract demo, a new game from scripted keys, the automap, a save, a page reload (a new title process), the save
+loaded back.</p>
+
 <p><small>Game data: <a href="https://freedoom.github.io/">Freedoom</a> (BSD-3-Clause, © the Freedoom contributors).
-Engine: <a href="https://github.com/ozkl/doomgeneric">doomgeneric</a> (GPL-2.0; Chocolate Doom, id Software's Doom).</small></p>
+Engine: <a href="https://github.com/ozkl/doomgeneric">doomgeneric</a> (GPL-2.0; Chocolate Doom, id Software's Doom).
+Narbacular Drop © DigiPen Institute of Technology; Tag: The Power of Paint © DigiPen Institute of Technology;
+Desire © satokunDayo. No game files are published here.</small></p>
