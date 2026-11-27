@@ -21,6 +21,9 @@
 #            out/fastfetch: lifted, run in Node in strict mode on the virtual clock with its logo left out and its
 #            output as for a pipe; what it prints must be recipes/fastfetch/traces/pipe.txt (FASTFETCH_RECORD=1
 #            records it again). Then its image, built by `pisco build` and run by `pisco run`, must print the same
+#   cowsay   cowsay on perl (docs/cowsay.md), when tools/build-cowsay.sh has built its root into out/cowsay: its image
+#            built by `pisco build`, run by `pisco run` in strict mode with several cows and options; each must print
+#            what the same root's perl prints here (the oracle), and the first the same in headless Chrome
 #   chrome   hello, threads and cxx again in headless Chrome (WebGPU on SwiftShader), the 32-bit titles and linux-hello
 #   nd       Narbacular Drop, when the installed game is there (ND: its folder; default: the oracle's prefix):
 #            built with its recipe and run in strict mode. Its calls until it asks for Direct3D 9 must be the
@@ -155,6 +158,30 @@ neofetch() {
   diff <(eval "$trim" < $want) <(eval "$trim" < $d/got-chrome.txt) > $d/chrome.diff || { echo "in Chrome it prints something else (< recorded, > Chrome):"; head -8 $d/chrome.diff; return 1; }
   echo "neofetch: $(wc -l < $want) lines as recorded, in strict mode, in Node and in Chrome; $forks processes forked, $execs programs executed"
 }
+cowsay() {
+  local d=out/cowsay R=$PWD/out/cowsay/root n=0
+  target/release/pisco build recipes/cowsay --out out/images/cowsay > out/cowsay.image.log 2>&1 || { echo "pisco build failed (out/cowsay.image.log)"; return 1; }
+  # natively: the root's own perl, its library and its cows where they are here
+  native() { local prog=$1; shift; PERL5LIB=$R/usr/lib/perl5/5.44.0/x86_64-linux:$R/usr/lib/perl5/5.44.0 COWPATH=$R/usr/share/cowsay/cows COWSAY_ONLY_COWPATH=1 $R/usr/bin/perl $R/usr/bin/$prog "$@"; }
+  while IFS='|' read -r prog args; do
+    n=$((n + 1)); eval "set -- $args"
+    native "$prog" "$@" > $d/native-$n.txt 2>&1
+    if [ "$prog" = cowsay ]; then SW_STRICT=1 timeout 300 target/release/pisco run out/images/cowsay -- "${@}" > $d/got-$n.txt 2>&1
+    else SW_STRICT=1 SW_EXE=/usr/bin/$prog timeout 300 target/release/pisco run out/images/cowsay -- "${@}" > $d/got-$n.txt 2>&1; fi
+    cmp -s $d/got-$n.txt $d/native-$n.txt || { echo "$prog $args: not what perl prints here (< ours, > native):"; diff $d/got-$n.txt $d/native-$n.txt | head -10; return 1; }
+  done <<'RUNS'
+cowsay|"Hello from PISCO"
+cowsay|-f tux "a penguin, lifted"
+cowsay|-e "^^" -T " U" -W 20 "a cow with other eyes and a tongue, its words wrapped at twenty columns"
+cowsay|-f dragon -b "moo"
+cowthink|"think different"
+cowsay|-l
+RUNS
+  SW_STRICT=1 TIMEOUT=300 node tools/run-chrome.mjs out/images/cowsay 2>&1 | grep -v -e '^gpu: ' -e '^image: ' > $d/got-chrome.txt
+  local trim="awk 1 | sed -e :a -e '/^\\n*\$/{\$d;N;ba' -e '}'"
+  diff <(eval "$trim" < $d/native-1.txt) <(eval "$trim" < $d/got-chrome.txt) > $d/chrome.diff || { echo "in Chrome it prints something else (< native, > Chrome):"; head -8 $d/chrome.diff; return 1; }
+  echo "cowsay: $n runs (cows, eyes, wrapping, cowthink, the list of cows) print what perl prints here; the first in Chrome too"
+}
 fastfetch() {
   local d=out/fastfetch want=recipes/fastfetch/traces/pipe.txt
   SPLIT=16 tools/build-title.sh $d/fastfetch $d/wasm > out/fastfetch.build.log 2>&1 || { echo "build failed (out/fastfetch.build.log)"; return 1; }
@@ -249,6 +276,7 @@ for s in ${*:-build layout node bench win32 linux ffp sm gdi}; do case $s in
   bench)  step bench bench ;;
   win32)  LINES_SHOWN=4 step win32 win32 ;;
   linux)  if [ -x "$MUSL/bin/musl-gcc" ]; then LINES_SHOWN=2 step linux linux; else echo "skip  linux: no musl in MUSL=$MUSL (tools/setup-toolchain.sh musl)"; fi ;;
+  cowsay) if [ -x out/cowsay/root/usr/bin/perl ]; then step cowsay cowsay; else echo "skip  cowsay: out/cowsay/root is not built (tools/build-cowsay.sh)"; fi ;;
   neofetch) if [ -x out/neofetch/root/bin/bash ]; then step neofetch neofetch; else echo "skip  neofetch: out/neofetch/root is not built (tools/build-neofetch.sh)"; fi ;;
   fastfetch) if [ -x out/fastfetch/fastfetch ]; then step fastfetch fastfetch; else echo "skip  fastfetch: out/fastfetch/fastfetch is not built (tools/build-fastfetch.sh)"; fi ;;
   chrome) LINES_SHOWN=6 step chrome chrome ;;

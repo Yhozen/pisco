@@ -80,7 +80,8 @@ A Linux title's config says `"os": "linux"`, and when its files hold more than o
 `recipes/neofetch`) it has `"programs": { "/bin/bash": "sha256:...", "/bin/busybox": "sha256:..." }`: each program
 is lifted into a module of its own, a layer of the manifest after the first module (role `program`), and `execve`
 starts the one its path names ([neofetch.md](neofetch.md)). Its `run.exe` may be a script: the first process starts
-in the first module and runs it through its `#!`. A recipe whose folder is the title's root says `app = "/"`.
+in the first module and runs it through its `#!`. A recipe whose folder is the title's root says `app = "/"`. Arguments given when an image is run (`pisco run <image> -- ...`, the
+page's `&args=`) replace the config's `run.args`, as a container's command replaces its image's.
 
 The CPU features are built into the module (`rt_cpu_features`, by `tools/recipe-gen.py`); the registry is not:
 the host hands the config's values to the runtime at start (`SW_REGISTRY`, one value a line:

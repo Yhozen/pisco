@@ -545,6 +545,18 @@ joins them (the process table, the pipes) is the host's, in one SharedArrayBuffe
   pointers: bash's lifted code shrank by 40 %, and the parser is a loop again.
 - **The page became a terminal**: neofetch draws its logo, then moves the cursor up and writes beside it.
 
+### 3.26 Faster machines, and cowsay (2026-11-27)
+
+Asked what slowed the work most, the answer from the sessions before was compiling lifted C, not the tests. The
+work moved to boat.dev sandboxes ([dev-machines.md](dev-machines.md)): a snapshot with the toolchains, the builds and
+pisco's caches (`tools/boat.sh bake`, ten minutes), sandboxes from it with this working tree in 15 seconds, and the
+test steps on seven of them at once (75 seconds for all, where one machine took a quarter of an hour).
+
+The sandboxes are Ubuntu with gcc 13. The same programs built there showed what one compiler had hidden: a jump
+table's bound far from its jump (busybox's `rpm`), and gcc 13's `notrack` jumps, which the lifter did not take for
+switches, so perl's parser became a recursion. cowsay, on perl built from its source, was the task that measured
+it all: 14 minutes from the first command on a fresh sandbox to six runs equal to native perl in Node and Chrome.
+
 ## 4. Roadblocks
 
 ### Resolved

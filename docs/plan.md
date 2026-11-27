@@ -28,7 +28,7 @@ packages  Doom as a console title, XCL's   Stockfish, SimpleTriangleDesktop,    
 | Xbox Series | `base/xbox-series:1` | `rt/gdk/`, `rt/xbox-series/` | Doom (D3D12.X on WebGPU, XAudio2, GameInput, saves), XCL's console test title 50/50 | the rungs in [status.md](status.md#xbox-series) | Minecraft (Bedrock), the Xbox Series build |
 | Windows x64 | `base/windows-x64:1` | `rt/gdk/`, `rt/windows-x64/` | Stockfish 19, Microsoft's SimpleTriangleDesktop and SimplePBR | more desktop D3D12 titles | desktop D3D12 titles |
 | Windows x86 | `base/windows-x86:1` | `rt/windows-x86/` | Narbacular Drop, playable; Tag: The Power of Paint into its second level (Direct3D 9 shaders as WGSL, D3DX's effects, FMOD Ex) | Tag played by hand on a real GPU (T6's check), then its later levels | 32-bit Direct3D 9 games of the 2000s |
-| Linux x64 | `base/linux-x64:1` | `rt/linux-x64/` | fastfetch 2.71.0; neofetch 7.1.0 on bash and busybox, its processes forked and executed ([fastfetch.md](fastfetch.md), [neofetch.md](neofetch.md)) | threads, signals, a file system that can be written | statically linked command-line programs |
+| Linux x64 | `base/linux-x64:1` | `rt/linux-x64/` | fastfetch 2.71.0; neofetch 7.1.0 on bash and busybox, its processes forked and executed; cowsay on perl 5.44 ([fastfetch.md](fastfetch.md), [neofetch.md](neofetch.md), [cowsay.md](cowsay.md)) | threads, signals, a file system that can be written | statically linked command-line programs |
 
 A new runtime is a new folder and a new base; a new title of an existing runtime is a recipe.
 
@@ -63,3 +63,4 @@ A new runtime is a new folder and a new base; a new title of an existing runtime
 | T6 | Tag playable: the docs and how to play it are done; playing it by hand on a real GPU is still to do | under way |
 | L0 to L4 | a fourth runtime, Linux x64: the core's neutral parts apart, the lifter reads an ELF, a C library starts and finds a machine, fastfetch in Node and in the page | done ([fastfetch.md](fastfetch.md#progress)) |
 | N0 to N3 | Linux processes (fork, execve, wait4, pipes), images of several programs, neofetch on bash and busybox in Node and in the page | done ([neofetch.md](neofetch.md#progress)) |
+| D0 | development on boat.dev sandboxes: a snapshot with everything built, the tests on several sandboxes at once; cowsay ported that way | done ([dev-machines.md](dev-machines.md)) |
