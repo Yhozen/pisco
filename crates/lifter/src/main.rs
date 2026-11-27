@@ -2414,7 +2414,7 @@ fn main() {
 fn lift() {
     let args: Vec<String> = std::env::args().collect();
     if args.len() < 3 {
-        eprintln!("usage: lifter <image.exe> <out.c> [--split N] [--base hex] [--entry hex]... [--builtin name.dll]... [--dll-dir <folder>=<guest folder>]... [--load <file>=<name>]... [--trace-pc] [--machine] [--program <elf>]...");
+        eprintln!("usage: lifter <image.exe> <out.c> [--split N] [--base hex] [--entry hex]... [--builtin name.dll]... [--dll-dir <folder>=<guest folder>]... [--load <file>=<name>]... [--trace-pc] [--machine] [--program <elf>]... [--user <name>]");
         std::process::exit(2);
     }
     let exe = std::path::Path::new(&args[1]);
@@ -2471,6 +2471,13 @@ fn lift() {
     if eager == 0 { eager = mods.len(); }
     // --machine, or an image in the upper half of the address space: the image is a machine's (a kernel,
     // rt/microvm-x64), and its addresses are the machine's virtual ones
+    // --user <name>: a program a machine's kernel runs, lifted on its own (its names prefixed with <name>), so that
+    // programs at the same addresses can be in one module; the machine finds which one runs by its bytes
+    let user = args.iter().position(|a| a == "--user").map(|i| args.get(i + 1).expect("--user <name>").clone());
+    if user.is_some() {
+        if mods.len() != 1 || !mods[0].1.elf { panic!("--user takes one ELF program"); }
+        mods[0].1.machine = true;
+    }
     let machine = mods.iter().any(|(_, m)| m.machine);
     if machine {
         // the kernel first (its tables, its symbols), then its programs; none may overlap another
@@ -2660,13 +2667,43 @@ fn lift() {
         writeln!(out, "const u64 rt_resume_at[]={{{}0}};", sites.keys().map(|a| format!("0x{a:x}ull,")).collect::<String>()).unwrap();
         writeln!(out, "const unsigned rt_resume_fn[]={{{}0}};", sites.values().map(|k| format!("{k},")).collect::<String>()).unwrap();
     }
+    if let Some(p) = &user {
+        // a machine's program: its tables, under its name, and how the machine knows it is the one in memory: the
+        // FNV-1a hash of each page of its code, as the file has it (only the code's bytes: rt/microvm-x64/run.c)
+        let (lo, hi) = (img.text.iter().map(|t| t.0).min().unwrap_or(0), img.text.iter().map(|t| t.1).max().unwrap_or(0));
+        let mut hashes = Vec::new();
+        let mut page = lo & !0xFFF;
+        while page < hi {
+            let mut h: u64 = 0xcbf29ce484222325;
+            for a in page.max(lo)..(page + 4096).min(hi) { h = (h ^ u64::from(img.u8(a).unwrap_or(0))).wrapping_mul(0x100000001b3); }
+            hashes.push(format!("0x{h:x}ull")); page += 4096;
+        }
+        writeln!(out, "static const u64 page_hashes[]={{{}}};", hashes.join(",")).unwrap();
+        writeln!(out, "const ProgramDef {p}_program={{\"{p}\",0x{:x}ull,0x{lo:x}ull,0x{hi:x}ull,page_hashes,{},fn_count,fn_addrs,fn_ptrs,rt_resume_count,rt_resume_at,rt_resume_fn}};", img.entry, hashes.len()).unwrap();
+        let names = ["fn_count", "fn_addrs", "fn_ptrs", "rt_resume_count", "rt_resume_at", "rt_resume_fn"];
+        let rename = |s: &str| -> String {
+            let b = s.as_bytes(); let mut o = String::with_capacity(s.len() + s.len() / 8); let mut k = 0;
+            while k < b.len() {
+                let word = k == 0 || !(b[k - 1].is_ascii_alphanumeric() || b[k - 1] == b'_');
+                if word && b[k..].starts_with(b"f_") && b.get(k + 2).is_some_and(|c| c.is_ascii_hexdigit()) { o.push_str(&format!("f_{p}_")); k += 2; continue; }
+                if word { if let Some(n) = names.iter().find(|n| b[k..].starts_with(n.as_bytes()) && !b.get(k + n.len()).is_some_and(|c| c.is_ascii_alphanumeric() || *c == b'_')) { o.push_str(&format!("{p}_{n}")); k += n.len(); continue; } }
+                o.push(b[k] as char); k += 1;
+            }
+            o
+        };
+        out = rename(&out);
+        for b in bodies.iter_mut().skip(1) { *b = rename(b); }
+    }
     // the modules: each image's bytes stay in the user's file; the runtime copies them in and applies relocations
-    if img.machine {
+    if user.is_some() {
+        // (a machine's program has none of them: its kernel loads it)
+    } else if img.machine {
         // where the machine enters the kernel and which top page table it starts on (rt/microvm-x64/run.c)
         let named = |n: &str| img.named.get(n).map(|v| v.0).unwrap_or(0);
         let entry = if named("common_startup_64") != 0 { named("common_startup_64") } else { img.entry };
         writeln!(out, "const u64 rt_machine_entry=0x{entry:x}ull;const u64 rt_machine_pgt=0x{:x}ull;", named("early_top_pgt")).unwrap();
     }
+    if user.is_none() {
     writeln!(out, "#include \"modules.h\"").unwrap();
     let mut defs = Vec::new();
     let mut import_slots = Vec::new();
@@ -2695,6 +2732,7 @@ fn lift() {
     writeln!(out, "const u64 import_slots[]={{{}0}};", import_slots.iter().map(|(s, _, _)| format!("0x{s:x}ull,")).collect::<String>()).unwrap();
     writeln!(out, "const u64 import_targets[]={{{}0}};", import_slots.iter().map(|(_, _, t)| format!("0x{t:x}ull,")).collect::<String>()).unwrap();
     writeln!(out, "const char*const import_names[]={{{}0}};", import_slots.iter().map(|(_, n, _)| format!("\"{n}\",")).collect::<String>()).unwrap();
+    }
     // a part is rewritten only when it changed, so an unchanged part is not compiled again
     let write = |path: &str, text: &str| {
         if std::fs::read(path).map(|old| old != text.as_bytes()).unwrap_or(true) {

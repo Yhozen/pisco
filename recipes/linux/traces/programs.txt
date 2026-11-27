@@ -7,6 +7,13 @@ sort: apple fig pear
 sed: the kernel is a program
 ls: bin dev etc init proc root sys tmp 
 id: 0:0
+hello: hello: 2 arguments
+hello: numbers: -7 3000000000 beef 1234567890123  3.14 6.020000e+23 0.3
+hello: maths: sqrt 1.414214 sin 0.841471 pow 1.414 strtod 2.7183
+hello: sorted: fig date kiwi pear apple banana
+hello: switch: zero three six nine
+hello: thread-local: 42
+hello: longjmp: 42
 kill: the child ended with 143
 trap: USR1 handled
 trap: the subshell ended with 3

@@ -25,15 +25,6 @@ __asm__(
   "local.get 0\ncall co_stack_top\nglobal.set __stack_pointer\nlocal.get 0\ncall co_main\nend_function\n");
 u32 rt_sp_get(void); void rt_sp_set(u32);
 
-// an indirect call or jump: a function's start, or a return address in one (a program's longjmp jumps to the
-// return address of its setjmp): then what was running is abandoned and the code is entered there, in the loop
-// that runs it (the innermost level's, or the task's root)
-static int is_function(u64 pc) { unsigned lo = 0, hi = fn_count; while (lo < hi) { unsigned m = (lo + hi) / 2; if (fn_addrs[m] < pc) lo = m + 1; else hi = m; } return lo < fn_count && fn_addrs[lo] == pc; }
-void rt_call(Cpu *c, u64 t) {
-  if (is_function(t)) { rt_dispatch(c, t); return; }
-  if (co_cur->levels) { co_cur->levels->loop_pc = t; longjmp(co_cur->levels->loop, 1); }
-  co_cur->root_pc = t; longjmp(co_cur->root, 1);
-}
 // a static-call trampoline (Linux's __SCT__*), as the kernel has rewritten it: a jump to the function the call goes
 // to now (the call's return address is the caller's), or a return (no function)
 void rt_static_call(Cpu *c, u64 tramp) {
@@ -52,17 +43,60 @@ void rt_check_return(Cpu *c, u64 call, u64 next, u64 sp) {
   rt_fatal("machine: the call at 0x%llx came back with the stack at 0x%llx, not 0x%llx, from 0x%llx (a stack switch the machine does not know)", call, R[RSP], sp, vread64(R[RSP] - 8));
 }
 
+// ---- the programs the kernel runs, lifted on their own (lifter --user; their list: programs.gen.c) ----
+// Several may be at the same addresses (bash and busybox both at 0x400000): the one in memory is the one whose code
+// page at the address that runs hashes as its file's. Found again after each write of CR3 (another address space,
+// or a page table's address used again). A page of code the kernel has not mapped yet is fetched first, as the CPU
+// fetches an instruction: the kernel's page fault handler maps it.
+__attribute__((weak)) extern const ProgramDef *const rt_programs[];
+__attribute__((weak)) extern const unsigned rt_program_count;
+static const ProgramDef *prog_cur;
+void machine_programs_forget(void) { prog_cur = 0; }
+static u64 code_hash(Cpu *c, u64 pc, u64 lo, u64 hi) {
+  u64 page = pc & ~0xFFFull, from = page > lo ? page : lo, to = page + 4096 < hi ? page + 4096 : hi; u8 b[4096];
+  u64 pa; int w;
+  if (mmu_walk(page, 0, 1, &pa, &w) >= 0) mmu_read(c, mmu_u, pc, 1, pc, b);   // (a fetch: the kernel maps the page)
+  if (mmu_walk(page, 0, 1, &pa, &w) >= 0) return 0;
+  phys_read(pa + (from - page), b, (unsigned)(to - from));
+  u64 h = 0xcbf29ce484222325ull; for (u64 k = 0; k < to - from; k++) h = (h ^ b[k]) * 0x100000001b3ull; return h;
+}
+static const ProgramDef *program_at(Cpu *c, u64 pc) {
+  if (!&rt_program_count || !rt_program_count) return 0;
+  if (prog_cur && pc >= prog_cur->lo && pc < prog_cur->hi) return prog_cur;
+  prog_cur = 0;
+  for (unsigned i = 0; i < rt_program_count; i++) {
+    const ProgramDef *p = rt_programs[i];
+    if (pc < p->lo || pc >= p->hi) continue;
+    if (code_hash(c, pc, p->lo, p->hi) == p->page_hashes[((pc & ~0xFFFull) - (p->lo & ~0xFFFull)) >> 12]) { prog_cur = p; break; }
+  }
+  if (mc_trace && prog_cur) rt_log("machine: user code at 0x%llx is %s's", pc, prog_cur->name);
+  return prog_cur;
+}
+
 // ---- entering lifted code by address: a function's start, or a return address in one (c->resume) ----
 extern const unsigned rt_resume_count; extern const u64 rt_resume_at[]; extern const unsigned rt_resume_fn[];
+typedef struct { unsigned fn_count; const u64 *fn_addrs; void (*const *fn_ptrs)(Cpu *); unsigned resume_count; const u64 *resume_at; const unsigned *resume_fn; } Code;
+static Code code_of(Cpu *c, u64 pc) {
+  const ProgramDef *p = (pc >> 47) ? 0 : program_at(c, pc);
+  if (p) return (Code){ p->fn_count, p->fn_addrs, p->fn_ptrs, p->resume_count, p->resume_at, p->resume_fn };
+  return (Code){ fn_count, fn_addrs, fn_ptrs, rt_resume_count, rt_resume_at, rt_resume_fn };   // the kernel's (and programs lifted with it)
+}
+static int find(const u64 *v, unsigned n, u64 pc) { unsigned lo = 0, hi = n; while (lo < hi) { unsigned m = (lo + hi) / 2; if (v[m] < pc) lo = m + 1; else hi = m; } return lo < n && v[lo] == pc ? (int)lo : -1; }
 static void enter(Cpu *c, u64 pc) {
-  unsigned lo = 0, hi = fn_count;
-  while (lo < hi) { unsigned m = (lo + hi) / 2; if (fn_addrs[m] < pc) lo = m + 1; else hi = m; }
-  if (lo < fn_count && fn_addrs[lo] == pc) { fn_ptrs[lo](c); return; }
-  lo = 0; hi = rt_resume_count;
-  while (lo < hi) { unsigned m = (lo + hi) / 2; if (rt_resume_at[m] < pc) lo = m + 1; else hi = m; }
-  if (lo < rt_resume_count && rt_resume_at[lo] == pc) { c->resume = pc; fn_ptrs[rt_resume_fn[lo]](c); return; }
+  Code k = code_of(c, pc); int i;
+  if ((i = find(k.fn_addrs, k.fn_count, pc)) >= 0) { k.fn_ptrs[i](c); return; }
+  if ((i = find(k.resume_at, k.resume_count, pc)) >= 0) { c->resume = pc; k.fn_ptrs[k.resume_fn[i]](c); return; }
   uart_flush();
   rt_fatal("machine: the CPU goes on at 0x%llx, which is no lifted function and no return address", pc);
+}
+// an indirect call or jump: a function's start, or a return address in one (a program's longjmp jumps to the
+// return address of its setjmp): then what was running is abandoned and the code is entered there, in the loop
+// that runs it (the innermost level's, or the task's root)
+void rt_call(Cpu *c, u64 t) {
+  Code k = code_of(c, t); int i;
+  if ((i = find(k.fn_addrs, k.fn_count, t)) >= 0) { k.fn_ptrs[i](c); return; }
+  if (co_cur->levels) { co_cur->levels->loop_pc = t; longjmp(co_cur->levels->loop, 1); }
+  co_cur->root_pc = t; longjmp(co_cur->root, 1);
 }
 // a level's loop: its handler, then wherever it goes (a function that returns: on at the address it popped)
 void run_level(Cpu *c, Level *l, u64 pc) {

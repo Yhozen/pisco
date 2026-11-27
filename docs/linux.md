@@ -85,8 +85,8 @@ tools/build-linux.sh                                      # out/linux: vmlinux, 
 tools/oracle-qemu/oracle.sh run linux                     # QEMU: the boot log, then what /init's programs print
 tools/oracle-qemu/oracle.sh programs linux                # only the programs' lines of that run
 tools/census.sh out/linux/vmlinux                         # what the lifter does not lift yet (it knows a kernel)
-PROGRAMS=out/linux/build/busybox-1.36.1/busybox_unstripped SPLIT=16 \
-  tools/build-title.sh out/linux/vmlinux out/linux/wasm   # Linux and busybox lifted into one module (minutes the first time)
+PROGRAMS="out/linux/root/busybox out/linux/root/hello" SPLIT=16 \
+  tools/build-title.sh out/linux/vmlinux out/linux/wasm   # Linux and its programs lifted into one module (minutes the first time)
 (cd out/linux && SW_INITRD=initramfs.cpio SW_CMDLINE="$(cat ../../recipes/linux/cmdline)" node ../../web/run-node.mjs wasm/title.wasm vmlinux)
 fixtures/microvm-hello/build.sh out/microvm-hello         # the machine's test kernel
 tools/build-title.sh out/microvm-hello/hello out/microvm-hello/wasm      # lifted (base/microvm-x64, from OS=microvm)
@@ -214,10 +214,28 @@ process costs about a hundredth of what it costs there.
   busybox's `mke2fs`, writes 1,000 lines, mounts it again and reads them back (`tests/run.sh kernel`). QEMU's machine
   here has no virtio-mmio bus, so that check has no oracle; without a disk `/init` prints what it prints on QEMU.
 
+## What it took (K6): programs at the same addresses
+
+Static programs are linked at the same addresses (busybox and `fixtures/linux-hello` both from `0x400000`), so a
+module cannot tell them apart by address. Each is now lifted on its own (`lifter --user <name>`: its functions and
+tables under its name), and the machine finds which one runs by its bytes: the lifter records the hash of each page
+of a program's code, and when the CPU enters user code after a change of CR3 the machine hashes the page there and
+takes the program whose page matches. Lifted code never fetches its own instructions, so a code page the kernel
+has not mapped yet is read first, as a fetch would: the kernel's page fault handler maps it.
+
+- `/init` runs busybox and linux-hello, interleaved; its 22 lines are QEMU's (`traces/programs.txt`).
+- A machine's code is built with the x87 at its full precision (`-DGUEST_LINUX` too): musl's `printf` of a
+  `double` works in `long double`, and printed `6.019999e+23` for `6.020000e+23` without it.
+- `pisco build` records the flags each lift's objects were compiled with and compiles them again when they change:
+  they are not in the lift's key, and cached objects of the old flags beside a runtime of the new ones hung the
+  kernel at boot.
+- bash is GPL-3.0-or-later and cannot be linked into one module with the GPL-2.0-only kernel
+  ([LICENSING.md](../LICENSING.md)); that needs a module per program, next.
+
 ## Limits
 
-- Only programs lifted with the kernel run, at the addresses they were lifted at: one busybox. Two programs at
-  the same addresses (bash and busybox are both at 0x400000) need modules found by content (K7).
+- Only programs lifted with the kernel run (busybox and linux-hello). Programs under other licences than
+  GPL-2.0-compatible ones (bash) need a module of their own.
 - A signal that interrupts a program between system calls returns, after its handler, to an instruction that is
   no label: such a program stops the machine (shells and busybox wait in system calls, where it works).
 - Model-specific registers the machine does not know read as 0 where a CPU raises #GP, which some of the kernel's
@@ -239,4 +257,5 @@ process costs about a hundredth of what it costs there.
 | K3 | busybox lifted with the kernel: `/init`'s programs print `recipes/linux/traces/programs.txt`, what they print on QEMU | done |
 | K4 | a console typed into, in Node and in the page; `pisco build recipes/linux`, two builds the same | done |
 | K5 | a virtio disk: formatted, written and read again by `/init` | done |
-| K6 | a network (virtio's network device), snapshots | next |
+| K6 | programs at the same addresses, found by the hash of their code pages: busybox and linux-hello | done |
+| K7 | a module per program (bash beside the kernel), a network, snapshots | next |

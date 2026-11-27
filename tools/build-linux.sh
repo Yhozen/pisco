@@ -7,9 +7,10 @@
 #   bzImage         the same kernel as a boot loader takes it: what QEMU boots (tools/oracle-qemu)
 #   config          the configuration it was built with
 #   initramfs.cpio  /init (recipes/linux/init), busybox (tools/build-busybox.sh) and a link to it for each applet,
-#                   uncompressed, written by the kernel's own gen_init_cpio
-#   root/           the title's folder (recipes/linux): vmlinux, initramfs.cpio, and busybox, the program lifted with
-#                   the kernel
+#                   and /bin/hello (fixtures/linux-hello: a second program at busybox's addresses), uncompressed,
+#                   written by the kernel's own gen_init_cpio
+#   root/           the title's folder (recipes/linux): vmlinux, initramfs.cpio, and the programs lifted with the
+#                   kernel (busybox, hello)
 # The source is fetched once and checked by sha256. The build names no user, host or time, so two builds on one
 # machine give the same files.
 # Needs gcc, make, flex, bison, bc and libelf's headers (tools/setup-toolchain.sh kernel says which are missing),
@@ -47,11 +48,13 @@ cp "$obj/vmlinux" "$out/vmlinux"; cp "$obj/arch/x86/boot/bzImage" "$out/bzImage"
 
 # the initramfs: a list for gen_init_cpio (every file owned by root, at time 0)
 bb=$("$root/tools/build-busybox.sh" "$out")
+MUSL=${MUSL:-$HOME/tools/musl-1.2.5} "$root/fixtures/linux-hello/build.sh" "$out/build/hello" > /dev/null; hello=$out/build/hello/hello
 { echo "dir /bin 755 0 0"; for d in dev proc sys tmp etc root; do echo "dir /$d 755 0 0"; done
   echo "nod /dev/console 600 0 0 c 5 1"
   echo "file /bin/busybox $bb 755 0 0"
+  echo "file /bin/hello $hello 755 0 0"
   for a in $("$bb" --list); do echo "slink /bin/$a busybox 777 0 0"; done
   echo "file /init $root/recipes/linux/init 755 0 0"; } > "$out/initramfs.list"
 "$obj/usr/gen_init_cpio" -t 0 "$out/initramfs.list" > "$out/initramfs.cpio"
-rm -rf "$out/root"; mkdir -p "$out/root"; cp "$out/vmlinux" "$out/initramfs.cpio" "$out/root/"; cp "$bb" "$out/root/busybox"
+rm -rf "$out/root"; mkdir -p "$out/root"; cp "$out/vmlinux" "$out/initramfs.cpio" "$out/root/"; cp "$bb" "$out/root/busybox"; cp "$hello" "$out/root/hello"
 echo "$out: vmlinux ($(stat -c %s "$out/vmlinux") bytes), bzImage, initramfs.cpio ($(stat -c %s "$out/initramfs.cpio") bytes), root/"

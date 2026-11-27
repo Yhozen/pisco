@@ -318,7 +318,8 @@ fn cflags(t: &Tools, cache: &Path, opt: &str, bits: u32, os: &str) -> Vec<String
     f.push(format!("-I{}", t.root.join("rt").display()));
     f.push(format!("-DGUEST_BITS={bits}"));
     if linux { f.push("-DGUEST_LINUX=1".into()); }
-    if os == "microvm" { f.push("-DGUEST_MACHINE=1".into()); f.push("-mtail-call".into()); }   // a machine's image: memory through its MMU (rt/cpu.h)   // the x87 at its full precision (rt/cpu.h fpx), in the lifted code and the runtime alike
+    // a machine's image: memory through its MMU (rt/cpu.h); its programs are Linux programs (the x87 at full precision)
+    if os == "microvm" { f.push("-DGUEST_MACHINE=1".into()); f.push("-DGUEST_LINUX=1".into()); f.push("-mtail-call".into()); }   // the x87 at its full precision (rt/cpu.h fpx), in the lifted code and the runtime alike
     // no path of this machine in what is built: two checkouts give the same bytes
     f.push(format!("-ffile-prefix-map={}=/pisco-cache", cache.display()));
     f.push(format!("-ffile-prefix-map={}=/pisco", t.root.display()));
@@ -342,7 +343,8 @@ fn find_ci(dir: &Path, rel: &str) -> Option<PathBuf> {
     }
     Some(p)
 }
-fn lift(t: &Tools, r: &Recipe, exe: &Path, ex: &Extracted, cache: &Path, programs: &[PathBuf]) -> R<Lifted> {
+/// `user`: a machine's program (lifter --user <name>), lifted on its own under that name
+fn lift(t: &Tools, r: &Recipe, exe: &Path, ex: &Extracted, cache: &Path, user: Option<&str>) -> R<Lifted> {
     let dir = exe.parent().unwrap();
     // the images the lifter reads: the exe and every DLL beside it that is not builtin, and the DLLs the image puts in
     // C:\WINDOWS\system32 (a [[source.cab]]'s), which it may import too: the lifter looks in their folders
@@ -364,14 +366,12 @@ fn lift(t: &Tools, r: &Recipe, exe: &Path, ex: &Extracted, cache: &Path, program
         loads.extend(["--load".into(), format!("{}={rel}", host.display())]);
         images.push((rel.to_ascii_lowercase(), host));
     }
-    for (k, p) in programs.iter().enumerate() { images.push((format!("program {k}"), p.clone())); }   // (a machine's: lifted into its module)
     images.sort(); images.dedup_by(|a, b| a.0 == b.0);
     let mut key = format!("lifter {}\n", t.lifter_hash);
     for (n, p) in &images { key.push_str(&format!("image {n} {}\n", oci::sha256(&io(std::fs::read(p), p)?))); }
     let mut args: Vec<String> = vec!["--split".into(), r.split.to_string()];
     for e in &r.entries { args.extend(["--entry".into(), format!("{e:x}")]); }
-    let mut program_args: Vec<String> = Vec::new();   // not in the key as paths (they differ between machines): their bytes are
-    for p in programs { program_args.extend(["--program".into(), p.display().to_string()]); }
+    if let Some(u) = user { args.extend(["--user".into(), u.to_string()]); }
     if let Some(b) = r.base_address { args.extend(["--base".into(), format!("{b:x}")]); }
     for d in r.dll.keys() { args.extend(["--builtin".into(), d.clone()]); }
     if std::env::var_os("PISCO_TRACE_PC").is_some() { args.push("--trace-pc".into()); }   // each block notes its address (debugging a trap)
@@ -388,7 +388,7 @@ fn lift(t: &Tools, r: &Recipe, exe: &Path, ex: &Extracted, cache: &Path, program
         say(&format!("lift: cached, lift key {}: not lifted or compiled again", &key[..16]));
     } else {
         let tmp = tmp_name(&out); let _ = std::fs::remove_dir_all(&tmp); io(std::fs::create_dir_all(&tmp), &tmp)?;
-        let o = Command::new(&t.lifter).arg(exe).arg("title.c").args(&args).args(&dll_dirs).args(&loads).args(&program_args).current_dir(&tmp).output().map_err(|e| format!("lifter: {e}"))?;
+        let o = Command::new(&t.lifter).arg(exe).arg("title.c").args(&args).args(&dll_dirs).args(&loads).current_dir(&tmp).output().map_err(|e| format!("lifter: {e}"))?;
         io(std::fs::write(tmp.join("lifter.log"), [&o.stdout[..], &o.stderr[..]].concat()), &tmp)?;
         if !o.status.success() { return Err(format!("the lifter failed: see {}", tmp.join("lifter.log").display())); }
         let lifted_at = time.elapsed().as_secs_f64();
@@ -402,13 +402,25 @@ fn lift(t: &Tools, r: &Recipe, exe: &Path, ex: &Extracted, cache: &Path, program
         }
         let n = jobs.len();
         run_all(jobs)?;
+        io(std::fs::write(tmp.join("cflags"), flags.join(" ")), &tmp)?;
         io(std::fs::write(tmp.join("ok"), b""), &tmp)?;
         publish(&tmp, &out)?;
         say(&format!("lift: lifted in {lifted_at:.1} s, {n} files of C compiled in {:.1} s (lift key {})", time.elapsed().as_secs_f64() - lifted_at, &key[..16]));
     }
     let (bits, low, high, os) = env_of(&out)?;
+    // the objects were compiled with these flags: when they change (they are not in the key), compiled again
+    let flags = cflags(t, cache, &r.opt, bits, &os);
+    let had = std::fs::read_to_string(out.join("cflags")).unwrap_or_default();
+    if had != flags.join(" ") {
+        if !had.is_empty() || !out.join("cflags").exists() { say("lift: compiled with other flags than these: the lifted C compiled again"); }
+        let mut jobs = Vec::new();
+        for c in c_files(&out)? { let mut cmd = Command::new(&t.clang); cmd.args(&flags).arg("-ffreestanding").arg("-c").arg(&c).arg("-o").arg(format!("{c}.o")).current_dir(&out); jobs.push((c, cmd)); }
+        run_all(jobs)?;
+        io(std::fs::write(out.join("cflags"), flags.join(" ")), &out)?;
+    }
     let objects = c_files(&out)?.into_iter().map(|c| out.join(format!("{c}.o"))).collect();
-    Ok(Lifted { imports: lifted_imports(&out.join("title.c"))?, dir: out, bits, low, high, linux: os == "linux", os, key, objects })
+    let imports = if user.is_some() { vec![] } else { lifted_imports(&out.join("title.c"))? };   // (a machine's program has no import table)
+    Ok(Lifted { imports, dir: out, bits, low, high, linux: os == "linux", os, key, objects })
 }
 fn c_files(dir: &Path) -> R<Vec<String>> {
     let mut v: Vec<String> = io(std::fs::read_dir(dir), dir)?.filter_map(|e| e.ok()).map(|e| e.file_name().to_string_lossy().into_owned()).filter(|n| n.starts_with("title") && n.ends_with(".c")).collect();
@@ -504,10 +516,21 @@ pub fn build(root: &Path, o: &Opts) -> R<()> {
     let mut lifts: Vec<Lifted> = Vec::new(); let mut lift_of: BTreeMap<String, usize> = BTreeMap::new(); let mut by_sha: BTreeMap<String, usize> = BTreeMap::new();
     for (g, h) in &programs {
         let sha = oci::sha256(&io(std::fs::read(h), h)?);
-        // a machine's programs (its kernel's initramfs, [lifter] programs): lifted into the kernel's module
-        let with: Vec<PathBuf> = if base.os == "microvm" { r.programs.iter().map(|p| { let g = recipe::drive_path(p)?; ex.files.iter().find(|(f, _)| f.eq_ignore_ascii_case(&g)).map(|x| x.1.clone()).ok_or(format!("[lifter] programs: {p} is not among the title's files")) }).collect::<R<_>>()? } else { vec![] };
-        let k = match by_sha.get(&sha) { Some(&k) => k, None => { if programs.len() > 1 { say(&format!("program /{g}")); } lifts.push(lift(&t, &r, h, &ex, &cache, &with)?); by_sha.insert(sha, lifts.len() - 1); lifts.len() - 1 } };
+        let k = match by_sha.get(&sha) { Some(&k) => k, None => { if programs.len() > 1 { say(&format!("program /{g}")); } lifts.push(lift(&t, &r, h, &ex, &cache, None)?); by_sha.insert(sha, lifts.len() - 1); lifts.len() - 1 } };
         lift_of.insert(g.clone(), k);
+    }
+    // a machine's programs (its kernel's initramfs, [lifter] programs): each lifted on its own under its name, linked
+    // into the kernel's module with their list (programs.gen.c: rt/microvm-x64/run.c finds the one that runs)
+    let mut user_lifts: Vec<(String, Lifted)> = Vec::new();
+    if base.os == "microvm" {
+        for p in &r.programs {
+            let g = recipe::drive_path(p)?;
+            let h = ex.files.iter().find(|(f, _)| f.eq_ignore_ascii_case(&g)).map(|x| x.1.clone()).ok_or(format!("[lifter] programs: {p} is not among the title's files"))?;
+            let name: String = g.rsplit('/').next().unwrap().chars().map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '_' }).collect();
+            let name = if name.starts_with(|ch: char| ch.is_ascii_digit()) { format!("_{name}") } else { name };
+            say(&format!("program {p} ({name})"));
+            user_lifts.push((name.clone(), lift(&t, &r, &h, &ex, &cache, Some(&name))?));
+        }
     }
     let main_lift = lift_of.get(&exe_guest).copied().unwrap_or(0);
     let lifted = &lifts[main_lift];
@@ -544,7 +567,14 @@ pub fn build(root: &Path, o: &Opts) -> R<()> {
     if !o2.status.success() { return Err(format!("tools/recipe-gen.py: {}", String::from_utf8_lossy(&o2.stderr))); }
     io(std::fs::write(gen.join("recipe.gen.c"), &o2.stdout), &gen)?;
     let mut gen_items = Vec::new();
-    for f in ["imports.gen.c", "recipe.gen.c"] {
+    let mut gen_files = vec!["imports.gen.c", "recipe.gen.c"];
+    if !user_lifts.is_empty() {
+        let decl: String = user_lifts.iter().map(|(n, _)| format!("extern const ProgramDef {n}_program;\n")).collect();
+        let list: String = user_lifts.iter().map(|(n, _)| format!("&{n}_program,")).collect();
+        io(std::fs::write(gen.join("programs.gen.c"), format!("#include \"cpu.h\"\n{decl}const ProgramDef *const rt_programs[] = {{{list}}};\nconst unsigned rt_program_count = {};\n", user_lifts.len())), &gen)?;
+        gen_files.push("programs.gen.c");
+    }
+    for f in gen_files {
         let c = io(std::fs::read(gen.join(f)), &gen)?;
         // the file is compiled where it is kept: its name in the cache does not depend on this build's folder
         let kept = cache.join("gen").join(format!("{}.c", oci::sha256(&c)));
@@ -567,7 +597,7 @@ pub fn build(root: &Path, o: &Opts) -> R<()> {
     }
     let mut link: Vec<String> = TARGET.iter().map(|s| s.to_string()).collect();
     link.push("-pthread".into());
-    let objects: Vec<&PathBuf> = lifted.objects.iter().chain(&rt_objs).chain(&gen_objs).collect();
+    let objects: Vec<&PathBuf> = lifted.objects.iter().chain(user_lifts.iter().flat_map(|(_, l)| l.objects.iter())).chain(&rt_objs).chain(&gen_objs).collect();
     let tail = ["-mllvm".to_string(), "-wasm-enable-sjlj".into(), "-lsetjmp".into(),
         format!("-Wl,--import-memory,--shared-memory,--initial-memory=67108864,--max-memory=4294967296,--export=wasi_thread_start,--export=rt_last_pc,{layout_flags}"), "-Wl,--export=__heap_base".into()];
     let mut key = format!("link 2 (as title.wasm)\nclang {}\nflags {} {}\n", t.clang_version, link.join(" "), tail.join(" "));
@@ -631,7 +661,8 @@ pub fn build(root: &Path, o: &Opts) -> R<()> {
         "imports": lifted.imports,
         "programs": if program_map.is_empty() { serde_json::Value::Null } else { json!(program_map) },
         "source": { "sha256": sha, "extract": r.source.extract, "added": ex.added },
-        "build": { "lift": lifted.key, "lifter": t.lifter_hash, "clang": t.clang_version, "opt": r.opt, "runtime_opt": base.opt },
+        "build": { "lift": lifted.key, "lifter": t.lifter_hash, "clang": t.clang_version, "opt": r.opt, "runtime_opt": base.opt,
+            "programs": if user_lifts.is_empty() { serde_json::Value::Null } else { json!(user_lifts.iter().map(|(n, l)| (n.clone(), l.key.clone())).collect::<BTreeMap<_, _>>()) } },
     });
     let cfg = lay.put_json(oci::CONFIG, &config, &[])?;
     let mut descs: Vec<_> = layers.iter().map(|b| b.descriptor()).collect();

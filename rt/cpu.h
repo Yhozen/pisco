@@ -185,6 +185,13 @@ void rt_out(struct Cpu *c, u16 port, unsigned size, u32 v);
 void rt_switch(struct Cpu *c, u64 rsp, u64 next);
 void rt_check_return(struct Cpu *c, u64 call, u64 next, u64 sp);
 void rt_static_call(struct Cpu *c, u64 tramp);
+// a program a machine's kernel runs, lifted on its own (lifter --user): its functions, its return addresses, and
+// how the machine knows it is the one in memory (the hash of each page of its code, the code's bytes only)
+typedef struct ProgramDef {
+  const char *name; u64 entry, lo, hi; const u64 *page_hashes; unsigned pages;
+  unsigned fn_count; const u64 *fn_addrs; void (*const *fn_ptrs)(struct Cpu *);
+  unsigned resume_count; const u64 *resume_at; const unsigned *resume_fn;
+} ProgramDef;
 #endif
 
 static inline u8 parity(u64 v) { return !__builtin_parity((u8)v); }

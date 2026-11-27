@@ -272,7 +272,9 @@ reasoning and the measurements: [research/kernel-as-a-title.md](research/kernel-
   `recipes/linux/traces/console.txt`.
 - **K5, done**: virtio's block device (`rt/microvm-x64/virtio.c`, `SW_DISK`): `/init` formats the disk, writes it
   and reads it again.
-- **Next**: a network, snapshots, programs found by content (bash beside busybox).
+- **K6, done**: programs at the same addresses, each lifted on its own (`lifter --user`) and found by the hash of
+  the code page that runs: busybox and linux-hello in one `/init`, as on QEMU.
+- **Next**: a module per program (so bash, GPL-3.0, can run beside the GPL-2.0 kernel), a network, snapshots.
 
 ## Known limits
 

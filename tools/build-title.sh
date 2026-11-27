@@ -17,9 +17,7 @@ W=${WASI_SDK:-$HOME/tools/wasi-sdk-34.0-x86_64-linux}/bin
 JOBS=${JOBS:-$(nproc)}
 TARGET="--target=wasm32-wasip1-threads -matomics -mbulk-memory -msimd128 -mnontrapping-fptoint -msign-ext"
 # DLL_DIR=<folder>: the DLLs the title imports from its system folder (an image's C:\WINDOWS\system32), lifted with it
-# PROGRAMS="<elf>...": a machine's programs (a kernel's initramfs), lifted into its module (lifter --program)
-progs=(); for p in ${PROGRAMS:-}; do progs+=(--program "$p"); done
-"$root/target/release/lifter" "$exe" "$out/title.c" --split "${SPLIT:-8}" ${TRACE_PC:+--trace-pc} "${progs[@]}" ${DLL_DIR:+--dll-dir "$DLL_DIR=c:/WINDOWS/system32"} $([ -n "${RECIPE:-}" ] && python3 "$root/tools/recipe-gen.py" --lifter-options "$RECIPE")
+"$root/target/release/lifter" "$exe" "$out/title.c" --split "${SPLIT:-8}" ${TRACE_PC:+--trace-pc} ${DLL_DIR:+--dll-dir "$DLL_DIR=c:/WINDOWS/system32"} $([ -n "${RECIPE:-}" ] && python3 "$root/tools/recipe-gen.py" --lifter-options "$RECIPE")
 GUEST_BITS=64; IMAGE_LOW=0; IMAGE_HIGH=0; FIXED_BASE=0; OS=windows
 [ -f "$out/title.env" ] && . "$out/title.env"
 [ -z "${PROFILE:-}" ] || { echo "build-title.sh: PROFILE is gone; BASE=windows-x86, windows-x64, xbox-series or linux-x64" >&2; exit 2; }
@@ -33,7 +31,8 @@ python3 "$root/tools/recipe-gen.py" ${RECIPE:+"$RECIPE"} > "$out/recipe.gen.c"
 CF="$TARGET -mllvm -wasm-enable-sjlj ${OPT:--O2} -fno-strict-aliasing -I$root/rt -Wno-everything -DGUEST_BITS=$GUEST_BITS"
 [ "$OS" = linux ] && CF="$CF -DGUEST_LINUX=1"   # the x87 at its full precision (rt/cpu.h fpx), in the lifted code and the runtime alike
 # a machine's image (rt/microvm-x64): memory through its MMU (rt/cpu.h), jumps between functions as tail calls
-[ "$OS" = microvm ] && CF="$CF -DGUEST_MACHINE=1 -mtail-call"
+# (and its programs are Linux programs: the x87 at its full precision, as a Linux title's)
+[ "$OS" = microvm ] && CF="$CF -DGUEST_MACHINE=1 -DGUEST_LINUX=1 -mtail-call"
 # The memory layout. By default the runtime's stack, data and heap come first and the images sit above them
 # (the lifter moves them there). An image that has to load low (a 32-bit title's exe at 0x400000, often with no
 # relocations) gets a gap instead: the runtime's stack below it, the runtime's data and heap above it.
@@ -44,8 +43,18 @@ if [ "$GUEST_BITS" = 32 ] || { [ "$OS" = linux ] && [ $((IMAGE_LOW)) -lt $((0x10
   stack=$(( IMAGE_LOW < 0x800000 ? IMAGE_LOW : 0x800000 )); stack=$(( stack & ~0xFFFF ))
   LAYOUT="--stack-first,-z,stack-size=$stack,--global-base=$(( (IMAGE_HIGH + 0xFFFFF) & ~0xFFFFF ))"
 fi
+# PROGRAMS="<elf>...": a machine's programs (its kernel's initramfs), each lifted on its own under its name (lifter
+# --user; they may share addresses), in <out>/prog-<name>/, and listed in programs.gen.c for rt/microvm-x64/run.c
+progs=""; list=""; decl=""
+for p in ${PROGRAMS:-}; do
+  n=$(basename "$p" | tr -c 'a-zA-Z0-9_\n' '_' | sed 's/^\([0-9]\)/_\1/'); mkdir -p "$out/prog-$n"
+  "$root/target/release/lifter" "$p" "$out/prog-$n/title.c" --split "${SPLIT:-8}" --user "$n" > "$out/prog-$n/lifter.log" 2>&1 || { echo "build-title.sh: the lifter failed on $p ($out/prog-$n/lifter.log)" >&2; exit 1; }
+  progs="$progs $out/prog-$n"; decl="$decl extern const ProgramDef ${n}_program;"; list="$list &${n}_program,"
+done
+[ -z "$progs" ] || printf '#include "cpu.h"\n%s\nconst ProgramDef *const rt_programs[] = {%s};\nconst unsigned rt_program_count = %d;\n' "$decl" "$list" "$(echo $progs | wc -w)" > "$out/programs.gen.c"
+[ -n "$progs" ] || rm -f "$out/programs.gen.c" "$out/programs.gen.o"
 # lifted code: freestanding, no libc
-for f in "$out"/title*.c; do [ "$f.o" -nt "$f" ] && [ "$f.o" -nt "$root/rt/cpu.h" ] || echo "$f"; done | xargs -r -P "$JOBS" -I{} sh -c '"$0"/clang $1 -ffreestanding -c "{}" -o "{}.o"' "$W" "$CF"
+for f in "$out"/title*.c $(for d in $progs; do ls "$d"/title*.c; done); do [ "$f.o" -nt "$f" ] && [ "$f.o" -nt "$root/rt/cpu.h" ] || echo "$f"; done | xargs -r -P "$JOBS" -I{} sh -c '"$0"/clang $1 -ffreestanding -c "{}" -o "{}.o"' "$W" "$CF"
 # XMA2 / Opus decoding: FFmpeg's decoders when tools/build-ffmpeg-audio.sh has built them (else silent voices)
 FF="$root/out/ffmpeg"; AUDIO_LIBS=""
 if [ -f "$FF/lib/libavcodec.a" ]; then AUDIO_LIBS="$FF/lib/libavcodec.a $FF/lib/libswresample.a $FF/lib/libavutil.a -lm"; fi
@@ -55,7 +64,8 @@ for f in $RT_FILES; do b=$(echo "${f#$root/rt/}" | tr / _ | sed "s/\.c$//"); X="
   "$W/clang" $CF $X -c "$f" -o "$out/rt_$b.o" & done
 "$W/clang" $CF -c "$out/imports.gen.c" -o "$out/imports.gen.o"
 "$W/clang" $CF -c "$out/recipe.gen.c" -o "$out/recipe.gen.o"
+[ ! -f "$out/programs.gen.c" ] || "$W/clang" $CF -c "$out/programs.gen.c" -o "$out/programs.gen.o"
 wait
-"$W/clang" $TARGET -pthread "$out"/title*.c.o "$out"/rt_*.o "$out/imports.gen.o" "$out/recipe.gen.o" $AUDIO_LIBS -o "$out/title.wasm" -mllvm -wasm-enable-sjlj -lsetjmp \
+"$W/clang" $TARGET -pthread "$out"/title*.c.o $(for d in $progs; do ls "$d"/title*.c.o; done) $([ -f "$out/programs.gen.o" ] && echo "$out/programs.gen.o") "$out"/rt_*.o "$out/imports.gen.o" "$out/recipe.gen.o" $AUDIO_LIBS -o "$out/title.wasm" -mllvm -wasm-enable-sjlj -lsetjmp \
   -Wl,--import-memory,--shared-memory,--initial-memory=67108864,--max-memory=4294967296,--export=wasi_thread_start,--export=rt_last_pc,$LAYOUT \
   -Wl,--export=__heap_base

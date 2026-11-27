@@ -157,7 +157,7 @@ void rt_wcr(Cpu *c, unsigned n, u64 v) {
   switch (n) {
   case 0: if (v != mc.cr0) mmu_flush(); mc.cr0 = v | 0x80000001ull; break;   // (paging and protection stay on)
   case 2: mc.cr2 = v; break;
-  case 3: mc.cr3 = v; mmu_flush(); break;
+  case 3: mc.cr3 = v; mmu_flush(); machine_programs_forget(); break;
   case 4: if (v != mc.cr4) mmu_flush(); mc.cr4 = v | 0x20; break;
   case 8: apic_write(0x80, (u32)(v & 15) << 4); break;
   default: rt_fatal("machine: a write of CR%u", n);

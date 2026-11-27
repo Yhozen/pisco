@@ -18,6 +18,8 @@ echo "sort: $(printf 'pear\napple\nfig\n' | sort | tr '\n' ' ')"
 echo "sed: $(echo 'the kernel is a title' | sed 's/title/program/')"
 echo "ls: $(ls / | tr '\n' ' ')"
 echo "id: $(id -u):$(id -g)"
+# a second program at busybox's addresses (fixtures/linux-hello, at 0x400000 too): what its C library prints
+/bin/hello --pure one 2>/dev/null | sed -n '1,7p' | sed 's/^/hello: /'
 
 # signals: a child killed, and a handler run. (The shell's own "Terminated" depends on when it looks: not shown.)
 ( sleep 1000 & p=$!; kill -TERM $p; wait $p; echo "kill: the child ended with $?" ) 2>/dev/null
