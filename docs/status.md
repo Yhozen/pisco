@@ -10,7 +10,7 @@ titles, its own next steps and its own goal:
 | [Windows x86](#windows-x86) | Narbacular Drop, playable; Tag: The Power of Paint into its second level | Tag played by hand on a real GPU, then its later levels | 32-bit Direct3D 9 games of the 2000s |
 | [Linux x64](#linux-x64) | fastfetch 2.71.0; neofetch 7.1.0 (bash, busybox); cowsay 3.8.4 (perl) | threads, signals, writes | statically linked command-line programs |
 | [PS5](ps5.md) | the raymarching tech demo (CPU-drawn, AVX2): its three scenes, pad and music in the browser | more system functions, a GPU (AGC) title | PS5 homebrew |
-| [Microvm x64](#microvm-x64) | Linux 6.18 lifted, booted to `/init` in Node (0.9 s); our own test kernel, equal to QEMU | busybox lifted with it: `/init`'s programs (K3) | Linux itself, lifted, and its programs |
+| [Microvm x64](#microvm-x64) | Linux 6.18 and busybox lifted: `/init`'s programs print what they print on QEMU, in Node (2.5 s); our own test kernel | a console typed into; `pisco build` (K4) | Linux itself, lifted, and its programs |
 
 ## Shared: the recompiler, the core runtime, the packages
 
@@ -264,7 +264,10 @@ reasoning and the measurements: [research/kernel-as-a-title.md](research/kernel-
   0.9 s, the same on every run (`tests/run.sh kernel`, `recipes/linux/traces/boot.txt`). It took the kernel's
   runtime constants read from memory, its static-call trampolines decoded as it rewrites them, labels where its
   `int3` self-test returns, the boot protocol, an MP table, the IOAPIC and a CMOS clock.
-- **Next, K3**: busybox lifted with the kernel, so that `/init` runs.
+- **K3, done**: busybox lifted into the kernel's module (`lifter --program`): `/init`'s programs (pipes, `fork`,
+  `exec`, a file written and hashed, signals) print what they print on QEMU, in 2.5 s from Node's start; ten
+  programs executed in 18 ms (`tests/run.sh kernel`).
+- **Next, K4**: the serial port's input, so a shell can be typed into, in Node and in the page; `pisco build`.
 
 ## Known limits
 

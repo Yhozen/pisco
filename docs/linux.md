@@ -6,11 +6,12 @@ x86-64 machine (`rt/microvm-x64`, `base/microvm-x64`). The Linux x64 runtime ([f
 kernel one system call at a time; here `fork`, signals, pipes and files are the kernel's own work. Why this route,
 what was measured before taking it and how the machine is designed: [research/kernel-as-a-title.md](research/kernel-as-a-title.md).
 
-**So far (K2) Linux boots lifted, to its first program.** In Node, in 0.9 s, the kernel prints its boot log and
-`Run /init as init process`, the same on every run; then it stops, because `/init`'s program, busybox, is not
-lifted yet (K3). QEMU boots the same kernel as the reference: its programs print the 15 lines the lifted kernel
-will have to print. The machine was first checked on `fixtures/microvm-hello`, a kernel of about 300 lines that
-does what Linux asks of it, and prints what QEMU prints.
+**So far (K3) Linux runs, lifted, with its programs.** The kernel and the initramfs's busybox, lifted into one
+module, boot on the machine in Node and run `/init` to its end: pipes, a shell in a shell, awk, a 4 MiB file written
+and hashed, a child killed, a signal handled, ten programs executed. They print the 15 lines they print on QEMU,
+the same on every run, in 2.5 s from the start of Node to the exit port. `fork`, `exec`, signals, pipes and files
+are the kernel's own work. The machine was first checked on `fixtures/microvm-hello`, a kernel of about 300 lines
+that does what Linux asks of it, and prints what QEMU prints.
 
 ## The files
 
@@ -65,7 +66,8 @@ tools/build-linux.sh                                      # out/linux: vmlinux, 
 tools/oracle-qemu/oracle.sh run linux                     # QEMU: the boot log, then what /init's programs print
 tools/oracle-qemu/oracle.sh programs linux                # only the programs' lines of that run
 tools/census.sh out/linux/vmlinux                         # what the lifter does not lift yet (it knows a kernel)
-tools/build-title.sh out/linux/vmlinux out/linux/wasm     # Linux lifted (a 42 MB module; six minutes the first time)
+PROGRAMS=out/linux/build/busybox-1.36.1/busybox_unstripped SPLIT=16 \
+  tools/build-title.sh out/linux/vmlinux out/linux/wasm   # Linux and busybox lifted into one module (minutes the first time)
 (cd out/linux && SW_INITRD=initramfs.cpio SW_CMDLINE="$(cat ../../recipes/linux/cmdline)" node ../../web/run-node.mjs wasm/title.wasm vmlinux)
 fixtures/microvm-hello/build.sh out/microvm-hello         # the machine's test kernel
 tools/build-title.sh out/microvm-hello/hello out/microvm-hello/wasm      # lifted (base/microvm-x64, from OS=microvm)
@@ -143,10 +145,38 @@ is correct on any CPU, and the boot showed nothing that needed more.
 `recipes/linux/traces/boot.txt` is the boot up to `/init`. It differs from QEMU's where the machines differ: the
 CPU's name and features, the TSC at 1 GHz, the MSRs the machine leaves at 0 (it says which, on its standard error).
 
+## What it took (K3)
+
+- **The programs in the kernel's module**: `lifter --program <elf>` (`PROGRAMS` for `tools/build-title.sh`) lifts
+  static programs with a machine's image, at their own addresses, which are where the kernel loads them. One
+  module, 15,310 functions; the kernel finds a program's code by address when it returns to user mode.
+- **A program's own `longjmp`**: no hook of setjmp and longjmp in a machine (the Linux runtime's are for programs
+  without a kernel); an indirect jump to a return address abandons what was running and enters there.
+- That was all: busybox's `fork`, `exec`, pipes, signals and page faults went through the kernel, on the nested
+  runs and task stacks K1 built, and printed QEMU's lines on the first run.
+
+Timed from the host, each line of the console stamped as it arrives (Node 24 on the 4-core test machine; QEMU
+11.0 with its CPU emulated in software on the same machine, the same kernel and initramfs):
+
+| | lifted, in Node | QEMU |
+|---|---|---|
+| from the start to `Run /init` | 0.83 s | 1.15 s |
+| `awk`: 100,000 iterations | 0.86 s | 0.78 s |
+| 4 MiB written to a file and hashed | 0.44 s | 0.71 s |
+| ten programs executed (`/bin/true`) | 18 ms | 16 ms |
+
+The same awk on the Linux runtime took 0.48 s, and twenty processes started there 2.1 s
+([research/wamr-unkernel-tabc.md](research/wamr-unkernel-tabc.md)): memory through the MMU costs here, and a
+process costs about a hundredth of what it costs there.
+
 ## Limits
 
-- No program runs yet: busybox is not lifted with the kernel (K3). Model-specific registers the machine does not
-  know read as 0 where a CPU raises #GP, which some of the kernel's `rdmsr_safe` callers would want.
+- Only programs lifted with the kernel run, at the addresses they were lifted at: one busybox. Two programs at
+  the same addresses (bash and busybox are both at 0x400000) need modules found by content (K7).
+- A signal that interrupts a program between system calls returns, after its handler, to an instruction that is
+  no label: such a program stops the machine (shells and busybox wait in system calls, where it works).
+- Model-specific registers the machine does not know read as 0 where a CPU raises #GP, which some of the kernel's
+  `rdmsr_safe` callers would want.
 - No input yet: the serial port only prints.
 - A store that faults between its read and its write (an add to memory whose page must be copied) reads again after
   the fault; with one CPU and no other task in between, the same.
@@ -162,5 +192,5 @@ CPU's name and features, the TSC at 1 GHz, the MSRs the machine leaves at 0 (it 
 | K0 | the kernel built from a pinned source with our configuration; the lifter reads it and counts what it does not lift; QEMU as the oracle, `/init`'s programs recorded; stacks, memory and hardware measured | done |
 | K1 | the machine (`rt/microvm-x64`) on a test kernel of our own: paging, a fault fixed up, the timer, two tasks, a ring-3 task, the serial port, equal under QEMU and PISCO, in Node and Chrome | done |
 | K2 | this kernel lifted: its boot log up to `Run /init as init process`, in Node, the same on every run | done |
-| K3 | busybox lifted: `/init`'s programs print `recipes/linux/traces/programs.txt` | next |
-| K4 | a console typed into, in Node and in the page; `pisco build recipes/linux` | |
+| K3 | busybox lifted with the kernel: `/init`'s programs print `recipes/linux/traces/programs.txt`, what they print on QEMU | done |
+| K4 | a console typed into, in Node and in the page; `pisco build recipes/linux` | next |

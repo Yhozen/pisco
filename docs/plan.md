@@ -29,7 +29,7 @@ packages  Doom as a console title, XCL's   Stockfish, SimpleTriangleDesktop,    
 | Windows x64 | `base/windows-x64:1` | `rt/gdk/`, `rt/windows-x64/` | Stockfish 19, Microsoft's SimpleTriangleDesktop and SimplePBR | Desire, a small D3D12 game on its own engine ([desire.md](desire.md)) | desktop D3D12 titles |
 | Windows x86 | `base/windows-x86:1` | `rt/windows-x86/` | Narbacular Drop, playable; Tag: The Power of Paint into its second level (Direct3D 9 shaders as WGSL, D3DX's effects, FMOD Ex) | Medal of Honor: Allied Assault's demo, an OpenGL game on id Tech 3 ([mohaa.md](mohaa.md)) | 32-bit Direct3D 9 games of the 2000s |
 | Linux x64 | `base/linux-x64:1` | `rt/linux-x64/` | fastfetch 2.71.0; neofetch 7.1.0 on bash and busybox, its processes forked and executed; cowsay on perl 5.44 ([fastfetch.md](fastfetch.md), [neofetch.md](neofetch.md), [cowsay.md](cowsay.md)) | threads, signals, a file system that can be written | statically linked command-line programs |
-| Microvm x64 | `base/microvm-x64:1` | `rt/microvm-x64/` | Linux 6.18 lifted, booted to `/init`; our own test kernel ([linux.md](linux.md)) | busybox lifted with it: `/init`'s programs | Linux itself, lifted, and its programs |
+| Microvm x64 | `base/microvm-x64:1` | `rt/microvm-x64/` | Linux 6.18 and busybox lifted: `/init`'s programs as on QEMU; our own test kernel ([linux.md](linux.md)) | a console typed into; `pisco build` | Linux itself, lifted, and its programs |
 | PS5 | `base/ps5:1` | `rt/ps5/` | the raymarching tech demo v1.4 (CPU-drawn, AVX2 and FMA): its three scenes, pad and music ([ps5.md](ps5.md)) | more system functions, a GPU (AGC) title, images by `pisco build` | PS5 homebrew |
 
 A new runtime is a new folder and a new base; a new title of an existing runtime is a recipe.
@@ -82,4 +82,5 @@ A new runtime is a new folder and a new base; a new title of an existing runtime
 | K0 | Linux itself as a title, the groundwork: the kernel built from a pinned source with our configuration, read by the lifter (`--machine`), booted on QEMU as the oracle; stacks, memory and hardware measured | done ([linux.md](linux.md#progress)) |
 | K1 | a sixth runtime, a small x86-64 machine (`rt/microvm-x64`, `base/microvm-x64`): its MMU, faults, interrupts and system calls as nested runs, the APIC's timer, a host stack per task; our own test kernel prints what QEMU prints, in Node and Chrome | done ([linux.md](linux.md#progress)) |
 | K2 | Linux 6.18 lifted on it, booted to `/init` in Node in 0.9 s, the same on every run (runtime constants, static calls, the boot protocol, the IOAPIC) | done ([linux.md](linux.md#progress)) |
-| K3 | busybox lifted with the kernel: `/init`'s programs print what they print on QEMU | next ([linux.md](linux.md#progress)) |
+| K3 | busybox lifted with the kernel: `/init`'s programs (fork, exec, pipes, signals, files) print what they print on QEMU, in 2.5 s | done ([linux.md](linux.md#progress)) |
+| K4 | a console typed into, in Node and in the page; `pisco build recipes/linux` | next ([linux.md](linux.md#progress)) |

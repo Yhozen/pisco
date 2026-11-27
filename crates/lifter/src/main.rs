@@ -2414,7 +2414,7 @@ fn main() {
 fn lift() {
     let args: Vec<String> = std::env::args().collect();
     if args.len() < 3 {
-        eprintln!("usage: lifter <image.exe> <out.c> [--split N] [--base hex] [--entry hex]... [--builtin name.dll]... [--dll-dir <folder>=<guest folder>]... [--load <file>=<name>]... [--trace-pc] [--machine]");
+        eprintln!("usage: lifter <image.exe> <out.c> [--split N] [--base hex] [--entry hex]... [--builtin name.dll]... [--dll-dir <folder>=<guest folder>]... [--load <file>=<name>]... [--trace-pc] [--machine] [--program <elf>]...");
         std::process::exit(2);
     }
     let exe = std::path::Path::new(&args[1]);
@@ -2439,6 +2439,12 @@ fn lift() {
     let mut mods: Vec<(String, Image)> = Vec::new();
     let mut eager = 0usize;   // the modules the exe's imports reach: mods[..eager]
     let mut queue = vec![(exe.file_name().unwrap().to_string_lossy().into_owned(), exe.to_path_buf())];
+    // --program <elf>: a machine's image (a kernel) with the programs it will run (static ELFs at their own addresses,
+    // as its initramfs has them): lifted into the same module, and found by address when the kernel runs them
+    for p in args.iter().enumerate().filter(|(_, a)| *a == "--program").filter_map(|(i, _)| args.get(i + 1)) {
+        let path = std::path::PathBuf::from(p);
+        queue.insert(0, (path.file_name().unwrap().to_string_lossy().into_owned(), path));
+    }
     let mut pending_loads = loads.clone(); pending_loads.reverse();
     loop {
         let Some((name, path)) = queue.pop().or_else(|| { if eager == 0 { eager = mods.len(); } pending_loads.pop() }) else { break };
@@ -2466,7 +2472,13 @@ fn lift() {
     // --machine, or an image in the upper half of the address space: the image is a machine's (a kernel,
     // rt/microvm-x64), and its addresses are the machine's virtual ones
     let machine = mods.iter().any(|(_, m)| m.machine);
-    if machine && (mods.len() != 1 || !mods[0].1.elf) { panic!("a machine's image is one ELF"); }
+    if machine {
+        // the kernel first (its tables, its symbols), then its programs; none may overlap another
+        if !mods.iter().all(|(_, m)| m.elf) { panic!("a machine's image and its programs are ELFs"); }
+        let k = mods.iter().position(|(_, m)| m.machine).unwrap(); let kernel = mods.remove(k); mods.insert(0, kernel);
+        for (i, (a, ma)) in mods.iter().enumerate() { for (b, mb) in &mods[i + 1..] {
+            if ma.base < mb.base + mb.size && mb.base < ma.base + ma.size { panic!("{b} overlaps {a} (one module holds programs at their own addresses)"); } } }
+    }
     let bits = mods[0].1.bits;
     if let Some((name, m)) = mods.iter().find(|(_, m)| m.bits != bits) {
         panic!("{name}: a {}-bit image in a {bits}-bit title (32- and 64-bit images cannot be lifted together)", m.bits);
@@ -2540,7 +2552,10 @@ fn lift() {
         img.exports.extend(m.exports.iter().cloned());
         img.ranges.extend(m.ranges.iter().cloned());
         img.relocs.extend(m.relocs.iter().copied());   // (discover32 takes relocated pointers as candidates)
+        img.seeds.extend(m.seeds.iter().copied());     // (a machine's programs: where a jump table of theirs ends)
     }
+    img.seeds.sort();
+    img.seeds.dedup();
     // function entries: the entry point, the exception table, then every call target, to a fixpoint
     let mut entries: BTreeSet<u64> = img.pdata.keys().copied().collect();
     let handlers: Vec<u64> = img.pdata.keys().filter_map(|&e| unwind_handler(&img, e)).collect();
@@ -2617,7 +2632,7 @@ fn lift() {
         total += f.insns.len();
         // a Linux title's sigsetjmp is its setjmp (no signal is ever delivered, so there is no mask to keep) and its
         // longjmp is the runtime's: it resumes in the lifted function that called setjmp (rt/linux-x64/jump.c)
-        let body = match img.jumps.get(e) {
+        let body = match if img.machine { None } else { img.jumps.get(e) } {
             Some(2) if img.jumps.values().any(|k| *k == 1) => format!("void f_{e:x}(Cpu*__restrict c){{f_{:x}(c);}}\n", img.jumps.iter().find(|(_, k)| **k == 1).unwrap().0),
             Some(3) => format!("void f_{e:x}(Cpu*__restrict c){{rt_longjmp(c);}}\n"),
             // a machine's static-call trampoline (Linux's __SCT__*): the kernel rewrites it, so it is decoded as it is now

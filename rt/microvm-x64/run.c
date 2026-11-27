@@ -25,7 +25,15 @@ __asm__(
   "local.get 0\ncall co_stack_top\nglobal.set __stack_pointer\nlocal.get 0\ncall co_main\nend_function\n");
 u32 rt_sp_get(void); void rt_sp_set(u32);
 
-void rt_call(Cpu *c, u64 t) { rt_dispatch(c, t); }
+// an indirect call or jump: a function's start, or a return address in one (a program's longjmp jumps to the
+// return address of its setjmp): then what was running is abandoned and the code is entered there, in the loop
+// that runs it (the innermost level's, or the task's root)
+static int is_function(u64 pc) { unsigned lo = 0, hi = fn_count; while (lo < hi) { unsigned m = (lo + hi) / 2; if (fn_addrs[m] < pc) lo = m + 1; else hi = m; } return lo < fn_count && fn_addrs[lo] == pc; }
+void rt_call(Cpu *c, u64 t) {
+  if (is_function(t)) { rt_dispatch(c, t); return; }
+  if (co_cur->levels) { co_cur->levels->loop_pc = t; longjmp(co_cur->levels->loop, 1); }
+  co_cur->root_pc = t; longjmp(co_cur->root, 1);
+}
 // a static-call trampoline (Linux's __SCT__*), as the kernel has rewritten it: a jump to the function the call goes
 // to now (the call's return address is the caller's), or a return (no function)
 void rt_static_call(Cpu *c, u64 tramp) {

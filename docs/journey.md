@@ -650,6 +650,16 @@ own instructions at boot, where lifted code still held the placeholder `0x012345
 unpacks its initramfs, finds the 16550, write-protects its own read-only data and prints `Run /init as init
 process`: 0.9 s in Node, the same 116 lines every run. What it runs next is busybox, which is not lifted yet.
 
+### 3.33 Linux runs its programs (2026-11-27)
+
+The last step was the smallest. busybox, lifted into the kernel's module at the addresses the kernel loads it at,
+ran `/init` to its end on its first run: its shells forked, executed, piped and caught signals through the lifted
+kernel, and printed the 15 lines they print on QEMU. Only one thing had to give way: the Linux runtime's hooks on a
+program's setjmp and longjmp, which a machine does not want, since there the kernel runs the program's own.
+
+From Node's start to the exit port takes 2.5 s, about what QEMU's own JIT takes for the same kernel on the same
+machine; ten programs executed take 18 ms, where on the Linux runtime one took about a hundred.
+
 ## 4. Roadblocks
 
 ### Resolved
