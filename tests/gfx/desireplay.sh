@@ -43,7 +43,7 @@ src, dst = zipfile.ZipFile(sys.argv[1]), zipfile.ZipFile(sys.argv[2], "w", zipfi
 for i in src.infolist():
     if not i.filename.endswith("/Textures/WallBrick.png"): dst.writestr(i, src.read(i))
 dst.close()' "$zip" "$m/missing.zip"
-grep -v '^sha256 = ' recipes/desire/title.toml | sed 's/^name = "desire"/name = "desire-missing"/' > "$m/title.toml"
+grep -v '^sha256 = ' recipes/desire/recipe.toml | sed 's/^name = "desire"/name = "desire-missing"/' > "$m/recipe.toml"
 target/release/pisco build "$m" --source "$m/missing.zip" --with REDIST="$REDIST" --out "$m/img" --cache out/pc-desire > "$m/build.log" 2>&1 || { echo "pisco build of the image without WallBrick.png failed:"; tail -3 "$m/build.log"; exit 1; }
 SW_STRICT=1 SW_CLOCK=16667 SW_EXIT_FRAMES=600 target/release/pisco run "$m/img" > "$m/run.log" 2>&1 || { echo "without WallBrick.png the run ended with exit code $?:"; grep -v 'window title' "$m/run.log" | tail -3 | cut -c1-300; exit 1; }
 grep -q '^pisco: window title: DESI:Re | Scene error (Visual Studio Output) | Esc: Quit' "$m/run.log" || { echo "without WallBrick.png the game did not show its scene error"; exit 1; }

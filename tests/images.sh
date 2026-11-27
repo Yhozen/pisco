@@ -94,7 +94,7 @@ echo "hello32 and Narbacular Drop share their base layer: $hb ($(stat -c %s $T/n
 
 # 4. the registry alone changed
 mkdir -p $T/nd-reg
-{ cat recipes/narbacular-drop/title.toml; printf "\n[registry.'HKCU\\\\Software\\\\pisco\\\\images-test']\nRebuilt = 1\n"; } > $T/nd-reg/title.toml
+{ cat recipes/narbacular-drop/recipe.toml; printf "\n[registry.'HKCU\\\\Software\\\\pisco\\\\images-test']\nRebuilt = 1\n"; } > $T/nd-reg/recipe.toml
 r=$(build nd-reg $T/nd-reg $T/nd-reg/image $T/cache-a --source "$ND_SETUP") || exit 1
 grep -q '^pisco: lift: cached' $T/nd-reg.log && grep -q '^pisco: runtime: [0-9]* sources, 0 compiled' $T/nd-reg.log && grep -q '^pisco: link: cached' $T/nd-reg.log || { echo "a registry-only change built something again:"; grep -E '^pisco: (lift|runtime|link)' $T/nd-reg.log; exit 1; }
 [ "$(blob $T/nd-reg/image module)" = "$(blob $T/nd-a module)" ] || { echo "a registry-only change made another module"; exit 1; }

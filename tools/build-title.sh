@@ -10,7 +10,7 @@
 # PS5 executable (OS=ps5), microvm-x64 for a machine's image such as a kernel (OS=microvm),
 # windows-x86 for a 32-bit title, windows-x64 for another 64-bit one. A title links
 # only its base's files and every library of the base (LICENSING.md); with RECIPE, the recipe's base and libraries.
-# RECIPE=<title.toml>: the title's recipe (CPU features, registry values); tools/recipe-gen.py reads it.
+# RECIPE=<recipe.toml>: the app's recipe (CPU features, registry values); tools/recipe-gen.py reads it.
 set -euo pipefail
 root=$(cd "$(dirname "$0")/.." && pwd); exe=$1; out=$2; mkdir -p "$out"
 W=${WASI_SDK:-$HOME/tools/wasi-sdk-34.0-x86_64-linux}/bin

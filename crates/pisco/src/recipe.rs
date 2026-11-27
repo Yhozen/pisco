@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-// Recipes (recipes/<title>/title.toml) and the bases they start FROM (bases/<name>/<version>/base.toml).
+// Recipes (recipes/<app>/recipe.toml, docs/spec/recipe.md) and the bases they start FROM (bases/<name>/<version>/base.toml).
 // docs/images.md has the reference of both.
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -105,15 +105,16 @@ pub fn merge_registry(base: &[RegValue], over: &[RegValue]) -> Vec<RegValue> {
     m.into_values().collect()
 }
 
-/// 'C:\Program Files\X' -> "Program Files/X"; a Linux title's '/usr/bin/x' -> "usr/bin/x" (its root is the drive)
+/// 'C:\Program Files\X' -> "Program Files/X"; a Linux app's '/usr/bin/x' -> "usr/bin/x" (its root is the drive)
 pub fn drive_path(p: &str) -> R<String> {
     if p.starts_with('/') { return Ok(p.split('/').filter(|s| !s.is_empty() && *s != ".").collect::<Vec<_>>().join("/")); }
-    let rest = p.strip_prefix("C:\\").or_else(|| p.strip_prefix("c:\\")).ok_or(format!("{p}: a path on C:\\ (or, for a Linux title, from /) is expected"))?;
+    let rest = p.strip_prefix("C:\\").or_else(|| p.strip_prefix("c:\\")).ok_or(format!("{p}: a path on C:\\ (or, for a Linux app, from /) is expected"))?;
     Ok(rest.split('\\').filter(|s| !s.is_empty()).collect::<Vec<_>>().join("/"))
 }
 
 pub fn load_recipe(dir: &Path) -> R<Recipe> {
-    let path = if dir.is_dir() { dir.join("title.toml") } else { dir.to_path_buf() };
+    let path = if dir.is_dir() { dir.join("recipe.toml") } else { dir.to_path_buf() };
+    if !path.is_file() && path.with_file_name("title.toml").is_file() { return Err(format!("{}: a recipe is recipe.toml now (git mv title.toml recipe.toml)", path.with_file_name("title.toml").display())); }
     let t = load(&path)?;
     let dir = path.parent().unwrap().to_path_buf();
     let known = ["name", "from", "libraries", "source", "run", "cpu", "dll", "registry", "lifter", "build", "quirks", "shaders", "files"];

@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-2.0-or-later
-# recipe-gen.py [title.toml] > recipe.gen.c: what a title's recipe says, for the runtime (rt/rt.h has the types).
+# recipe-gen.py [recipe.toml] > recipe.gen.c: what a title's recipe says, for the runtime (rt/rt.h has the types).
 # Read so far: [cpu] features = ["fpu", ...] (the virtual CPU; without it, every feature the lifter supports) and
 # [registry] 'HKEY_LOCAL_MACHINE\Software\...' = { Name = 1, Other = "text" }, [quirks] heap_fill. With no recipe: the defaults.
-# recipe-gen.py --lifter-options title.toml prints the lifter's options the recipe implies instead:
+# recipe-gen.py --lifter-options recipe.toml prints the lifter's options the recipe implies instead:
 # `--builtin name.dll` for each `[dll] "name.dll" = "builtin"` (a shipped DLL the runtime answers for).
 import sys, tomllib
 

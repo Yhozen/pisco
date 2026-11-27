@@ -16,7 +16,8 @@ runtimes below are how far it has got. Nothing of a title is in this repository:
 
 ## Runtimes
 
-A runtime imitates one system. A title image is built FROM one of them (its base).
+A runtime imitates one system. An app's image is built FROM one of them (its base); what a recipe and an image
+are is [the specification](docs/spec/README.md).
 
 | Runtime (base) | Imitates | Runs today | Its goal |
 |---|---|---|---|

@@ -9,8 +9,8 @@
 // Nothing here needs Node; openImageDir (Node only) imports node:fs when it is called.
 export const MEDIA = {
   manifest: 'application/vnd.oci.image.manifest.v1+json',
-  artifact: 'application/vnd.pisco.title.v1',
-  config: 'application/vnd.pisco.title.config.v1+json',
+  artifact: 'application/vnd.pisco.app.v1',
+  config: 'application/vnd.pisco.app.config.v1+json',
   layer: 'application/vnd.pisco.layer.v1.tar',
   module: 'application/vnd.pisco.module.v1.wasm',
 };
@@ -25,7 +25,7 @@ export function manifestOf(index, ref) {
   return m;
 }
 export function checkManifest(manifest) {
-  if (manifest.artifactType !== MEDIA.artifact) throw new Error(`image: not a pisco title (artifactType ${manifest.artifactType})`);
+  if (manifest.artifactType !== MEDIA.artifact) throw new Error(`image: not a pisco app (artifactType ${manifest.artifactType})${manifest.artifactType === 'application/vnd.pisco.title.v1' ? ': an image of an older pisco, build it again' : ''}`);
   const layers = manifest.layers.filter((l) => l.mediaType === MEDIA.layer), module = manifest.layers.find((l) => l.mediaType === MEDIA.module);
   if (!module) throw new Error('image: no module (title.wasm) among its layers');
   return { layers, module, roles: layers.map((l) => l.annotations?.[ROLE] || 'layer') };
@@ -51,7 +51,7 @@ export function settings(config) {
     if (config.run.cmdline) env.SW_CMDLINE = config.run.cmdline;
   }
   // (text: a Linux title has no screen of its own, what it shows is what it prints; nor a machine's, its serial console)
-  return { title: config.title, text: linux, exe, folder, exeName: exe.slice(folder.length ? folder.length + 1 : 0), args: config.run.args || [], display: config.run.display || null, env };
+  return { name: config.name, text: linux, exe, folder, exeName: exe.slice(folder.length ? folder.length + 1 : 0), args: config.run.args || [], display: config.run.display || null, env };
 }
 // A name the runtime asks its host for (rt/vfs.c): "c:/<path>" is on the drive, anything else is in the title's folder
 export function driveName(name, folder) {

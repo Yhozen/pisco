@@ -1,7 +1,8 @@
-# Title images
+# Images: the guide to `pisco`
 
-A Windows PC title is built from a **recipe** into a **title image**: a folder in the OCI image layout holding the
-title's files, the runtime's files, the compiled module and a config. `pisco` (`crates/pisco`) builds, runs and inspects
+An app is built from a **recipe** into an **image**: a folder in the OCI image layout holding the app's files, the
+runtime's files, the compiled module and a config. What a recipe, a base and an image mean, for any builder or host,
+is the specification ([spec/](spec/README.md)); this page is how `pisco` does it. `pisco` (`crates/pisco`) builds, runs and inspects
 images; the hosts read them through one module, [`web/image.mjs`](../web/image.mjs).
 
 ```sh
@@ -38,8 +39,8 @@ layers of our own media types:
 
 | Media type | What it is |
 |---|---|
-| `application/vnd.pisco.title.v1` | the manifest's `artifactType`: a PISCO title |
-| `application/vnd.pisco.title.config.v1+json` | the config (below) |
+| `application/vnd.pisco.app.v1` | the manifest's `artifactType`: a PISCO app |
+| `application/vnd.pisco.app.config.v1+json` | the config (below) |
 | `application/vnd.pisco.layer.v1.tar` | a file layer: an uncompressed tar of files on the title's C: drive (paths relative to `C:\`) |
 | `application/vnd.pisco.module.v1.wasm` | the title's module: lifted code, runtime and import tables, linked (`title.wasm`) |
 
@@ -63,7 +64,7 @@ and nothing in them depends on the time or the machine, so the same inputs give 
 
 ```json
 {
-  "architecture": "386", "os": "windows", "base": "base/windows-x86:1", "title": "narbacular-drop",
+  "architecture": "386", "os": "windows", "base": "base/windows-x86:1", "name": "narbacular-drop",
   "run": { "exe": "C:\\Program Files\\Narbacular Drop\\Narbacular Drop.exe", "display": "640x480", "args": [] },
   "guest": { "bits": 32, "image": ["0x400000", "0x57c000"] },
   "cpu": { "features": ["fpu", "tsc", "cx8"] },
@@ -102,7 +103,7 @@ The old invocation keeps working: `node web/run-node.mjs title.wasm <the title's
 
 ## Recipes
 
-`recipes/<title>/title.toml`:
+`recipes/<app>/recipe.toml`:
 
 ```toml
 name = "narbacular-drop"

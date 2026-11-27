@@ -176,7 +176,7 @@ fn unwise(r: &Recipe, src: &Path, tmp: &Path) -> R<()> {
         let mut rel = to.replace('\\', "/");
         for part in [f.dir.as_str(), f.name.as_str()] { if part.is_empty() { continue; } if !rel.is_empty() { rel.push('/'); } rel.push_str(part); }
         let rel = rel.replace('\\', "/");
-        if rel.split('/').any(|p| p.is_empty() || p == ".." || p == "." || p.contains(':')) { return Err(format!("InstallShield: {}: a path that leaves the title's folder", f.name)); }
+        if rel.split('/').any(|p| p.is_empty() || p == ".." || p == "." || p.contains(':')) { return Err(format!("InstallShield: {}: a path that leaves the app's folder", f.name)); }
         write(&rel, &f.data)?;
     }
     if !unknown.is_empty() { return Err(format!("{}: InstallShield file groups the recipe does not place: {} (say where each goes in [source.installshield] groups, \"-\" for none)", src.display(), unknown.into_iter().map(|g| format!("\"{g}\"")).collect::<Vec<_>>().join(", "))); }
@@ -364,7 +364,7 @@ fn lift_as(t: &Tools, r: &Recipe, exe: &Path, ex: &Extracted, cache: &Path, user
     let mut loads: Vec<String> = Vec::new();
     for l in &r.load {
         let rel = l.replace('\\', "/");
-        let host = find_ci(dir, &rel).ok_or(format!("[lifter] load: {l}: not in the title's folder"))?;
+        let host = find_ci(dir, &rel).ok_or(format!("[lifter] load: {l}: not in the app's folder"))?;
         loads.extend(["--load".into(), format!("{}={rel}", host.display())]);
         images.push((rel.to_ascii_lowercase(), host));
     }
@@ -515,7 +515,7 @@ pub fn build(root: &Path, o: &Opts) -> R<()> {
     // any program's module and runs it (rt/linux-x64/start.c)
     let is_elf = |p: &Path| std::fs::File::open(p).ok().and_then(|mut f| { let mut b = [0u8; 4]; std::io::Read::read_exact(&mut f, &mut b).ok().map(|_| b == *b"\x7fELF") }).unwrap_or(false);
     let programs: Vec<(String, PathBuf)> = if base.os == "linux" { ex.files.iter().filter(|(_, h)| is_elf(h)).map(|(g, h)| (g.clone(), h.clone())).collect() } else { vec![(exe_guest.clone(), exe.clone())] };
-    if programs.is_empty() { return Err(format!("{}: no program among the title's files", r.exe)); }
+    if programs.is_empty() { return Err(format!("{}: no program among the app's files", r.exe)); }
     let mut lifts: Vec<Lifted> = Vec::new(); let mut lift_of: BTreeMap<String, usize> = BTreeMap::new(); let mut by_sha: BTreeMap<String, usize> = BTreeMap::new();
     for (g, h) in &programs {
         let sha = oci::sha256(&io(std::fs::read(h), h)?);
@@ -528,7 +528,7 @@ pub fn build(root: &Path, o: &Opts) -> R<()> {
     if base.os == "microvm" {
         for p in &r.programs {
             let g = recipe::drive_path(p)?;
-            let h = ex.files.iter().find(|(f, _)| f.eq_ignore_ascii_case(&g)).map(|x| x.1.clone()).ok_or(format!("[lifter] programs: {p} is not among the title's files"))?;
+            let h = ex.files.iter().find(|(f, _)| f.eq_ignore_ascii_case(&g)).map(|x| x.1.clone()).ok_or(format!("[lifter] programs: {p} is not among the app's files"))?;
             let name: String = g.rsplit('/').next().unwrap().chars().map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '_' }).collect();
             let name = if name.starts_with(|ch: char| ch.is_ascii_digit()) { format!("_{name}") } else { name };
             say(&format!("program {p} ({name})"));
@@ -541,7 +541,7 @@ pub fn build(root: &Path, o: &Opts) -> R<()> {
     if base.os == "microvm" {
         for p in &r.modules {
             let g = recipe::drive_path(p)?;
-            let h = ex.files.iter().find(|(f, _)| f.eq_ignore_ascii_case(&g)).map(|x| x.1.clone()).ok_or(format!("[lifter] modules: {p} is not among the title's files"))?;
+            let h = ex.files.iter().find(|(f, _)| f.eq_ignore_ascii_case(&g)).map(|x| x.1.clone()).ok_or(format!("[lifter] modules: {p} is not among the app's files"))?;
             let name: String = g.rsplit('/').next().unwrap().chars().map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '_' }).collect();
             let name = if name.starts_with(|ch: char| ch.is_ascii_digit()) { format!("_{name}") } else { name };
             say(&format!("module {p} ({name})"));
@@ -556,8 +556,8 @@ pub fn build(root: &Path, o: &Opts) -> R<()> {
     let cen = Census::new(root, &base, &r.libraries, &shipped)?;
     let report = cen.check(&lifted.imports);
     say(&format!("imports: {}", report.summary));
-    if !report.needs.is_empty() { return Err(format!("the title imports from DLLs of libraries the recipe does not name: add {} to `libraries`", report.needs.join(", "))); }
-    for l in &r.libraries { if !report.used.contains(l) { say(&format!("imports: library {l} is not used by the title's imports (it may still be loaded at run time)")); } }
+    if !report.needs.is_empty() { return Err(format!("the app imports from DLLs of libraries the recipe does not name: add {} to `libraries`", report.needs.join(", "))); }
+    for l in &r.libraries { if !report.used.contains(l) { say(&format!("imports: library {l} is not used by the app's imports (it may still be loaded at run time)")); } }
 
     // 3. the runtime: the base's core and the libraries
     let t3 = Instant::now();
@@ -690,7 +690,7 @@ pub fn build(root: &Path, o: &Opts) -> R<()> {
     let program_map: BTreeMap<String, String> = if base.os == "linux" { lift_of.iter().map(|(g, k)| (format!("/{g}"), digest_of[k].clone())).collect() } else { BTreeMap::new() };
     let registry = recipe::merge_registry(&base.registry, &r.registry);
     let config = json!({
-        "architecture": base.architecture, "os": base.os, "base": base.reference(), "title": r.name,
+        "architecture": base.architecture, "os": base.os, "base": base.reference(), "name": r.name,
         "run": { "exe": r.exe, "display": r.display, "args": r.args, "initrd": r.initrd, "cmdline": r.cmdline },
         "guest": { "bits": lifted.bits, "image": [format!("0x{:x}", lifted.low), format!("0x{:x}", lifted.high)] },
         "cpu": { "features": features },

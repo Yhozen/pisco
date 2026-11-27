@@ -9,8 +9,8 @@ use std::path::{Path, PathBuf};
 
 pub const MANIFEST: &str = "application/vnd.oci.image.manifest.v1+json";
 pub const INDEX: &str = "application/vnd.oci.image.index.v1+json";
-pub const ARTIFACT: &str = "application/vnd.pisco.title.v1";
-pub const CONFIG: &str = "application/vnd.pisco.title.config.v1+json";
+pub const ARTIFACT: &str = "application/vnd.pisco.app.v1";
+pub const CONFIG: &str = "application/vnd.pisco.app.config.v1+json";
 pub const LAYER: &str = "application/vnd.pisco.layer.v1.tar";
 pub const MODULE: &str = "application/vnd.pisco.module.v1.wasm";
 pub const ROLE: &str = "org.pisco.layer.role";
@@ -167,7 +167,7 @@ pub fn open(dir: &Path) -> Result<Image, String> {
     let m = index["manifests"].as_array().and_then(|a| a.first()).ok_or("index.json has no manifest")?;
     let digest = m["digest"].as_str().ok_or("manifest without a digest")?.to_string();
     let manifest: Value = serde_json::from_slice(&blob(dir, &digest)?).map_err(|e| e.to_string())?;
-    if manifest["artifactType"] != ARTIFACT { return Err(format!("{}: not a pisco title image (artifactType {})", dir.display(), manifest["artifactType"])); }
+    if manifest["artifactType"] != ARTIFACT { return Err(format!("{}: not a pisco app image (artifactType {}{})", dir.display(), manifest["artifactType"], if manifest["artifactType"] == "application/vnd.pisco.title.v1" { ": an image of an older pisco, build it again" } else { "" })); }
     let config: Value = serde_json::from_slice(&blob(dir, manifest["config"]["digest"].as_str().ok_or("no config")?)?).map_err(|e| e.to_string())?;
     Ok(Image { dir: dir.to_path_buf(), manifest_digest: digest, manifest, config })
 }
