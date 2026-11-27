@@ -77,6 +77,30 @@ What the browser gives: a URL and nothing to install, a sandbox, and the host ev
   wasmtime will not implement); after `wasm-opt --translate-to-exnref` (binaryen 133) it compiled ahead of time in
   18.5 s to 55 MB of machine code. Not run: that needs the GPU, audio and input parts of a host.
 
+### WAMR AOT on the same benchmark (2026-11-26)
+
+On x86-64 Linux, WAMR 2.4.6's released `wamrc` rejected the lifted `fixtures/bench` module with
+`WASM module load failed: invalid section id`. Node 24 ran those bytes and matched all five native checksums.
+The `pisco build recipes/hello64` image gave the same WAMR error and passed all seven checks in Node.
+Both titles use wasm32 shared memory. The failure comes before execution, so WAMR has no timing to add to the table.
+
+The section that triggers the error is the Wasm exception tag section. A small control module importing the same
+shared memory and doing an atomic load compiled with `wamrc`. Adding just an exception tag reproduced the error.
+PISCO's runtime uses `setjmp` and `longjmp` for thread exit, and WASI SDK 34 emits legacy Wasm exceptions for them.
+Binaryen 133 translated the benchmark's handlers to standard Wasm exceptions, which Wasmtime 51 then compiled.
+WAMR rejected the translated module at the tag section too. WAMR 2.4.6 lists legacy exceptions as interpreter-only
+and standard exceptions as unimplemented. [WAMR 2.4.6 proposal status](https://github.com/wasm-micro-runtime/wasm-micro-runtime/blob/WAMR-2.4.6/doc/stability_wasm_proposals.md)
+
+These commands use the fixture executables from `tests/run.sh build` and `wamrc`, `wasm-opt` and `wasmtime` on the path.
+
+```sh
+tests/run.sh bench
+wamrc --enable-multi-thread -o out/bench/title.aot out/bench/title.wasm  # 2.4.6 rejects the tag section
+wasm-opt out/bench/title.wasm --translate-to-exnref -o out/bench/exnref.wasm
+wasmtime compile -W threads=y,exceptions=y -o out/bench/exnref.cwasm out/bench/exnref.wasm
+wamrc --enable-multi-thread -o out/bench/exnref.aot out/bench/exnref.wasm  # same rejection
+```
+
 ## The alternatives
 
 | | Runs the module in | Files | GPU beyond WebGPU | Same on macOS, Windows, Linux | Work |
