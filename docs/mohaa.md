@@ -156,6 +156,20 @@ tools/oracle-wine/mohaa-play.sh recipes/mohaa/sessions/menu.json menu1      # th
   had turned that address down for lying inside an instruction of code it later dropped, and the refusal stayed. Such
   a candidate is now looked at again, once. (Lifted alone, `Mssfast.m3d` had it.)
 
+## What M3 took
+
+- **DirectSound** (`[libraries.dsound]`, `rt/windows-x86/dsound.c`): Miles makes one looping 44.1 kHz buffer and mixes
+  its voices into it, reading where playback is with `GetCurrentPosition`; the buffer is played by the runtime's mixer
+  (resampled to 48 kHz), whose position follows the title's clock, so on the virtual clock what is mixed is the same
+  on every run.
+- **The thread-naming exception.** Miles names its timer thread as Visual C++ code did, by raising `0x406D1388` and
+  catching it itself; with no debugger that is the same as `RaiseException` returning, which the runtime now does (a
+  32-bit title has no structured exception dispatch yet).
+- **A Pentium III.** The recipe gives the processor the oracle's machine is to the engine (MMX and SSE): the engine
+  and Miles take the paths they take under Wine on an Intel processor, and the engine's console names the same CPU.
+- **One more of Miles' mixer routines** (`MSSMIXER` at `0x2113d047` as linked) is found by no discovery rule and is
+  named in the recipe's `[lifter] entries`.
+
 ## The plan
 
 | # | Milestone | Passes when |
@@ -179,3 +193,6 @@ tools/oracle-wine/mohaa-play.sh recipes/mohaa/sessions/menu.json menu1      # th
   within 0.27 / 0.40 / 0.35 of 255 of Wine's screenshot on average (R, G, B), the hover over the map, the difficulty
   menu and the briefing within 0.1 (`tests/run.sh mohaagfx`). The level's own views move (leaves, soldiers, Wine's
   wall clock) and are printed, not judged.
+- **M3** (2026-11-27): Miles opens DirectSound and reports what it reports under Wine (Miles Fast 2D Positional Audio,
+  2 speakers, 16 bits, 44,100 Hz). Over the `level` session the sound is -22.2 dB on average against Wine's -22.5 dB,
+  the loudness of the two runs follows the same course (correlation 0.93) and is 0.0 dB apart where both sound.

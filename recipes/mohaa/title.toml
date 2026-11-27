@@ -3,7 +3,7 @@
 # title: docs/mohaa.md.
 name = "mohaa"
 from = "base/windows-x86:1"
-libraries = ["opengl32"]   # loaded at run time (LoadLibrary): the census does not see it
+libraries = ["opengl32", "dsound"]   # both loaded at run time (LoadLibrary: the engine and Miles): the census does not see them
 
 [source]
 # the user's own copy of the demo's download: a zip around a Wise installer, which carries an InstallShield 6 setup.
@@ -103,9 +103,9 @@ seta r_ext_compressed_textures 1
 """
 
 [cpu]
-# as for Narbacular Drop and Tag: the engine, Miles and its plugins have MMX and 3DNow! paths (2282 instructions the
-# lifter does not take); on a Pentium without MMX they run their plain x86 and x87 code
-features = ["fpu", "tsc", "cx8"]
+# a Pentium III, as the oracle's machine is to the engine ("found Intel Pentium III"): MMX and SSE, which the engine's
+# own code and Miles' mixer use when the processor has them. Not 3DNow!, an AMD processor's, which they would also use
+features = ["fpu", "tsc", "cx8", "cmov", "mmx", "fxsr", "sse"]
 
 [lifter]
 split = 16

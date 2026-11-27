@@ -74,6 +74,7 @@ A new runtime is a new folder and a new base; a new title of an existing runtime
 | M0 | Medal of Honor: Allied Assault's demo on the Windows x86 runtime: census, recipe (`pisco build` reads a Wise installer and the InstallShield 6 setup inside it), the oracle (OpenGL under Wine on llvmpipe) | done ([mohaa.md](mohaa.md#progress)) |
 | M1 | the demo lifted and started in Node: MMX in the lifter, DLLs loaded on demand, input as window messages, OpenGL 1.1 on the GPU ring; strict, from the logos to the menu and into the level, its console log Wine's | done ([mohaa.md](mohaa.md#progress)) |
 | M2 | MOHAA's demo in Chrome: OpenGL's viewports past the window, one more function found; the menus and the briefing within 0.4 of 255 of Wine's | done ([mohaa.md](mohaa.md#progress)) |
-| M3 to M4 | MOHAA's sound through Miles and DirectSound, played by hand | ([mohaa.md](mohaa.md#the-plan)) |
+| M3 | MOHAA's sound: DirectSound for Miles, a Pentium III; the level's sound within 0.3 dB of Wine's | done ([mohaa.md](mohaa.md#progress)) |
+| M4 | MOHAA's demo played by hand on a real GPU | to do ([mohaa.md](mohaa.md#the-plan)) |
 | B0 | experimental, optional: development on boat.dev sandboxes (a snapshot with everything built, the tests on several sandboxes at once); cowsay ported that way | done ([dev-machines.md](dev-machines.md)) |
 | B1 | the changelog on GitHub Pages drawn from `changelog/*.md` by a workflow on `main`, video releases published by it | done ([changelog/README.md](../changelog/README.md)) |

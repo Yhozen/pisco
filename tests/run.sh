@@ -72,7 +72,8 @@
 #   desireplay  tests/gfx/desireplay.sh: Desire (Windows x64, Direct3D 12) from the user's zip (DESIRE_ZIP) and REDIST, in
 #            Node, strict: its calls until its main loop are Wine's, and its maze from Wine's seeds is Wine's (minutes)
 #   mohaa    tests/gfx/mohaa.sh: Medal of Honor: Allied Assault's demo (Windows x86, OpenGL) from the user's download
-#            (MOHAA_ZIP), in Node, strict, on the virtual clock: the logos to the menu; its console log against Wine's
+#            (MOHAA_ZIP), in Node, strict, on the virtual clock: the logos to the menu, then into the level; its console
+#            log and its sound against Wine's
 #   mohaagfx tests/gfx/mohaa-chrome.sh: the menu and level sessions in headless Chrome, the still screens against the
 #            oracle's screenshots (needs out/img-mohaa: the mohaa step; about an hour)
 #   glffp    tests/gfx/gl-ffp.sh: OpenGL's fixed-function shader generator, every key validated by naga

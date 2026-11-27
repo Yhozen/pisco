@@ -466,7 +466,7 @@ static const struct { const char *name; u64 h; } system_modules[] = {
   {"mfplat", 0x7FE00000ull}, {"d3dcompiler_47", 0x7FE10000ull}, {"xaudio2_9", 0x7FE20000ull},
 #if GUEST_BITS == 32
   // the desktop's DLLs a title looks functions up in (rt/windows-x86/)
-  {"gdi32", 0x7FD00000ull}, {"d3d9", 0x7FD10000ull}, {"dinput8", 0x7FD20000ull}, {"winmm", 0x7FD30000ull}, {"ddraw", 0x7FD40000ull}, {"opengl32", 0x7FD50000ull},
+  {"gdi32", 0x7FD00000ull}, {"d3d9", 0x7FD10000ull}, {"dinput8", 0x7FD20000ull}, {"winmm", 0x7FD30000ull}, {"ddraw", 0x7FD40000ull}, {"opengl32", 0x7FD50000ull}, {"dsound", 0x7FD60000ull},
 #endif
   // API sets and console variants: the DLL behind them
   {"ntuser", 0x7FF70000ull}, {"minuser", 0x7FF70000ull}, {"advapi32legacy", 0x7FF80000ull}, {"api-ms-win-core", 0x7FF00000ull},
