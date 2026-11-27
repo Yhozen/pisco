@@ -577,6 +577,14 @@ table's bound far from its jump (busybox's `rpm`), and gcc 13's `notrack` jumps,
 switches, so perl's parser became a recursion. cowsay, on perl built from its source, was the task that measured
 it all: 14 minutes from the first command on a fresh sandbox to six runs equal to native perl in Node and Chrome.
 
+### 3.28 The changelog from files (2026-11-27)
+
+The changelog on GitHub Pages was edited by hand on the `gh-pages` branch after each merge, apart from the code it
+described. Now each pull request adds its entry as a file in `changelog/` (the idea of
+[changesets](https://github.com/changesets/changesets), without versions: the files stay, the page is drawn from all
+of them), and on `main` `.github/workflows/changelog.yml` draws the page again with `tools/changelog.mjs` and publishes
+the draft release that holds the entry's video. The eleven entries written by hand became the first eleven files.
+
 ## 4. Roadblocks
 
 ### Resolved
@@ -706,5 +714,6 @@ it all: 14 minutes from the first command on a fresh sandbox to six runs equal t
 | `tools/stdcall-sizes.sh`, `tools/recipe-gen.py` | 32-bit builds: what each import removes from the stack; what the recipe says, for the runtime |
 | `fixtures/x87/` | the 32-bit x87 title and what it prints under Wine |
 | `recipes/<title>/` | per-title files: the recipe, session scripts, Wine's recorded call sequences |
+| `changelog/` | the changelog on GitHub Pages, an entry per pull request (`tools/changelog.mjs`, `.github/workflows/changelog.yml`) |
 | `docs/` | this log, status, first-run runbook, memory measurements, the Narbacular Drop census |
 

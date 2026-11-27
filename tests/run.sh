@@ -24,6 +24,7 @@
 #   cowsay   cowsay on perl (docs/cowsay.md), when tools/build-cowsay.sh has built its root into out/cowsay: its image
 #            built by `pisco build`, run by `pisco run` in strict mode with several cows and options; each must print
 #            what the same root's perl prints here (the oracle), and the first the same in headless Chrome
+#   changelog  tools/changelog.mjs: every entry in changelog/ (the changelog on GitHub Pages) is well formed
 #   chrome   hello, threads and cxx again in headless Chrome (WebGPU on SwiftShader), the 32-bit titles and linux-hello
 #   nd       Narbacular Drop, when the installed game is there (ND: its folder; default: the oracle's prefix):
 #            built with its recipe and run in strict mode. Its calls until it asks for Direct3D 9 must be the
@@ -274,7 +275,7 @@ ND=${ND:-$HOME/.pisco/oracle/prefix-narbacular-drop/drive_c/Program Files (x86)/
 D3DX_DLL=${D3DX_DLL:-$HOME/untrusted/tag/cab/d3dx9_35.dll}
 REDIST=${REDIST:-$HOME/untrusted/vcredist/x/Contents/VC/Redist/MSVC/14.44.35112/x64/Microsoft.VC143.CRT}; export REDIST
 WINSDK=${WINSDK:-$HOME/winsdk}
-for s in ${*:-build layout node bench win32 linux ffp sm gdi}; do case $s in
+for s in ${*:-build layout node bench win32 linux ffp sm gdi changelog}; do case $s in
   build)  step build build ;;
   layout) step layout tests/layout.sh ;;
   node)   LINES_SHOWN=8 step node tests/regress.sh ;;
@@ -289,6 +290,7 @@ for s in ${*:-build layout node bench win32 linux ffp sm gdi}; do case $s in
   ffp)    if command -v naga > /dev/null; then step ffp tests/gfx/d3d9-ffp.sh; else echo "skip  ffp: naga is not installed (tools/setup-toolchain.sh naga)"; fi ;;
   sm)     if command -v naga > /dev/null; then step sm tests/gfx/d3d9-sm.sh ${SM_CAPTURED:+$SM_CAPTURED/*}; else echo "skip  sm: naga is not installed (tools/setup-toolchain.sh naga)"; fi ;;
   gdi)    LINES_SHOWN=5 step gdi gdi ;;
+  changelog) step changelog node tools/changelog.mjs ;;
   d3dx)   if [ -f "$D3DX_DLL" ]; then step d3dx d3dx; else echo "skip  d3dx: no d3dx9_35.dll in D3DX_DLL=$D3DX_DLL (Tag's installer has one)"; fi ;;
   ndgfx)  if [ -f "$ND/Narbacular Drop.exe" ]; then LINES_SHOWN=16 ND=$ND step ndgfx tests/gfx/nd.sh; else echo "skip  ndgfx: the game is not installed (ND=$ND)"; fi ;;
   ndplay) if [ -f "$ND/Narbacular Drop.exe" ]; then LINES_SHOWN=16 ND=$ND step ndplay tests/gfx/ndplay.sh; else echo "skip  ndplay: the game is not installed (ND=$ND)"; fi ;;
