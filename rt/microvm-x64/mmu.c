@@ -23,12 +23,14 @@ void phys_read(u64 pa, void *out, unsigned n) {
   if (in_ram(pa, n)) { memcpy(out, ram + pa, n); return; }
   if ((pa & ~0xFFFull) == (mc.apic_base & ~0xFFFull)) { u32 v = apic_read((u32)(pa & 0xFF0)); memcpy(out, &v, n < 4 ? n : 4); if (n > 4) memset((u8 *)out + 4, 0, n - 4); return; }
   if ((pa & ~0xFFFull) == 0xFEC00000ull) { u32 v = ioapic_read((u32)(pa & 0xFF)); memcpy(out, &v, n < 4 ? n : 4); if (n > 4) memset((u8 *)out + 4, 0, n - 4); return; }
+  if (virtio_present() && (pa & ~0xFFFull) == virtio_base()) { u32 v = virtio_read((u32)(pa & 0xFFC)); v >>= 8 * (pa & 3); memcpy(out, &v, n < 4 ? n : 4); if (n > 4) memset((u8 *)out + 4, 0, n - 4); return; }
   memset(out, 0xFF, n);
 }
 void phys_write(u64 pa, const void *in, unsigned n) {
   if (in_ram(pa, n)) { memcpy(ram + pa, in, n); return; }
   if ((pa & ~0xFFFull) == (mc.apic_base & ~0xFFFull)) { u32 v = 0; memcpy(&v, in, n < 4 ? n : 4); apic_write((u32)(pa & 0xFF0), v); return; }
   if ((pa & ~0xFFFull) == 0xFEC00000ull) { u32 v = 0; memcpy(&v, in, n < 4 ? n : 4); ioapic_write((u32)(pa & 0xFF), v); return; }
+  if (virtio_present() && (pa & ~0xFFFull) == virtio_base()) { u32 v = 0; memcpy(&v, in, n < 4 ? n : 4); virtio_write((u32)(pa & 0xFFF), v); return; }
 }
 
 int mmu_walk(u64 va, int write, int user, u64 *pa, int *writable) {

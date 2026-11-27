@@ -40,7 +40,8 @@ module is then under GPL-2.0 ([LICENSING.md](../LICENSING.md)).
 | `mmu.c` | RAM (256 MiB, `SW_MEMORY` in MiB) and the APIC's page, reached through the kernel's page tables (4 KiB, 2 MiB and 1 GiB pages, accessed and dirty bits, user and write rights); a software TLB for kernel code and one for user code |
 | `cpu.c` | exceptions, interrupts and system calls as nested runs of lifted code, their return (`iretq`, `sysretq`), MSRs, control registers, the GDT, IDT and TSS |
 | `apic.c` | the local APIC (xAPIC): its timer (one-shot, periodic, TSC-deadline), priorities and EOI; the virtual clock; CPUID (an Intel CPU, the TSC at 1 GHz) |
-| `devices.c` | a 16550 at `0x3f8` (its output is the title's standard output), the exit port at `0xf4` (as QEMU's `isa-debug-exit`), 8259s that answer as masked |
+| `devices.c` | a 16550 at `0x3f8` (the console, both ways), the exit port at `0xf4` (as QEMU's `isa-debug-exit`), the CMOS clock, resets through `0x64` and `0xcf9` |
+| `virtio.c` | virtio's block device on its MMIO transport at `0xd0000000`, pin 5: a disk (`SW_DISK=<file>` beside the kernel, or `SW_DISK=<n>M` of zeros), its writes kept in memory; announced on the kernel's command line |
 | `run.c` | the loader (the ELF at its physical addresses, CR3 on `early_top_pgt`, entered at `common_startup_64`), the loops that enter lifted code by address, a host stack for each of the kernel's tasks |
 
 How it works:
@@ -205,6 +206,14 @@ process costs about a hundredth of what it costs there.
 - **`tools/run-chrome.mjs` types**: `TYPE=<text>` sends key presses to the page, which is how typing into the page
   was checked.
 
+## What it took (K5)
+
+- **A disk**: virtio's block device (virtio 1.2, MMIO transport, one queue of 256, reads, writes, flush, its id), in
+  `rt/microvm-x64/virtio.c`; the kernel gains `CONFIG_VIRTIO_MMIO`, `VIRTIO_BLK` and ext2. With `SW_DISK` the runtime
+  adds `virtio_mmio.device=4K@0xd0000000:5` to the command line. It worked on its first run: `/init` formats it with
+  busybox's `mke2fs`, writes 1,000 lines, mounts it again and reads them back (`tests/run.sh kernel`). QEMU's machine
+  here has no virtio-mmio bus, so that check has no oracle; without a disk `/init` prints what it prints on QEMU.
+
 ## Limits
 
 - Only programs lifted with the kernel run, at the addresses they were lifted at: one busybox. Two programs at
@@ -217,7 +226,7 @@ process costs about a hundredth of what it costs there.
   the fault; with one CPU and no other task in between, the same.
 - On QEMU without the PIT the kernel has no timer interrupt (its emulated CPU has no TSC-deadline timer): `/init`
   ends all the same, but that boot says nothing of the timer the machine will have.
-- One CPU, no network, no disk: the initramfs is the whole file system.
+- One CPU and no network. The disk's writes stay in memory: the file it was read from does not change.
 - Only what was lifted before the kernel starts can run: here the kernel and busybox.
 
 ## Progress
@@ -229,4 +238,5 @@ process costs about a hundredth of what it costs there.
 | K2 | this kernel lifted: its boot log up to `Run /init as init process`, in Node, the same on every run | done |
 | K3 | busybox lifted with the kernel: `/init`'s programs print `recipes/linux/traces/programs.txt`, what they print on QEMU | done |
 | K4 | a console typed into, in Node and in the page; `pisco build recipes/linux`, two builds the same | done |
-| K5 | virtio block and network devices; a writable disk | next |
+| K5 | a virtio disk: formatted, written and read again by `/init` | done |
+| K6 | a network (virtio's network device), snapshots | next |

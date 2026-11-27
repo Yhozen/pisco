@@ -41,7 +41,8 @@
 #            /init as init process" recipes/linux/traces/boot.txt (the compiler's name and the kernel's sizes left
 #            out), and its programs what they print on QEMU (programs.txt). Then the kernel with /bin/sh as its first
 #            program, typed into through the console (recipes/linux/console-input.txt): what it prints from there must
-#            be traces/console.txt. KERNEL_RECORD=1 records the traces again
+#            be traces/console.txt. Then with a disk (SW_DISK=16M: virtio's block device): /init formats it, writes it
+#            and reads it again. KERNEL_RECORD=1 records the traces again
 #   changelog  tools/changelog.mjs: every entry in changelog/ (the changelog on GitHub Pages) is well formed
 #   chrome   hello, threads and cxx again in headless Chrome (WebGPU on SwiftShader), the 32-bit titles and linux-hello
 #   nd       Narbacular Drop, when the installed game is there (ND: its folder; default: the oracle's prefix):
@@ -229,7 +230,10 @@ kernel() {
   SW_CMDLINE="$(cat recipes/linux/cmdline) rdinit=/bin/sh" timeout 600 target/release/pisco run out/images/linux < recipes/linux/console-input.txt 2>&1 | tr -d '\r' | sed -n '/^Run \/bin\/sh as init process/,$p' | grep -v '^pisco: ' > $d/console.txt
   [ -z "${KERNEL_RECORD:-}" ] || cp $d/console.txt $con
   cmp -s $d/console.txt $con || { echo "typed into, the shell answers otherwise than $con (< now, > recorded):"; diff $d/console.txt $con | head -8; return 1; }
-  echo "lifted (pisco run): $(wc -l < $boot) lines of boot to /init, twice the same, equal to $boot; /init's programs print what they print on QEMU; a shell typed into answers as $con"
+  # a disk: virtio's block device, formatted, written, mounted again and read by /init
+  SW_DISK=16M timeout 600 target/release/pisco run out/images/linux < /dev/null 2>&1 | tr -d '\r' > $d/disk.txt
+  grep -qx 'disk: on the disk, 1000 lines, 16777216 bytes' $d/disk.txt || { echo "with a disk, /init did not read back what it wrote ($d/disk.txt):"; grep -E 'vda|disk|virtio' $d/disk.txt | tail -4; return 1; }
+  echo "lifted (pisco run): $(wc -l < $boot) lines of boot to /init, twice the same, equal to $boot; /init's programs print what they print on QEMU; a shell typed into answers as $con; a virtio disk formatted, written and read again"
 }
 neofetch() {
   local d=out/neofetch want=recipes/neofetch/traces/pipe.txt

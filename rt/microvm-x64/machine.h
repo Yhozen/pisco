@@ -53,6 +53,10 @@ void apic_tsc_deadline(u64 v); u64 apic_tsc_deadline_get(void);
 u32 ioapic_read(u32 off); void ioapic_write(u32 off, u32 v);
 void ioapic_line(int pin, int level);   // a device's interrupt line, high or low
 
+// ---- virtio's block device (virtio.c) ----
+void virtio_init(void); int virtio_present(void); u64 virtio_base(void);
+u32 virtio_read(u32 off); void virtio_write(u32 off, u32 v);
+
 // ---- devices (devices.c) ----
 void uart_flush(void);
 // the console's input: a ring in this memory that the host writes (keys typed, or a pipe) and the 16550 reads

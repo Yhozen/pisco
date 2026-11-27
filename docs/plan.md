@@ -84,3 +84,4 @@ A new runtime is a new folder and a new base; a new title of an existing runtime
 | K2 | Linux 6.18 lifted on it, booted to `/init` in Node in 0.9 s, the same on every run (runtime constants, static calls, the boot protocol, the IOAPIC) | done ([linux.md](linux.md#progress)) |
 | K3 | busybox lifted with the kernel: `/init`'s programs (fork, exec, pipes, signals, files) print what they print on QEMU, in 2.5 s | done ([linux.md](linux.md#progress)) |
 | K4 | the console typed into, in a terminal and in the page; `pisco build recipes/linux` (two builds the same) and `pisco run` | done ([linux.md](linux.md#progress)) |
+| K5 | a virtio disk on the machine (`SW_DISK`): formatted, written and read again by Linux | done ([linux.md](linux.md#progress)) |

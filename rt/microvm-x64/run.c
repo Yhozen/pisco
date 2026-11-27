@@ -132,6 +132,8 @@ static void boot_params(void) {
   u64 z = ZERO_PAGE;
   const char *line = getenv("SW_CMDLINE");
   if (!line) line = "console=ttyS0,115200 earlyprintk=serial,ttyS0,115200 panic=-1 no_timer_check vdso=0 tsc=reliable 8250.nr_uarts=1";
+  char with[4096];
+  if (virtio_present()) { snprintf(with, sizeof with, "%s virtio_mmio.device=4K@0x%llx:5", line, (unsigned long long)virtio_base()); line = with; }   // the disk, announced
   size_t n = strlen(line); if (n > 4095) n = 4095;
   memcpy(ram + CMDLINE, line, n); ram[CMDLINE + n] = 0;
   put16(z + 0x1FE, 0xAA55); put32(z + 0x202, 0x53726448); put16(z + 0x206, 0x020F);   // the setup header: "HdrS", 2.15
@@ -182,6 +184,7 @@ int main(void) {
   mc.cr0 = 0x80050033; mc.cr4 = 0x20; mc.efer = 0xD01; mc.cpl = 0; mc.seg[S_CS] = 0x08; mc.seg[S_SS] = mc.seg[S_DS] = mc.seg[S_ES] = 0x10;
   mc.apic_base = 0xFEE00900; mc.pat = 0x0007040600070406ull;
   load(rt_modules[0].name);
+  virtio_init();
   boot_params();
   console_init(); mc_paced = (e = getenv("SW_CONSOLE")) && !strcmp(e, "tty");
   Cpu *c = &cpu; c->mxcsr = 0x1F80; c->fcw = 0x037F;
