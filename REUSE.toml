@@ -46,6 +46,12 @@ SPDX-FileCopyrightText = "2017 Sean Barrett"
 SPDX-License-Identifier = "MIT OR Unlicense"
 
 [[annotations]]
+path = "rt/windows-x64/third_party/stb_image.h"
+precedence = "override"
+SPDX-FileCopyrightText = "2017 Sean Barrett"
+SPDX-License-Identifier = "MIT OR Unlicense"
+
+[[annotations]]
 path = "rt/windows-x86/third_party/minimp3.h"
 precedence = "override"
 SPDX-FileCopyrightText = "lieff (https://github.com/lieff/minimp3)"

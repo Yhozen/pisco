@@ -15,7 +15,7 @@ that each imitate one system; a title image names the one it is built FROM ([the
 | Runtime (base) | Imitates | Runs today | Its goal |
 |---|---|---|---|
 | **Xbox Series** (`base/xbox-series`) | the GDK's console build: kernelx, XMem, XGameRuntime, D3D12.X, DirectStorage, XAudio2 | Doom as a console title; XCL's console test title, 50/50 | Minecraft (Bedrock), the Xbox Series build |
-| **Windows x64** (`base/windows-x64`) | 64-bit Windows desktop: DXGI, D3D12, the PC GDK, the MSVC runtimes | Stockfish 19 (official build), Microsoft's SimpleTriangleDesktop and SimplePBR | desktop D3D12 titles |
+| **Windows x64** (`base/windows-x64`) | 64-bit Windows desktop: DXGI, D3D12, WIC, the PC GDK, the MSVC runtimes | Stockfish 19 (official build), Microsoft's SimpleTriangleDesktop and SimplePBR; Desire (2026, D3D12 on its own engine) from its logo to its ending, checked in headless Chrome | desktop D3D12 titles |
 | **Windows x86** (`base/windows-x86`) | 32-bit Windows desktop of the 2000s: Win32, GDI, Direct3D 9, DirectInput, FMOD | Narbacular Drop (2005), playable in a desktop browser; Tag: The Power of Paint (2008, shader model 2) to its second level, checked in headless Chrome | 32-bit Direct3D 9 games of the 2000s |
 | **Linux x64** (`base/linux-x64`) | Linux at its system calls, for one statically linked program: files, memory, the clock, a generated `/proc` | fastfetch 2.71.0; neofetch 7.1.0 on bash and busybox (fork, exec, pipes), in Node and in the page | statically linked command-line programs |
 
@@ -36,6 +36,11 @@ fastfetch, built from its source as a static Linux program, is the first title o
 the machine it finds, a Linux x86-64 system imitated in WebAssembly, with its logo and colours in the page
 ([its page](docs/fastfetch.md)). neofetch, a bash script, runs on bash and busybox built the same way: 83 processes
 forked and executed, each in a worker with memory of its own ([its page](docs/neofetch.md)).
+
+Desire (DESI:Re v0.1), a free maze escape on its author's own Direct3D 12 engine, is the first such game on the
+Windows x64 runtime: built from its zip and your copy of Microsoft's C++ runtime DLLs, its HLSL compiled when the
+image is built, its C++ exceptions MSVC's current FH4 kind. Given the seeds a Wine run drew, it builds Wine's maze
+byte for byte; in headless Chrome its still screens are within 0.3 of 255 of Wine's ([the game's page](docs/desire.md)).
 
 Licence: GPL-2.0-or-later for our own code; code from other projects keeps its own licence (the shader tools
 from [XCL](https://github.com/ivall/xcl) are GPL-2.0-only). See [LICENSING.md](LICENSING.md).
@@ -125,6 +130,7 @@ target/release/pisco run out/images/narbacular-drop --session recipes/narbacular
 target/release/pisco run out/images/narbacular-drop --chrome          # headless Chrome; in a browser of your own:
 node tools/serve.mjs 8000 web out/images/narbacular-drop           # then http://127.0.0.1:8000/browser/index.html?image=/files/0/
 target/release/pisco build recipes/tag --source ~/Downloads/Tag_setup.exe                          # -> out/images/tag, the same way
+target/release/pisco build recipes/desire --source ~/Downloads/DESI-Re-v0.1-Windows-x64.zip --with REDIST=<the x64 C++ runtime DLLs>   # -> out/images/desire
 target/release/pisco inspect out/images/narbacular-drop               # its layers, config and registry
 target/release/pisco census <a title's .exe>                          # what the base and its libraries answer for
 ```

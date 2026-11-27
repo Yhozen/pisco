@@ -42,6 +42,30 @@ static dxil_spv_bool remap_cbv(void *, const dxil_spv_d3d_binding *b, dxil_spv_c
 }
 
 // SPIR-V words: the BaseVertex / BaseInstance inputs become private variables that hold 0
+// A discard (HLSL clip, texkill) comes out of dxil-spirv as SPV_EXT_demote_to_helper_invocation, which naga does not
+// read. Each `OpDemoteToHelperInvocation; OpBranch` (the conditional demote's own block) becomes `OpKill`, and the
+// capability and extension go; naga reads OpKill as WGSL's discard, which demotes anyway. False if a demote is used
+// otherwise (OpIsHelperInvocationEXT, or not followed by a branch).
+static bool kill_for_demote(std::vector<uint32_t> &w) {
+  if (w.size() < 5) return true;
+  std::vector<uint32_t> out(w.begin(), w.begin() + 5);
+  bool ok = true;
+  for (size_t i = 5; i < w.size();) {
+    uint32_t n = w[i] >> 16, op = w[i] & 0xffff;
+    if (!n || i + n > w.size()) return false;
+    if (op == 17 && n == 2 && w[i + 1] == 5379) { i += n; continue; } // OpCapability DemoteToHelperInvocation
+    if (op == 10 && !strcmp((const char *)&w[i + 1], "SPV_EXT_demote_to_helper_invocation")) { i += n; continue; } // OpExtension
+    if (op == 5380) { // OpDemoteToHelperInvocation
+      size_t j = i + n;
+      if (j < w.size() && (w[j] & 0xffff) == 249) { out.push_back(1u << 16 | 252); i = j + (w[j] >> 16); continue; } // ... OpBranch -> OpKill
+      ok = false;
+    }
+    if (op == 5381) ok = false; // OpIsHelperInvocationEXT
+    out.insert(out.end(), w.begin() + i, w.begin() + i + n); i += n;
+  }
+  w.swap(out);
+  return ok;
+}
 static void drop_draw_parameters(std::vector<uint32_t> &w) {
   enum { OpEntryPoint = 15, OpCapability = 17, OpTypeInt = 21, OpTypePointer = 32, OpConstant = 43, OpVariable = 59, OpDecorate = 71 };
   std::vector<uint32_t> vars;
@@ -91,6 +115,7 @@ int main(int argc, char **argv) {
   if (dxil_spv_converter_get_compiled_spirv(conv, &spv) != DXIL_SPV_SUCCESS) return 1;
   std::vector<uint32_t> words((const uint32_t *)spv.data, (const uint32_t *)spv.data + spv.size / 4);
   drop_draw_parameters(words);
+  if (!kill_for_demote(words)) { fprintf(stderr, "dxil2spv: a demote-to-helper this tool cannot turn into a kill\n"); return 1; }
   FILE *o = fopen(argv[2], "wb"); fwrite(words.data(), 4, words.size(), o); fclose(o);
   const char *stages[] = {"vertex", "hull", "domain", "geometry", "pixel", "compute"};
   unsigned wg[3] = {0, 0, 0};

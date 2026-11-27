@@ -268,6 +268,7 @@ static void unwind_to(Cpu *c, u64 target, u64 target_ip, u64 rec, u64 retval, u6
       M64(dc + DC_CONTROL_PC) = pc; M64(dc + DC_IMAGE_BASE) = base_of(pc); M64(dc + DC_FUNCTION_ENTRY) = fe;
       M64(dc + DC_ESTABLISHER) = est; M64(dc + DC_CONTEXT) = frame; M64(dc + DC_HANDLER) = h; M64(dc + DC_HANDLER_DATA) = hd;
       M64(dc + DC_TARGET_IP) = target_ip;
+      M32(dc + DC_SCOPE_INDEX) = 0; // each frame's handler starts at its first scope (__C_specific_handler leaves its own count here; FH4 aborts on one it did not set)
       call_handler(c, h, rec, est, frame, dc, frame);
     }
     if (est == target) {

@@ -182,6 +182,23 @@ static int snooped(u32 i) {
   }
   return mark && i < marked && mark[i];
 }
+// SW_CALL_STATS=1: every import's calls counted; rt_call_stats_print writes those of some DLLs since it last did
+static u32 *call_counts; // as many as import_fn has room for: dynamic imports (COM methods) are added as they are asked for
+void rt_call_stats_print(const char *title, const char *dlls) { // dlls: "d3d12.dll,dxgi.dll"
+  static u32 *last; if (!call_counts) return;
+  if (!last) last = calloc(8192, 4);
+  size_t cap = 4096, n = 0; char *out = malloc(cap); out[0] = 0;
+  for (u32 i = 0; i < import_total; i++) {
+    u32 k = call_counts[i] - last[i]; last[i] = call_counts[i];
+    const char *name = import_name_of[i], *bang = strchr(name, '!');
+    if (!k || !bang) continue;
+    char dll[64]; snprintf(dll, sizeof dll, "%.*s", (int)(bang - name), name);
+    if (!strstr(dlls, dll)) continue;
+    size_t need = n + strlen(bang) + 24; if (need > cap) { cap = need * 2; out = realloc(out, cap); }
+    n += (size_t)sprintf(out + n, "%s%s x%u", n ? ", " : "", bang + 1, k);
+  }
+  rt_log("%s: %s", title, n ? out : "(no calls)"); free(out);
+}
 void rt_call(Cpu *c, u64 t) {
   if (t >= import_base && t < import_base + 8ull * import_total) {
     u32 i = (u32)((t - import_base) / 8);
@@ -202,6 +219,7 @@ void rt_call(Cpu *c, u64 t) {
       return;
     }
     if (rt_trace > 1) rt_log("[%u] %s ret=%08llx", THREAD(c)->id, import_name_of[i], (u64)MP(R[RSP])); // as Wine's relay trace names the caller
+    if (call_counts) __atomic_add_fetch(&call_counts[i], 1, __ATOMIC_RELAXED);
 #if GUEST_BITS == 32
     if (snooped(i)) {   // SW_TRACE_DLL: the call as Wine's +snoop prints it once it returns (the stack's words, the result)
       u32 n = (u32)import_pop[i] / 4, w[16], at = (u32)R[RSP], caller = M32(at);
@@ -498,6 +516,7 @@ static void load_modules(void) {
     MP(import_slots[i]) = import_base + 8ull * i;
   }
   import_total = import_count;
+  { const char *e = getenv("SW_CALL_STATS"); if (e && *e == '1') call_counts = calloc(8192, 4); }
   if (missing && rt_trace) {
     rt_log("%u of %u imports are not implemented:", missing, import_count);
     for (unsigned i = 0; i < import_count; i++) if (!import_targets[i] && !import_fn[i] && !rt_data_import(import_names[i])) rt_log("  %s", import_names[i]);

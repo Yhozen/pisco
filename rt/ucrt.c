@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // ucrtbase.dll (the api-ms-win-crt-* API sets resolve here). Functions with msvcrt's semantics are found in
 // msvcrt.c: the import lookup falls back to it (see find_import in process.c).
+#include <math.h>
 #include <wchar.h>
 #include "rt.h"
 
@@ -248,3 +249,48 @@ IMP(ucrtbase, _wmakepath_s) {
   }
   RET(wput(out, cap, buf, k));
 }
+
+// ---- floating-point classes: _dclass / _fdclass / _ldclass (long double is double on Windows) ----
+// FP_INFINITE 1, FP_NAN 2, FP_NORMAL -1, FP_SUBNORMAL -2, FP_ZERO 0 (Microsoft's values, as a short)
+static s16 fp_class(int k) { return k == FP_INFINITE ? 1 : k == FP_NAN ? 2 : k == FP_NORMAL ? -1 : k == FP_SUBNORMAL ? -2 : 0; }
+IMP(ucrtbase, _dclass) { RET((u16)fp_class(fpclassify(DA(0)))); }
+IMP(ucrtbase, _ldclass) { RET((u16)fp_class(fpclassify(DA(0)))); }
+IMP(ucrtbase, _fdclass) { RET((u16)fp_class(fpclassify(FA(0)))); }
+
+// ---- rand_s: the title's random numbers never come from the host, so that a run can be repeated and set against
+// Wine's. SW_RANDOM gives the first values (hex, separated by commas: the ones Wine's log shows a title got,
+// docs/desire.md); after them, a generator seeded by SW_SEED (decimal or 0x hex, default 1). ----
+static pthread_mutex_t rand_lock = PTHREAD_MUTEX_INITIALIZER;
+u32 rt_random32(void) {
+  static int ready; static u32 given[64], ngiven, next_given; static u64 state;
+  pthread_mutex_lock(&rand_lock);
+  if (!ready) {
+    ready = 1;
+    const char *e = getenv("SW_RANDOM");
+    for (const char *p = e; p && *p && ngiven < 64;) { char *end; unsigned long v = strtoul(p, &end, 16); if (end == p) break; given[ngiven++] = (u32)v; p = *end ? end + 1 : end; }
+    const char *s = getenv("SW_SEED"); state = s ? strtoull(s, 0, 0) : 1;
+    if (ngiven) rt_log("rand_s: the first %u values from SW_RANDOM", ngiven);
+  }
+  u32 v;
+  if (next_given < ngiven) v = given[next_given++];
+  else { state += 0x9e3779b97f4a7c15ull; u64 z = state; z = (z ^ (z >> 30)) * 0xbf58476d1ce4e5b9ull; z = (z ^ (z >> 27)) * 0x94d049bb133111ebull; v = (u32)((z ^ (z >> 31)) >> 32); }
+  pthread_mutex_unlock(&rand_lock);
+  return v;
+}
+IMP(ucrtbase, rand_s) { if (!ARG(0)) { RET(22); return; } M32(ARG(0)) = rt_random32(); RET(0); } // EINVAL without a pointer
+
+// ---- the rest of what Microsoft's msvcp140 and a title's start-up reach ----
+IMP(ucrtbase, _register_thread_local_exe_atexit_callback) {} // thread-local destructors at exit: there is one thread, and the process ends
+IMP(ucrtbase, _c_exit) {}
+IMP(ucrtbase, _seh_filter_dll) { RET(0); } // EXCEPTION_CONTINUE_SEARCH
+IMP(ucrtbase, _set_new_handler) { RET(0); }
+IMP(ucrtbase, _callnewh) { RET(0); } // no new handler: operator new fails
+IMP(ucrtbase, _invoke_watson) { rt_fatal("_invoke_watson: the C runtime found an invalid parameter (called from 0x%llx)", (unsigned long long)M64(R[RSP])); }
+IMP(ucrtbase, ___lc_collate_cp_func) { RET(GUEST_BITS == 32 ? 1252 : 65001); }
+IMP(ucrtbase, atol) { RET((u64)(s64)(s32)atol(GSTR(ARG(0)))); }
+IMP(ucrtbase, strtof) { const char *s = GSTR(ARG(0)); char *e; float v = strtof(s, &e); if (ARG(1)) M64(ARG(1)) = ARG(0) + (u64)(e - s); FRET(v); }
+IMP(ucrtbase, btowc) { s32 ch = (s32)ARG(0); RET(ch < 0 || ch > 255 ? 0xffff : (u16)ch); }
+IMP(ucrtbase, strcspn) { RET(strcspn(GSTR(ARG(0)), GSTR(ARG(1)))); }
+IMP(ucrtbase, __strncnt) { const char *s = GSTR(ARG(0)); u64 n = ARG(1), i = 0; while (i < n && s[i]) i++; RET(i); }
+IMP(ucrtbase, wcsncmp) { const wchar16 *a = GWSTR(ARG(0)), *b = GWSTR(ARG(1)); u64 n = ARG(2); for (u64 i = 0; i < n; i++) { if (a[i] != b[i]) { RET(a[i] < b[i] ? (u64)-1 : 1); return; } if (!a[i]) break; } RET(0); }
+IMP(ucrtbase, _wcsdup) { if (!ARG(0)) { RET(0); return; } u64 n = (rt_wcslen(GWSTR(ARG(0))) + 1) * 2; void *p = malloc(n); if (p) memcpy(p, GWSTR(ARG(0)), n); RET((uptr)p); }

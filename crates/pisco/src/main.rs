@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // pisco: builds, runs and inspects title images (docs/images.md).
-//   pisco build <recipe dir> [--source <installer>] [--out <image dir>] [--cache <dir>] [--compare <installed folder>]
+//   pisco build <recipe dir> [--source <installer>] [--out <image dir>] [--cache <dir>] [--compare <installed folder>] [--with NAME=<folder>]...
 //   pisco run <image> [--session <session.json>] [--saves <dir>] [--chrome] [-- title arguments]
 //   pisco census <image | title.exe> [--recipe <recipe dir> | --from base/windows-x86:1 --libraries a,b] [--dll-dir <system32>] [--all]
 //   pisco inspect <image> [--files]
@@ -23,7 +23,7 @@ fn root() -> PathBuf {
     PathBuf::from(".")
 }
 fn usage() -> ! {
-    eprintln!("usage:\n  pisco build <recipe dir> [--source <installer>] [--out <image dir>] [--cache <dir>] [--compare <installed folder>]\n  pisco run <image> [--session <session.json>] [--saves <dir>] [--chrome] [-- title arguments]\n  pisco census <image | title.exe> [--recipe <recipe dir> | --from <base> --libraries a,b] [--all]\n  pisco inspect <image> [--files]\n  pisco sources <base | recipe dir> [--libraries a,b | --all-libraries]");
+    eprintln!("usage:\n  pisco build <recipe dir> [--source <installer>] [--out <image dir>] [--cache <dir>] [--compare <installed folder>] [--with NAME=<folder>]...\n  pisco run <image> [--session <session.json>] [--saves <dir>] [--chrome] [-- title arguments]\n  pisco census <image | title.exe> [--recipe <recipe dir> | --from <base> --libraries a,b] [--all]\n  pisco inspect <image> [--files]\n  pisco sources <base | recipe dir> [--libraries a,b | --all-libraries]");
     std::process::exit(2);
 }
 struct Args { pos: Vec<String>, opts: Vec<(String, Option<String>)>, rest: Vec<String> }
@@ -50,8 +50,9 @@ fn main() {
     let Some(cmd) = args.first() else { usage() };
     let root = root();
     let r = match cmd.as_str() {
-        "build" => { let a = parse(&args[1..], &["source", "out", "cache", "compare"]); let Some(p) = a.pos.first() else { usage() };
-            build::build(&root, &build::Opts { recipe: p.into(), source: a.get("source"), out: a.get("out"), cache: a.get("cache"), compare: a.get("compare") }) }
+        "build" => { let a = parse(&args[1..], &["source", "out", "cache", "compare", "with"]); let Some(p) = a.pos.first() else { usage() };
+            build::build(&root, &build::Opts { recipe: p.into(), source: a.get("source"), out: a.get("out"), cache: a.get("cache"), compare: a.get("compare"),
+                with: a.opts.iter().filter(|(n, _)| n == "with").filter_map(|(_, v)| v.as_ref()?.split_once('=').map(|(k, p)| (k.to_string(), PathBuf::from(p)))).collect() }) }
         "run" => run(&root, &parse(&args[1..], &["session", "saves"])),
         "census" => census(&root, &parse(&args[1..], &["from", "libraries", "recipe", "dll-dir"])),
         "inspect" => inspect(&parse(&args[1..], &[])),

@@ -545,6 +545,26 @@ joins them (the process table, the pipes) is the host's, in one SharedArrayBuffe
   pointers: bash's lifted code shrank by 40 %, and the parser is a loop again.
 - **The page became a terminal**: neofetch draws its logo, then moves the cursor up and writes beside it.
 
+### 3.26 Desire: a Direct3D 12 game on its own engine, and MSVC's FH4 (2026-11-26)
+
+Desire (DESI:Re v0.1), a small maze escape on its author's C++20 / Direct3D 12 engine, is the Windows x64
+runtime's first third-party game ([desire.md](desire.md)). It came as a zip with no installer and without
+Microsoft's C++ runtime, compiles its HLSL with `D3DCompile` when it starts, reads PNGs through WIC and draws its
+maze from `std::random_device`. Wine ran it on vkd3d and lavapipe from the first try, which made it the first
+Direct3D 12 oracle. What the comparison found:
+
+- **Random, but repeatable**: Wine's relay of its own `msvcp140` prints what `_Random_device` returned. Our `rand_s`
+  never asks the host; given those two values, the maze the lifted `mt19937` writes is Wine's, byte for byte.
+- **MSVC's two-level switch** (a byte index table, then a table of offsets) was read with a bound from the wrong
+  compare: 35 of Desire's tables were left as indirect jumps, and one of them was the first stray jump.
+- **Long log lines were cut at 1 KiB**: the shaders `D3DCompile` logs for compilation reached dxc half written,
+  and dxc's errors pointed into Japanese comments that had nothing to do with it.
+- **FH4** needed two things: the lifter reading the compressed FuncInfo4 (most functions name a local
+  `__GSHandlerCheck_EH4`, not the import), and `RtlUnwindEx` clearing the dispatcher context's `ScopeIndex` for
+  each frame. `__C_specific_handler` had left its count there, and FH4's handler aborts on a state it did not set.
+- Under Wine on lavapipe the game runs at 2 to 6 frames a second, and its frame time is capped at 0.1 s: held keys
+  do not mean distances there, so the walk to the goal is checked in our runtime only, on its virtual clock.
+
 ## 4. Roadblocks
 
 ### Resolved
@@ -592,7 +612,7 @@ joins them (the process table, the pipes) is the host's, in one SharedArrayBuffe
 | O1 | **Graphics beyond the ladder** | D3D12 / D3D12.X → WebGPU works for Doom, XCL's checks, SimpleTriangleDesktop and SimplePBR (vertex, index and constant buffers, descriptor tables, BC textures, DXGI swap chains); compute, raytracing (WebGPU has none) and Minecraft's own patterns are untested | Minecraft's census, then its first frames |
 | O2 | **Shader translation** RDNA2 → WGSL | the console ships GPU machine code, not portable shaders | the census tells which stages and instructions Minecraft needs; XCL's HLSL emitter is the reference; mesh/NGG programs may need compute + indirect draws |
 | O3 | **WebGPU limits** | no mesh shaders, no bindless heaps (XCL saw Minecraft use eight heaps of 73,727 descriptors), no 64-bit integers, no shared memory | per-draw bindings traced from each shader (VIctory's approach), compute emulation where needed; decided after the shader census |
-| O4 | MSVC C++ exceptions | FH3 works with the real vcruntime (§3.20); FH4, which current `cl.exe` emits and Minecraft likely uses, is untested | build an FH4 test title with `cl.exe` (on the MSVC build machine) |
+| O4 | MSVC C++ exceptions | FH3 works with the real vcruntime (§3.20); FH4, which current `cl.exe` emits and Minecraft likely uses, works since Desire threw through it (docs/desire.md, D2) | build an FH4 test title with `cl.exe` (on the MSVC build machine) |
 | O5 | Audio codecs | PCM, XMA2 and Opus voices decode (FFmpeg); XMA buffers are decoded whole at submit, each buffer on its own; GameInput has no device callbacks yet | stream XMA across buffers when a title needs it |
 | O6 | Speed | 1.3–6× native on micro-benchmarks; a game needs headroom | lazy flags, registers across calls, AVX2 paths, wasm64 only if needed |
 | O7 | **The Minecraft files** | every Minecraft-specific answer (imports, memory, shaders, whether it needs `msvcp140` from its package) waits on them | run `tools/census.sh` first (`docs/first-run.md`) |

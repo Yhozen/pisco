@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // Input for Windows desktop titles: one state (keys by DirectInput scan code, the mouse's motion and buttons) with
-// the events that changed it, read by DirectInput (dinput8.c). And the session player, which feeds that state
+// the events that changed it, read by DirectInput (rt/windows-x86/dinput8.c) and by user32's GetAsyncKeyState
+// (rt/gdk/window.c, through a table of virtual keys). And the session player, which feeds that state
 // from a session script on the title's clock, so a run can be driven without a person and repeated exactly.
 //
 // A session (tools/oracle-wine/README.md has the format) reaches the runtime as the host's SW_SESSION_STEPS
@@ -10,9 +11,9 @@
 // A step starts when the one before it ends; `ms` 0 means the oracle's player's own default (150 ms for a click,
 // 120 ms for a key, 30 ms for every 12 pixels of a move). `shot` writes "checkpoint <name> frame <n>" with the
 // Direct3D calls made since the checkpoint before, and marks the frame just presented for the host to save
-// (d3d9_gpu_shot): where the oracle saves a screenshot.
-#include "win32.h"
-#include "d3d9.h"
+// (rt_session_shot: Direct3D 9's d3d9_gpu_shot, DXGI's in rt/windows-x64/dxgi_swapchain.c): where the oracle saves a
+// screenshot.
+#include "input.h"
 
 void rt_exit_process(u32 code);   // msvcrt.c
 
@@ -87,7 +88,8 @@ static int button_of(const char *s) { return !strcmp(s, "left") ? 0 : !strcmp(s,
 static int scan_of(const char *s) {
   static const struct { const char *name; u8 scan; } named[] = {{"space", 0x39}, {"enter", 0x1C}, {"Return", 0x1C}, {"esc", 0x01}, {"escape", 0x01}, {"Escape", 0x01}, {"tab", 0x0F}, {"Tab", 0x0F},
     {"shift", 0x2A}, {"Shift_L", 0x2A}, {"ctrl", 0x1D}, {"Control_L", 0x1D}, {"up", 0xC8}, {"Up", 0xC8}, {"down", 0xD0}, {"Down", 0xD0}, {"left", 0xCB}, {"Left", 0xCB}, {"right", 0xCD}, {"Right", 0xCD},
-    {"grave", 0x29}, {"`", 0x29}, {"~", 0x29}, {" ", 0x39}};
+    {"grave", 0x29}, {"`", 0x29}, {"~", 0x29}, {" ", 0x39},
+    {"F1", 0x3B}, {"F2", 0x3C}, {"F3", 0x3D}, {"F4", 0x3E}, {"F5", 0x3F}, {"F6", 0x40}, {"F7", 0x41}, {"F8", 0x42}, {"F9", 0x43}, {"F10", 0x44}, {"F11", 0x57}, {"F12", 0x58}};
   static const char rows[] = "1234567890-=\0\0qwertyuiop[]\0\0asdfghjkl;'`\0\\zxcvbnm,./";   // scan codes 0x02..0x35, row by row
   for (unsigned i = 0; i < sizeof named / sizeof named[0]; i++) if (!strcmp(named[i].name, s)) return named[i].scan;
   if (s[0] && !s[1]) { char ch = s[0] >= 'A' && s[0] <= 'Z' ? s[0] + 32 : s[0]; for (unsigned i = 0; i < sizeof rows - 1; i++) if (rows[i] == ch) return 2 + (int)i; }
@@ -130,7 +132,7 @@ void session_frame(u32 frame) {
       case S_BUTTON: input_mouse_button((u32)s->a, s->b); break;
       case S_KEY: case S_KEYDOWN: input_key((u32)s->a, 1); break;
       case S_KEYUP: input_key((u32)s->a, 0); break;
-      case S_SHOT: { char title[80]; snprintf(title, sizeof title, "checkpoint %s frame %u", s->name, frame); d3d9_stats_print(title, 1); d3d9_gpu_shot(s->name); break; }
+      case S_SHOT: rt_session_shot(s->name, frame); break;
       }
     }
     u64 passed = now - step_start; if (passed > s->us) passed = s->us;
@@ -143,4 +145,32 @@ void session_frame(u32 frame) {
     if (s->kind == S_KEY) input_key((u32)s->a, 0);
     step_start += s->us; step_at++; started = 0;
   }
+}
+
+__attribute__((weak)) void rt_session_shot(const char *name, u32 frame) { rt_log("checkpoint %s frame %u", name, frame); }
+
+// ---- virtual keys: what user32 calls the keys the state holds by scan code (a US keyboard) ----
+u32 input_vk_of_scan(u32 scan) {
+  static const char rows[] = "1234567890-=\0\0QWERTYUIOP[]\0\0ASDFGHJKL;'`\0\\ZXCVBNM,./";   // scan codes 0x02..0x35
+  if (scan >= 0x02 && scan <= 0x35) { char ch = rows[scan - 2]; if ((ch >= '0' && ch <= '9') || (ch >= 'A' && ch <= 'Z')) return (u32)ch; }
+  if (scan >= 0x3B && scan <= 0x44) return 0x70 + (scan - 0x3B);   // F1..F10
+  switch (scan) {
+  case 0x01: return 0x1B; case 0x0E: return 0x08; case 0x0F: return 0x09; case 0x1C: return 0x0D; case 0x39: return 0x20;   // Esc, Backspace, Tab, Enter, Space
+  case 0x2A: return 0xA0; case 0x36: return 0xA1; case 0x1D: return 0xA2; case 0x9D: return 0xA3; case 0x38: return 0xA4; case 0xB8: return 0xA5; // shifts, controls, alts (left / right)
+  case 0x57: return 0x7A; case 0x58: return 0x7B;   // F11, F12
+  case 0xC8: return 0x26; case 0xD0: return 0x28; case 0xCB: return 0x25; case 0xCD: return 0x27;   // the arrows
+  case 0xC7: return 0x24; case 0xCF: return 0x23; case 0xC9: return 0x21; case 0xD1: return 0x22; case 0xD2: return 0x2D; case 0xD3: return 0x2E; // Home End PgUp PgDn Ins Del
+  case 0x0C: return 0xBD; case 0x0D: return 0xBB; case 0x1A: return 0xDB; case 0x1B: return 0xDD; case 0x27: return 0xBA; case 0x28: return 0xDE;
+  case 0x29: return 0xC0; case 0x2B: return 0xDC; case 0x33: return 0xBC; case 0x34: return 0xBE; case 0x35: return 0xBF;
+  }
+  return 0;
+}
+int input_scan_of_vk(u32 vk) {
+  static s16 table[256]; static int ready;
+  if (!ready) { for (int i = 0; i < 256; i++) table[i] = -1; for (u32 s = 255; s > 0; s--) { u32 v = input_vk_of_scan(s); if (v && v < 256) table[v] = (s16)s; } ready = 1; }
+  if (vk >= 256) return -1;
+  if (vk == 0x10) return input_keys()[0x2A] ? 0x2A : 0x36;   // VK_SHIFT, VK_CONTROL, VK_MENU: either side
+  if (vk == 0x11) return input_keys()[0x1D] ? 0x1D : 0x9D;
+  if (vk == 0x12) return input_keys()[0x38] ? 0x38 : 0xB8;
+  return table[vk];
 }

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // A session script (tools/oracle-wine/README.md: the JSON a person writes) as the text the runtime's session
-// player reads from SW_SESSION_STEPS (rt/windows-x86/input.c): steps separated by ';'.
+// player reads from SW_SESSION_STEPS (rt/input.c): steps separated by ';'.
 export function sessionSteps(session) {
   const one = (s) => {
     if ('wait' in s) return `wait ${s.wait | 0}`;
@@ -16,4 +16,11 @@ export function sessionSteps(session) {
   const bad = steps.find((t) => /[;\n]/.test(t));
   if (bad) throw new Error(`session: a step cannot contain ';' (${bad})`);
   return steps.join(';');
+}
+// What else a session sets for the runtime: `"random": ["aee69d51", ...]`, the values the title's random source
+// (rand_s) answers first (SW_RANDOM): the ones a Wine run of the title got, so that its random world is that run's
+export function sessionEnv(session) {
+  const env = {};
+  if (session.random) env.SW_RANDOM = session.random.map((v) => String(v)).join(',');
+  return env;
 }
