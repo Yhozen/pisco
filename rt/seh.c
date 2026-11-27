@@ -226,7 +226,18 @@ static void dispatch(Cpu *c, u64 rec, u64 orig) {
   rt_fatal("unhandled exception 0x%08x at 0x%llx (thread %u)", M32(rec + ER_CODE), M64(rec + ER_ADDRESS), THREAD(c)->id);
 }
 
+// MS_VC_EXCEPTION, 0x406D1388: Visual C++'s way to name a thread for a debugger. The code that raises it catches it
+// itself (`__try { RaiseException(...) } __except (EXCEPTION_EXECUTE_HANDLER) {}`) and goes on; with no debugger
+// that is the same as RaiseException returning, which is what happens here (a 32-bit title has no SEH dispatch yet).
+// The information: 0x1000, the name, the thread id (-1: the caller), flags.
+static int thread_name(Cpu *c) {
+  if ((u32)ARG(0) != 0x406D1388u || (u32)ARG(2) < 3 || !ARG(3)) return 0;
+  u64 info = ARG(3), name = GUEST_BITS == 32 ? M32(info + 4) : M64(info + 8);
+  if (rt_trace) rt_log("thread %u is named \"%.60s\"", THREAD(c)->id, name ? GSTR(name) : "");
+  return 1;
+}
 IMP(kernel32, RaiseException) {
+  if (thread_name(c)) return;
   u64 rec = (uptr)calloc(1, ER_SIZE), ctx = (uptr)aligned_alloc(16, CX_SIZE);
   M32(rec + ER_CODE) = (u32)ARG(0); M32(rec + ER_FLAGS) = (u32)ARG(1) & EH_NONCONTINUABLE;
   u32 n = (u32)ARG(2); if (n > 15) n = 15;

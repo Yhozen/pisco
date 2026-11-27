@@ -29,6 +29,10 @@ pub struct Recipe {
     pub exe: String, pub display: Option<String>, pub args: Vec<String>,
     pub cpu: Option<Vec<String>>, pub dll: BTreeMap<String, String>, pub registry: Vec<RegValue>,
     pub split: usize, pub entries: Vec<u64>, pub base_address: Option<u64>, pub opt: String,
+    /// [lifter] load: DLLs the title loads itself (LoadLibrary) from its folder or below it, lifted with it
+    pub load: Vec<String>,
+    /// [files]: small text files a setup step would write (settings), by their place on C:
+    pub files: BTreeMap<String, String>,
     pub heap_fill: Option<u8>, // [quirks] heap_fill: the byte a heap block the title did not ask to be zeroed holds
     pub shaders: Option<Shaders>,
 }
@@ -106,7 +110,7 @@ pub fn load_recipe(dir: &Path) -> R<Recipe> {
     let path = if dir.is_dir() { dir.join("title.toml") } else { dir.to_path_buf() };
     let t = load(&path)?;
     let dir = path.parent().unwrap().to_path_buf();
-    let known = ["name", "from", "libraries", "source", "run", "cpu", "dll", "registry", "lifter", "build", "quirks", "shaders"];
+    let known = ["name", "from", "libraries", "source", "run", "cpu", "dll", "registry", "lifter", "build", "quirks", "shaders", "files"];
     if let Some(k) = t.keys().find(|k| !known.contains(&k.as_str())) { return Err(format!("{}: {k} is not a recipe key ({})", path.display(), known.join(", "))); }
     let src = table(&t, "source")?.ok_or(format!("{}: no [source]", path.display()))?;
     let run = table(&t, "run")?.ok_or(format!("{}: no [run]", path.display()))?;
@@ -161,8 +165,10 @@ pub fn load_recipe(dir: &Path) -> R<Recipe> {
         cpu: match table(&t, "cpu")? { Some(c) => strs(c, "features")?, None => None },
         dll,
         registry: registry(table(&t, "registry")?)?,
+        files: match table(&t, "files")? { None => BTreeMap::new(), Some(f) => f.iter().map(|(k, v)| v.as_str().map(|x| (k.clone(), x.to_string())).ok_or(format!("[files] {k}: a string"))).collect::<R<_>>()? },
         split: lifter.get("split").map(|v| v.as_integer().filter(|n| *n >= 1).ok_or("lifter.split: a number from 1")).transpose()?.unwrap_or(8) as usize,
         entries: match lifter.get("entries") { Some(Value::Array(a)) => a.iter().map(|v| int(v, "lifter.entries")).collect::<R<_>>()?, _ => vec![] },
+        load: strs(&lifter, "load")?.unwrap_or_default(),
         base_address: lifter.get("base").map(|v| int(v, "lifter.base")).transpose()?,
         opt: s(&build, "opt").unwrap_or("-O2".into()),
         heap_fill: match table(&t, "quirks")?.and_then(|q| q.get("heap_fill")) {

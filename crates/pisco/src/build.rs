@@ -330,6 +330,16 @@ pub fn lifted_imports(title_c: &Path) -> R<Vec<String>> {
     v.sort(); v.dedup();
     Ok(v)
 }
+/// A path below `dir` ("main/gamex86.dll"), each part found without regard to case
+fn find_ci(dir: &Path, rel: &str) -> Option<PathBuf> {
+    let mut p = dir.to_path_buf();
+    for part in rel.split('/').filter(|x| !x.is_empty()) {
+        if part == ".." { return None; }
+        let e = std::fs::read_dir(&p).ok()?.filter_map(|e| e.ok()).find(|e| e.file_name().to_string_lossy().eq_ignore_ascii_case(part))?;
+        p = e.path();
+    }
+    Some(p)
+}
 fn lift(t: &Tools, r: &Recipe, exe: &Path, ex: &Extracted, cache: &Path) -> R<Lifted> {
     let dir = exe.parent().unwrap();
     // the images the lifter reads: the exe and every DLL beside it that is not builtin, and the DLLs the image puts in
@@ -344,7 +354,15 @@ fn lift(t: &Tools, r: &Recipe, exe: &Path, ex: &Extracted, cache: &Path) -> R<Li
             if let Some(p) = h.parent() { if !sys_dirs.iter().any(|d| d == p) { sys_dirs.push(p.to_path_buf()); } }
         }
     }
-    images.sort();
+    // [lifter] load: DLLs the title loads itself, by their path below the exe's folder
+    let mut loads: Vec<String> = Vec::new();
+    for l in &r.load {
+        let rel = l.replace('\\', "/");
+        let host = find_ci(dir, &rel).ok_or(format!("[lifter] load: {l}: not in the title's folder"))?;
+        loads.extend(["--load".into(), format!("{}={rel}", host.display())]);
+        images.push((rel.to_ascii_lowercase(), host));
+    }
+    images.sort(); images.dedup_by(|a, b| a.0 == b.0);
     let mut key = format!("lifter {}\n", t.lifter_hash);
     for (n, p) in &images { key.push_str(&format!("image {n} {}\n", oci::sha256(&io(std::fs::read(p), p)?))); }
     let mut args: Vec<String> = vec!["--split".into(), r.split.to_string()];
@@ -355,6 +373,7 @@ fn lift(t: &Tools, r: &Recipe, exe: &Path, ex: &Extracted, cache: &Path) -> R<Li
     let mut dll_dirs: Vec<String> = Vec::new();   // not in the key: where the files are differs between machines
     for d in &sys_dirs { dll_dirs.extend(["--dll-dir".into(), format!("{}=c:/WINDOWS/system32", d.display())]); }
     key.push_str(&format!("options {}\n", args.join(" ")));
+    for l in &r.load { key.push_str(&format!("load {l}\n")); }
     for h in ["rt/cpu.h", "rt/modules.h"] { key.push_str(&format!("{h} {}\n", oci::sha256(&io(std::fs::read(t.root.join(h)), &t.root.join(h))?))); }
     key.push_str(&format!("clang {}\nopt {}\n", t.clang_version, r.opt));
     let key = oci::sha256(key.as_bytes());
@@ -364,7 +383,7 @@ fn lift(t: &Tools, r: &Recipe, exe: &Path, ex: &Extracted, cache: &Path) -> R<Li
         say(&format!("lift: cached, lift key {}: not lifted or compiled again", &key[..16]));
     } else {
         let tmp = tmp_name(&out); let _ = std::fs::remove_dir_all(&tmp); io(std::fs::create_dir_all(&tmp), &tmp)?;
-        let o = Command::new(&t.lifter).arg(exe).arg("title.c").args(&args).args(&dll_dirs).current_dir(&tmp).output().map_err(|e| format!("lifter: {e}"))?;
+        let o = Command::new(&t.lifter).arg(exe).arg("title.c").args(&args).args(&dll_dirs).args(&loads).current_dir(&tmp).output().map_err(|e| format!("lifter: {e}"))?;
         io(std::fs::write(tmp.join("lifter.log"), [&o.stdout[..], &o.stderr[..]].concat()), &tmp)?;
         if !o.status.success() { return Err(format!("the lifter failed: see {}", tmp.join("lifter.log").display())); }
         let lifted_at = time.elapsed().as_secs_f64();
@@ -458,8 +477,16 @@ pub fn build(root: &Path, o: &Opts) -> R<()> {
         Some(_) => say(&format!("source: {} has the recipe's sha256", src.display())),
         None => say(&format!("source: the recipe gives no sha256 for {} (it has {sha}): not checked", src.display())),
     }
-    let ex = extract(&r, &src, &sha, &cache, &o.with)?;
+    let mut ex = extract(&r, &src, &sha, &cache, &o.with)?;
     if let Some(c) = &o.compare { compare(&ex, c)?; }
+    // [files]: settings a setup step would write, put in the title's files (a file the installer has is replaced)
+    for (place, text) in &r.files {
+        let guest = recipe::drive_path(place)?;
+        let host = cache.join("files").join(oci::sha256(text.as_bytes()));
+        if !host.is_file() { if let Some(p) = host.parent() { io(std::fs::create_dir_all(p), p)?; } io(std::fs::write(&host, text.replace('\n', "\r\n")), &host)?; }
+        if let Some(k) = ex.files.keys().find(|k| k.eq_ignore_ascii_case(&guest)).cloned() { ex.files.remove(&k); }
+        ex.files.insert(guest, host);
+    }
     let exe_guest = recipe::drive_path(&r.exe)?;
     let exe = ex.files.iter().find(|(g, _)| g.eq_ignore_ascii_case(&exe_guest)).map(|x| x.1.clone()).ok_or(format!("{}: not among the installer's files", r.exe))?;
 

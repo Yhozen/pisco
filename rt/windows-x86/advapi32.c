@@ -100,3 +100,30 @@ IMP(advapi32, RegCloseKey) {
 }
 // (key, index, name, characters): the registry here has values, not subkeys a title would list
 IMP(advapi32, RegEnumKeyA) { RET(259); }   // ERROR_NO_MORE_ITEMS
+
+// Writes: kept in this run's registry (not on disk), so the title reads back what it wrote, as it would
+IMP(advapi32, RegCreateKeyA) { // (key, subkey, &out): the key is made if missing
+  pthread_mutex_lock(&reg_lock); load();
+  const char *base = key_path((u32)ARG(0));
+  if (!base) { pthread_mutex_unlock(&reg_lock); RET(6); return; }
+  const char *sub = ARG(1) ? GSTR(ARG(1)) : ""; while (*sub == '\\') sub++;
+  char path[1024]; snprintf(path, sizeof path, *sub ? "%s\\%s" : "%s", base, sub);
+  if (!key_exists(path)) add(path, "", 0, 0);   // a key with its (default) value: it exists from now on
+  pthread_mutex_unlock(&reg_lock);
+  RET(open_key((u32)ARG(0), ARG(1), ARG(2)));
+}
+IMP(advapi32, RegSetValueExA) { // (key, name, reserved, type, data, size): REG_SZ 1, REG_EXPAND_SZ 2, REG_DWORD 4
+  pthread_mutex_lock(&reg_lock); load();
+  const char *path = key_path((u32)ARG(0)), *name = ARG(1) ? GSTR(ARG(1)) : ""; u32 type = (u32)ARG(3), err = 0;
+  if (!path) err = 6;
+  else if (type == 1 || type == 2) add(path, name, GSTR(ARG(4)), 0);
+  else if (type == 4) add(path, name, 0, M32(ARG(4)));
+  else if (rt_trace) rt_log("registry: %s\\%s of type %u not kept", path, name, type);
+  if (!err && rt_trace) rt_log("registry: set %s\\%s", path, name);
+  pthread_mutex_unlock(&reg_lock); RET(err);
+}
+IMP(advapi32, GetUserNameA) { // (buffer, &size): the size with the zero
+  const char *n = "player"; u32 need = (u32)strlen(n) + 1;
+  if (!ARG(1) || M32(ARG(1)) < need) { if (ARG(1)) M32(ARG(1)) = need; SET_LAST_ERROR(122); RET(0); return; }
+  strcpy(GSTR(ARG(0)), n); M32(ARG(1)) = need; RET(1);
+}

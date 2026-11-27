@@ -1,0 +1,91 @@
+{
+ "title": "mohaa",
+ "about": "From the start into the demo's level (m3l3) through the menu: the logos play out, the cursor (at the top left) goes to the big map, which opens the difficulty menu, then to Easy (difficultyeasy; spmap m3l3); the level loads behind its briefing, and Continue starts it (the cursor is first pushed to the top left corner, where the engine stops it). The level opens under the demo's help screen; Esc takes it away. The last shot is the level's first view, before any other input.",
+ "steps": [
+  {
+   "wait": 45000
+  },
+  {
+   "focus": true
+  },
+  {
+   "move": [
+    294,
+    211
+   ],
+   "ms": 600
+  },
+  {
+   "wait": 500
+  },
+  {
+   "shot": "hover"
+  },
+  {
+   "click": "left"
+  },
+  {
+   "wait": 2000
+  },
+  {
+   "shot": "difficulty"
+  },
+  {
+   "move": [
+    106,
+    59
+   ],
+   "ms": 300
+  },
+  {
+   "wait": 500
+  },
+  {
+   "click": "left"
+  },
+  {
+   "wait": 30000
+  },
+  {
+   "shot": "briefing"
+  },
+  {
+   "move": [
+    -1000,
+    -1000
+   ],
+   "ms": 300
+  },
+  {
+   "move": [
+    400,
+    575
+   ],
+   "ms": 600
+  },
+  {
+   "wait": 500
+  },
+  {
+   "click": "left"
+  },
+  {
+   "wait": 10000
+  },
+  {
+   "shot": "help"
+  },
+  {
+   "key": "Escape"
+  },
+  {
+   "wait": 2000
+  },
+  {
+   "shot": "level"
+  },
+  {
+   "wait": 1000
+  }
+ ]
+}

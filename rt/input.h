@@ -20,6 +20,9 @@ void input_mouse_position(s32 *x, s32 *y, s32 *wheel);
 enum { INPUT_KEY = 1, INPUT_AXIS, INPUT_BUTTON };
 typedef struct { u8 kind, code; s32 value, position; u32 time_ms, sequence; } InputEvent;   // code: the scan code, the axis (0 x, 1 y, 2 wheel) or the button; value: 1 / 0 down / up, or the motion (position: where the axis is after it)
 u32 input_event_count(void);
+// Mice acquired through DirectInput with exclusive access: while there is one, Windows sends the title's windows no
+// mouse messages and its cursor stays where it was (user32 reads this; dinput8 counts)
+extern int input_mouse_exclusive;
 const InputEvent *input_event(u32 number);              // null when it is too old to have been kept
 
 // ---- the session player (input.c; the host's SW_SESSION) ----
@@ -29,6 +32,8 @@ void session_frame(u32 frame);
 // What a `shot` step does besides marking the time: each runtime that presents frames says (rt_session_shot: the
 // checkpoint line with its statistics, and the frame just presented saved by the host); without one, the line alone
 void rt_session_shot(const char *name, u32 frame);
+// or, for a front end that is one library among others (OpenGL), the hook it sets when it starts, which the default calls
+extern void (*rt_session_shot_hook)(const char *name, u32 frame);
 // The virtual key (VK_*) of a scan code, 0 for none; and the scan code of a virtual key, -1 for none
 u32 input_vk_of_scan(u32 scan);
 int input_scan_of_vk(u32 vk);

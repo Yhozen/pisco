@@ -3,6 +3,7 @@
 # title: docs/mohaa.md.
 name = "mohaa"
 from = "base/windows-x86:1"
+libraries = ["opengl32"]   # loaded at run time (LoadLibrary): the census does not see it
 
 [source]
 # the user's own copy of the demo's download: a zip around a Wise installer, which carries an InstallShield 6 setup.
@@ -56,6 +57,62 @@ app = 'C:\Program Files\EA GAMES\MOHAADemo'
 exe = 'C:\Program Files\EA GAMES\MOHAADemo\MOHAADemo.exe'
 display = "800x600"   # the engine's default mode 4, full screen, as the oracle runs it
 
+[files]
+# What the demo's first start leaves to Configure.exe ("Configure.exe a": EA's settings program, in its automatic
+# mode), which is not run: without the markers sm.001 and sm.002 the engine starts it and exits, and it picks
+# settings for the machine it finds from main\config.csv, writes them to main\newconfig.cfg, writes the markers and
+# starts the engine again. These are the files it wrote under Wine (the oracle), so that both start from the same
+# settings. (sm.000 is the engine's own: there while it runs; found at start, it means the last run crashed.)
+'C:\Program Files\EA GAMES\MOHAADemo\sm.001' = ''
+'C:\Program Files\EA GAMES\MOHAADemo\sm.002' = ''
+'C:\Program Files\EA GAMES\MOHAADemo\main\newconfig.cfg' = """
+//
+// Video Card Family: NVidia GeForce
+// Video Card Driver: NVIDIA GeForce GTX 470
+//
+// Mhz 1100
+// Vidmem 64
+// Sysmem 256
+//
+
+seta cg_drawviewmodel 2
+seta r_fastdlights 0
+seta r_fastentlight 0
+seta r_subdivisions 4
+seta r_lodscale 0.55
+seta r_lodcap 0.5
+seta r_lodviewmodelcap 0.55
+seta cg_effectdetail 0.8
+seta vss_maxcount 15
+seta ter_error 4
+seta ter_maxlod 6
+seta ter_maxtris 24576
+seta cg_rain 1
+seta cg_shadows 1
+seta s_khz 44
+seta cg_marks_add 1
+seta r_mode 4
+seta r_picmip 0
+seta r_colorbits 32
+seta r_texturebits 32
+seta g_ddayfodderguys 2
+seta g_ddayfog 0
+seta g_ddayshingleguys 2
+seta r_drawstaticdecals 1
+seta r_ext_compressed_textures 1
+"""
+
+[cpu]
+# as for Narbacular Drop and Tag: the engine, Miles and its plugins have MMX and 3DNow! paths (2282 instructions the
+# lifter does not take); on a Pentium without MMX they run their plain x86 and x87 code
+features = ["fpu", "tsc", "cx8"]
+
 [lifter]
 split = 16
-entries = []
+# function starts the lifter's discovery does not find: Mss32.dll's MSSMIXER routine at 0x2113d047 as linked
+# (0x213d047 where the lift places it), handed out by AIL_get_preference's table of mixer routines
+entries = [0x213d047]
+# the DLLs the engine loads itself: the game and the client game (main\), the force-feedback mouse's, and Miles with
+# the plugins it finds beside it (snddrivers\)
+load = ['main\gamex86.dll', 'main\cgamex86.dll', 'main\ffx86.dll', 'snddrivers\Mss32.dll', 'snddrivers\Mssfast.m3d', 'snddrivers\Mp3dec.asi',
+  'snddrivers\Reverb3.flt', 'snddrivers\Lowpass.flt']

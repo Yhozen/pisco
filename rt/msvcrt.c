@@ -435,6 +435,8 @@ IMP(msvcrt, _snprintf) {
   Sink o = {GSTR(ARG(0)), ARG(1), 0, 0}; Args a = {c, 3, 0, 1}; format(&o, GSTR(ARG(2)), &a);
   if (o.len < ARG(1)) { GSTR(ARG(0))[o.len] = 0; RET(o.len); } else RET(-1);
 }
+// user32's wsprintfA: printf's conversions (Windows' own has fewer, and no floating point), at most 1024 characters
+IMP(user32, wsprintfA) { Sink o = {GSTR(ARG(0)), 1023, 0, 0}; Args a = {c, 2, 0, 1}; format(&o, GSTR(ARG(1)), &a); u64 n = o.len < 1023 ? o.len : 1023; GSTR(ARG(0))[n] = 0; RET(n); }
 IMP(msvcrt, sprintf) { Sink o = {GSTR(ARG(0)), (size_t)-1, 0, 0}; Args a = {c, 2, 0, 1}; format(&o, GSTR(ARG(1)), &a); GSTR(ARG(0))[o.len] = 0; RET(o.len); }
 IMP(msvcrt, vsprintf) { Sink o = {GSTR(ARG(0)), (size_t)-1, 0, 0}; Args a = {c, 0, ARG(2), 1}; format(&o, GSTR(ARG(1)), &a); GSTR(ARG(0))[o.len] = 0; RET(o.len); }
 

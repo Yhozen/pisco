@@ -135,7 +135,9 @@ static Node *writable(const char *p) {
 }
 
 // ---- files ----
-struct VFile { char path[1024]; int write; u64 pos; };
+struct VFile { char path[1024]; int write; u64 pos; VFile *next_open, *prev_open; };
+// the files open for writing: the process's end saves them as their closing would (Windows writes what was written)
+static VFile *open_writes;
 VFile *vfs_open(const char *guest, u32 access, u32 disposition, u32 *err) {
   char p[1024]; if (!vfs_path(guest, p, sizeof p)) { *err = 3; return 0; }
   pthread_mutex_lock(&vfs_lock);
@@ -154,16 +156,25 @@ VFile *vfs_open(const char *guest, u32 access, u32 disposition, u32 *err) {
   }
   pthread_mutex_unlock(&vfs_lock);
   VFile *f = calloc(1, sizeof *f); snprintf(f->path, sizeof f->path, "%s", p); f->write = write;
+  if (write) { pthread_mutex_lock(&vfs_lock); f->next_open = open_writes; if (open_writes) open_writes->prev_open = f; open_writes = f; pthread_mutex_unlock(&vfs_lock); }
   return f;
 }
 int vfs_is_dir(VFile *f) { pthread_mutex_lock(&vfs_lock); int k = kind(f->path, 0); pthread_mutex_unlock(&vfs_lock); return k == 2; }
 void vfs_close(VFile *f) {
-  if (f->write && persistent(f->path)) {
+  if (f->write) {
     pthread_mutex_lock(&vfs_lock);
-    Node *n = node(f->path); if (n && !n->gone && !n->dir) host_store_save(f->path, (u32)strlen(f->path), n->data, (u32)n->size);
+    if (f->prev_open) f->prev_open->next_open = f->next_open; else open_writes = f->next_open;
+    if (f->next_open) f->next_open->prev_open = f->prev_open;
+    Node *n = persistent(f->path) ? node(f->path) : 0; if (n && !n->gone && !n->dir) host_store_save(f->path, (u32)strlen(f->path), n->data, (u32)n->size);
     pthread_mutex_unlock(&vfs_lock);
   }
   free(f);
+}
+// at the process's end (rt/core.c): what is still open for writing is saved
+void vfs_sync_open(void) {
+  pthread_mutex_lock(&vfs_lock);
+  for (VFile *f = open_writes; f; f = f->next_open) { Node *n = persistent(f->path) ? node(f->path) : 0; if (n && !n->gone && !n->dir) host_store_save(f->path, (u32)strlen(f->path), n->data, (u32)n->size); }
+  pthread_mutex_unlock(&vfs_lock);
 }
 s64 vfs_read(VFile *f, void *dst, u64 n) {
   pthread_mutex_lock(&vfs_lock);

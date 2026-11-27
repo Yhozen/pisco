@@ -48,3 +48,7 @@ sources = ["rt/windows-x86/fmod3.c", "rt/windows-x86/audio_decode.c"]
 [libraries.fmodex]
 description = "FMOD Ex (fmodex.dll's System, Sound and Channel methods) on the runtime's mixer, with WAV, Ogg Vorbis and MP3 decoders"
 sources = ["rt/windows-x86/fmodex.c", "rt/windows-x86/audio_decode.c"]
+
+[libraries.opengl32]
+description = "OpenGL 1.1 (with GL_ARB_multitexture, GL_EXT_compiled_vertex_array, GL_EXT_texture_env_add) on the GPU ring's explicit records (WebGPU): the fixed-function stages as WGSL from gl_ffp.c"
+sources = ["rt/windows-x86/opengl32.c", "rt/windows-x86/gl_ffp.c"]

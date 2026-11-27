@@ -301,3 +301,57 @@ IMP(gdi32, GetFontUnicodeRanges) {
   if (p) { M32(p) = 16 + 4 * n; M32(p + 4) = 0; M32(p + 8) = glyphs; M32(p + 12) = n; for (u32 i = 0; i < n; i++) { M16(p + 16 + 4 * i) = first[i]; M16(p + 18 + 4 * i) = count[i]; } }
   RET(16 + 4 * n);
 }
+
+// ---- a window's DC as OpenGL draws into it: pixel formats, the screen's numbers, SwapBuffers ----
+// The formats offered, as DescribePixelFormat numbers them from 1: a 32-bit colour buffer with 24 bits of depth and
+// 8 of stencil, double-buffered, drawn by the "hardware" (not PFD_GENERIC_FORMAT); then the same without stencil,
+// and a 16-bit one. Which one a window has is kept, but every one draws into the same buffers (opengl32.c).
+static const u8 formats[][4] = {{32, 24, 8, 8}, {32, 24, 0, 8}, {16, 16, 0, 0}};   // colour, depth, stencil, alpha bits
+enum { FORMATS = sizeof formats / sizeof formats[0] };
+static u32 window_format;
+static void describe(u32 i, u64 p) {   // PIXELFORMATDESCRIPTOR, 40 bytes
+  const u8 *f = formats[i - 1];
+  memset((void *)GP(p), 0, 40);
+  M16(p) = 40; M16(p + 2) = 1; M32(p + 4) = 0x4 | 0x20 | 0x1;   // PFD_DRAW_TO_WINDOW | PFD_SUPPORT_OPENGL | PFD_DOUBLEBUFFER
+  M8(p + 8) = 0; M8(p + 9) = f[0];                              // PFD_TYPE_RGBA, colour bits
+  if (f[0] == 32) { M8(p + 10) = 8; M8(p + 11) = 16; M8(p + 12) = 8; M8(p + 13) = 8; M8(p + 14) = 8; M8(p + 15) = 0; M8(p + 16) = f[3]; M8(p + 17) = 24; }
+  else { M8(p + 10) = 5; M8(p + 11) = 11; M8(p + 12) = 6; M8(p + 13) = 5; M8(p + 14) = 5; M8(p + 15) = 0; }
+  M8(p + 23) = f[1]; M8(p + 24) = f[2];
+}
+IMP(gdi32, DescribePixelFormat) { // (dc, index, size, PIXELFORMATDESCRIPTOR *): the number of formats
+  u32 i = (u32)ARG(1);
+  if (ARG(3) && i >= 1 && i <= FORMATS && (u32)ARG(2) >= 40) describe(i, ARG(3));
+  RET(FORMATS);
+}
+IMP(gdi32, ChoosePixelFormat) { // the first format with at least the depth and colour asked for
+  u64 p = ARG(1); u32 color = M8(p + 9), depth = M8(p + 23), stencil = M8(p + 24);
+  for (u32 i = 1; i <= FORMATS; i++) if (formats[i - 1][0] >= color && formats[i - 1][1] >= depth && formats[i - 1][2] >= stencil) { RET(i); return; }
+  RET(1);
+}
+IMP(gdi32, SetPixelFormat) { u32 i = (u32)ARG(1); if (i < 1 || i > FORMATS) { SET_LAST_ERROR(2000); RET(0); return; } window_format = i; RET(1); }   // ERROR_INVALID_PIXEL_FORMAT
+IMP(gdi32, GetPixelFormat) { RET(window_format); }
+// what OpenGL does at the end of a frame (opengl32.c, when a title links it)
+__attribute__((weak)) void gl_swap_buffers(u32 hdc) { (void)hdc; }
+IMP(gdi32, SwapBuffers) { gl_swap_buffers((u32)ARG(0)); RET(1); }
+// GetDeviceCaps(dc, index): the screen's (user32's display mode)
+IMP(gdi32, GetDeviceCaps) {
+  s32 w = 0, h = 0; win32_screen_size(&w, &h);
+  switch ((s32)ARG(1)) {
+  case 8: RET(w); return; case 10: RET(h); return;                 // HORZRES, VERTRES
+  case 12: RET(32); return; case 14: RET(1); return;               // BITSPIXEL, PLANES
+  case 4: RET(w * 254 / 960); return; case 6: RET(h * 254 / 960); return;   // HORZSIZE, VERTSIZE in mm at 96 dpi
+  case 88: case 90: RET(96); return;                               // LOGPIXELSX, LOGPIXELSY
+  case 116: RET(60); return;                                       // VREFRESH
+  case 2: RET(1); return;                                          // TECHNOLOGY: DT_RASDISPLAY
+  case 24: RET(-1); return;                                        // NUMCOLORS: more than 256
+  case 40: RET(0); return;                                         // RASTERCAPS
+  default: RET(0); return;
+  }
+}
+// No gamma ramp to set (as under Wine without a hardware one): titles fall back to their own
+IMP(gdi32, GetDeviceGammaRamp) { RET(0); }
+IMP(gdi32, SetDeviceGammaRamp) { RET(0); }
+IMP(gdi32, CreateDCA) { RET(0x01000000u); }   // the screen's DC ("DISPLAY")
+IMP(gdi32, StretchBlt) { RET(1); }            // a DC that is not a memory DC's bitmap: nothing kept to stretch
+IMP(gdi32, Rectangle) { RET(1); }
+IMP(gdi32, SetROP2) { RET(13); }              // the old mix mode: R2_COPYPEN

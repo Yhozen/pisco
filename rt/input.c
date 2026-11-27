@@ -48,6 +48,7 @@ void input_mouse_button(u32 button, int down) {
   if ((buttons[button] != 0) != (down != 0)) { buttons[button] = down ? 0x80 : 0; sequence++; add(INPUT_BUTTON, (u8)button, down != 0); }
   pthread_mutex_unlock(&lock);
 }
+int input_mouse_exclusive;
 const u8 *input_keys(void) { return keys; }
 const u8 *input_mouse_buttons(void) { return buttons; }
 void input_mouse_position(s32 *x, s32 *y, s32 *wheel) { pthread_mutex_lock(&lock); *x = mouse_x; *y = mouse_y; *wheel = mouse_wheel; pthread_mutex_unlock(&lock); }
@@ -147,7 +148,8 @@ void session_frame(u32 frame) {
   }
 }
 
-__attribute__((weak)) void rt_session_shot(const char *name, u32 frame) { rt_log("checkpoint %s frame %u", name, frame); }
+void (*rt_session_shot_hook)(const char *name, u32 frame);
+__attribute__((weak)) void rt_session_shot(const char *name, u32 frame) { if (rt_session_shot_hook) rt_session_shot_hook(name, frame); else rt_log("checkpoint %s frame %u", name, frame); }
 
 // ---- virtual keys: what user32 calls the keys the state holds by scan code (a US keyboard) ----
 u32 input_vk_of_scan(u32 scan) {

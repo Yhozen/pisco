@@ -268,18 +268,30 @@ IMP(kernel32, VirtualFree) {
   RET(1);
 }
 IMP(kernel32, VirtualProtect) { if (ARG(3)) M32(ARG(3)) = 4; RET(1); }
-IMP(kernel32, VirtualQuery) {
-  u64 a = ARG(0), out = ARG(1);
+static void virtual_query(Cpu *c, u64 a, u64 out);
+IMP(kernel32, VirtualQuery) { virtual_query(c, ARG(0), ARG(1)); }
+IMP(kernel32, VirtualQueryEx) { virtual_query(c, ARG(1), ARG(2)); }   // (process, address, info, size): this process's
+// MEMORY_BASIC_INFORMATION: base, allocation base, allocation protection, region size, state (MEM_COMMIT), protection,
+// type (MEM_PRIVATE); pointer-sized fields, so 28 bytes for a 32-bit title and 48 for a 64-bit one
+static void put_mbi(u64 out, u64 base, u64 alloc, u32 aprot, u64 size, u32 prot) {
+#if GUEST_BITS == 32
+  memset((void *)GP(out), 0, 28);
+  M32(out) = (u32)base; M32(out + 4) = (u32)alloc; M32(out + 8) = aprot; M32(out + 12) = (u32)size; M32(out + 16) = 0x1000; M32(out + 20) = prot; M32(out + 24) = 0x20000;
+#else
   memset((void *)GP(out), 0, 48);
+  M64(out) = base; M64(out + 8) = alloc; M32(out + 16) = aprot; M64(out + 24) = size; M32(out + 32) = 0x1000; M32(out + 36) = prot; M32(out + 40) = 0x20000;
+#endif
+}
+static void virtual_query(Cpu *c, u64 a, u64 out) {
+  u32 n = GUEST_BITS == 32 ? 28 : 48;
   pthread_mutex_lock(&region_lock);
   for (Region *r = regions; r; r = r->next) if (a >= r->base && a < r->base + r->size) {
-    M64(out) = a & ~4095ull; M64(out + 8) = r->base; M32(out + 16) = r->protect; M64(out + 24) = r->base + r->size - (a & ~4095ull);
-    M32(out + 32) = 0x1000; M32(out + 36) = r->protect; M32(out + 40) = 0x20000;
-    pthread_mutex_unlock(&region_lock); RET(48); return;
+    put_mbi(out, a & ~4095ull, r->base, r->protect, r->base + r->size - (a & ~4095ull), r->protect);
+    pthread_mutex_unlock(&region_lock); RET(n); return;
   }
   pthread_mutex_unlock(&region_lock);
-  M64(out) = a & ~4095ull; M64(out + 8) = a & ~4095ull; M64(out + 24) = 4096; M32(out + 32) = 0x1000; M32(out + 36) = 4; M32(out + 40) = 0x20000;
-  RET(48);
+  put_mbi(out, a & ~4095ull, a & ~4095ull, 4, 4096, 4);
+  RET(n);
 }
 IMP(kernel32, GetProcessHeap) { RET(0x7000); }
 // What a block the title did not ask to be zeroed holds. Windows hands back a small block with whatever was there
@@ -329,6 +341,13 @@ static u64 asked_size(void *p) {   // a block the heap functions did not hand ou
   return n;
 }
 IMP(kernel32, HeapAlloc) { u64 n = ARG(2); void *p = (ARG(1) & 8) ? calloc(1, n ? n : 1) : malloc(n ? n : 1); if (!(ARG(1) & 8)) heap_fresh(p, 0, n); asked_put(p, n); RET((uptr)p); }
+// The global heap of 16-bit Windows: a handle is the block itself (GMEM_MOVEABLE blocks never move), locked or not
+IMP(kernel32, GlobalAlloc) { u64 n = ARG(1); void *p = (ARG(0) & 0x40) ? calloc(1, n ? n : 1) : malloc(n ? n : 1); if (!(ARG(0) & 0x40)) heap_fresh(p, 0, n); asked_put(p, n); RET((uptr)p); }
+IMP(kernel32, GlobalFree) { void *p = (void *)GP(ARG(0)); asked_drop(p); free(p); RET(0); }
+IMP(kernel32, GlobalLock) { RET(ARG(0)); }
+IMP(kernel32, GlobalUnlock) { SET_LAST_ERROR(0); RET(0); }
+IMP(kernel32, GlobalHandle) { RET(ARG(0)); }
+IMP(kernel32, GlobalSize) { RET(ARG(0) ? asked_size((void *)GP(ARG(0))) : 0); }
 IMP(kernel32, HeapFree) { void *p = (void *)GP(ARG(2)); asked_drop(p); free(p); RET(1); }
 IMP(kernel32, HeapReAlloc) { // (heap, flags, block, size): a grown block's new bytes are zero with HEAP_ZERO_MEMORY (8)
   void *old = (void *)GP(ARG(2)); u64 n = ARG(3), had = asked_size(old), room = old ? malloc_usable_size(old) : 0;
@@ -412,6 +431,16 @@ IMP(kernel32, GetSystemTimeAsFileTime) { M64(ARG(0)) = filetime_now(); }
 IMP(kernel32, GetSystemTimePreciseAsFileTime) { M64(ARG(0)) = filetime_now(); }
 IMP(kernel32, GetSystemTimeAdjustment) { M32(ARG(0)) = 156250; M32(ARG(1)) = 156250; M32(ARG(2)) = 1; RET(1); }
 IMP(kernel32, SetSystemTime) { SET_LAST_ERROR(1314); RET(0); }
+// The time zone is UTC: local time is the system time
+static void put_systemtime(u64 ft, u64 out) {
+  time_t s = (time_t)((ft - 116444736000000000ull) / 10000000); struct tm tm; gmtime_r(&s, &tm);
+  M16(out) = tm.tm_year + 1900; M16(out + 2) = tm.tm_mon + 1; M16(out + 4) = tm.tm_wday; M16(out + 6) = tm.tm_mday;
+  M16(out + 8) = tm.tm_hour; M16(out + 10) = tm.tm_min; M16(out + 12) = tm.tm_sec; M16(out + 14) = (ft / 10000) % 1000;
+}
+IMP(kernel32, GetSystemTime) { put_systemtime(filetime_now(), ARG(0)); }
+IMP(kernel32, GetLocalTime) { put_systemtime(filetime_now(), ARG(0)); }
+IMP(kernel32, FileTimeToLocalFileTime) { M64(ARG(1)) = M64(ARG(0)); RET(1); }
+IMP(kernel32, GetTimeZoneInformation) { memset((void *)GP(ARG(0)), 0, 172); RET(0); }   // TIME_ZONE_ID_UNKNOWN: no daylight saving
 IMP(kernel32, FileTimeToSystemTime) {
   u64 ft = M64(ARG(0)), out = ARG(1);
   time_t s = (time_t)((ft - 116444736000000000ull) / 10000000); struct tm tm; gmtime_r(&s, &tm);
@@ -437,14 +466,14 @@ static const struct { const char *name; u64 h; } system_modules[] = {
   {"mfplat", 0x7FE00000ull}, {"d3dcompiler_47", 0x7FE10000ull}, {"xaudio2_9", 0x7FE20000ull},
 #if GUEST_BITS == 32
   // the desktop's DLLs a title looks functions up in (rt/windows-x86/)
-  {"gdi32", 0x7FD00000ull}, {"d3d9", 0x7FD10000ull}, {"dinput8", 0x7FD20000ull}, {"winmm", 0x7FD30000ull}, {"ddraw", 0x7FD40000ull},
+  {"gdi32", 0x7FD00000ull}, {"d3d9", 0x7FD10000ull}, {"dinput8", 0x7FD20000ull}, {"winmm", 0x7FD30000ull}, {"ddraw", 0x7FD40000ull}, {"opengl32", 0x7FD50000ull},
 #endif
   // API sets and console variants: the DLL behind them
   {"ntuser", 0x7FF70000ull}, {"minuser", 0x7FF70000ull}, {"advapi32legacy", 0x7FF80000ull}, {"api-ms-win-core", 0x7FF00000ull},
 };
 static u64 module_handle(const char *n) {
   const ModuleDef *m = rt_module_named(n);
-  if (m) return m->base;
+  if (m) return rt_module_loaded(m) ? m->base : 0;   // an on-demand DLL has no handle until LoadLibrary loads it
 #if GUEST_BITS == 32
   // a desktop title names a DLL exactly: "d3d9d.dll" (Direct3D's debug build, which D3DX looks for) is not "d3d9.dll"
   const char *base = strrchr(n, '\\'); base = base ? base + 1 : n;
@@ -495,7 +524,8 @@ IMP(kernel32, GetModuleFileNameW) {
   RET(i);
 }
 static void loaded(Cpu *c, const char *n) {
-  u64 h = module_handle(n);
+  const ModuleDef *m = rt_module_named(n);
+  u64 h = m ? rt_module_load(c, m) : module_handle(n);
   if (!h) SET_LAST_ERROR(126);
   if (rt_trace) rt_log("LoadLibrary %s -> 0x%llx", n, h);
   RET(h);
@@ -504,7 +534,7 @@ IMP(kernel32, LoadLibraryA) { loaded(c, GSTR(ARG(0))); }
 IMP(kernel32, LoadLibraryExA) { loaded(c, GSTR(ARG(0))); }
 IMP(kernel32, LoadLibraryW) { char *n = rt_narrow(GWSTR(ARG(0))); loaded(c, n); free(n); }
 IMP(kernel32, LoadLibraryExW) { char *n = rt_narrow(GWSTR(ARG(0))); loaded(c, n); free(n); }
-IMP(kernel32, FreeLibrary) { RET(1); }
+IMP(kernel32, FreeLibrary) { const ModuleDef *m = rt_module_of(ARG(0)); RET(m && m->base == ARG(0) ? rt_module_free(c, m) : 1); }
 IMP(kernel32, GetProcAddress) {
   u64 h = ARG(0), name = ARG(1);
   const ModuleDef *m = rt_module_of(h);

@@ -71,6 +71,9 @@
 #            the SDKs in WINSDK by tools/build-gdk-sample-pbr.sh) or REDIST (minutes)
 #   desireplay  tests/gfx/desireplay.sh: Desire (Windows x64, Direct3D 12) from the user's zip (DESIRE_ZIP) and REDIST, in
 #            Node, strict: its calls until its main loop are Wine's, and its maze from Wine's seeds is Wine's (minutes)
+#   mohaa    tests/gfx/mohaa.sh: Medal of Honor: Allied Assault's demo (Windows x86, OpenGL) from the user's download
+#            (MOHAA_ZIP), in Node, strict, on the virtual clock: the logos to the menu; its console log against Wine's
+#   glffp    tests/gfx/gl-ffp.sh: OpenGL's fixed-function shader generator, every key validated by naga
 #   desire   tests/gfx/desire.sh: Desire's sessions in headless Chrome, strict: a PNG at every checkpoint, the still
 #            screens close to the oracle's screenshots (needs out/img-desire: the desireplay step; half an hour)
 #   xcl      tests/gfx/xcl.sh: XCL's console test title in Chrome, when it has been built into out/xcltitle-game
@@ -103,6 +106,7 @@ build() {
   "$CXX32" -O2 -static fixtures/dll/main.cpp -o fixtures/dll/game32/title.exe -Lfixtures/dll/game32 -lgamelib || return 1
   fixtures/x87/build.sh out/x87 > /dev/null || return 1
   fixtures/crt32/build.sh out/crt32 > /dev/null || return 1
+  fixtures/mmx/build.sh out/mmx > /dev/null || return 1
   # the MSVC-ABI exceptions title, when clang-cl is there (tests/gfx/st.sh runs it)
   local msvc=""; if command -v clang-cl > /dev/null && command -v lld-link > /dev/null; then fixtures/msvc/build.sh || return 1; msvc=", msvc's eh"; fi
   echo "built hello threads bench cxx dll$msvc, and hello, dll, x87 and crt32 as 32-bit programs"
@@ -121,6 +125,10 @@ win32() {
   tools/build-title.sh fixtures/dll/game32/title.exe out/dll32 > out/dll32.build.log 2>&1 || { echo "dll32: build failed (out/dll32.build.log)"; return 1; }
   out=$(SW_STRICT=1 timeout 120 node web/run-node.mjs out/dll32/title.wasm fixtures/dll/game32/title.exe 2>&1); pass=$(grep -c '^\[PASS\]' <<<"$out")
   echo "dll32: $pass passed, the exception across the DLL not yet (32-bit DWARF unwinding)"; [ "$pass" = 6 ] || { tail -3 <<<"$out"; ok=1; }
+  tools/build-title.sh out/mmx/mmx.exe out/mmx/wasm > out/mmx.build.log 2>&1 || { echo "mmx: build failed (out/mmx.build.log)"; return 1; }
+  SW_STRICT=1 node web/run-node.mjs out/mmx/wasm/title.wasm out/mmx/mmx.exe > out/mmx/got.txt 2>&1
+  if cmp -s out/mmx/got.txt fixtures/mmx/expected.txt; then echo "mmx: $(wc -l < fixtures/mmx/expected.txt) lines (MMX, and SSE on MMX registers) equal what it prints under Wine"
+  else echo "mmx: differs from what it prints under Wine (< ours, > Wine):"; diff out/mmx/got.txt fixtures/mmx/expected.txt | head -12; ok=1; fi
   tools/build-title.sh out/crt32/crt32.exe out/crt32/wasm > out/crt32.build.log 2>&1 || { echo "crt32: build failed (out/crt32.build.log)"; return 1; }
   SW_STRICT=1 node web/run-node.mjs out/crt32/wasm/title.wasm out/crt32/crt32.exe > out/crt32/got.txt 2>&1
   if cmp -s out/crt32/got.txt fixtures/crt32/expected.txt; then echo "crt32: $(wc -l < fixtures/crt32/expected.txt) lines (msvcrt.dll maths and printf, SList) equal what it prints under Wine"
@@ -277,7 +285,7 @@ ND=${ND:-$HOME/.pisco/oracle/prefix-narbacular-drop/drive_c/Program Files (x86)/
 D3DX_DLL=${D3DX_DLL:-$HOME/untrusted/tag/cab/d3dx9_35.dll}
 REDIST=${REDIST:-$HOME/untrusted/vcredist/x/Contents/VC/Redist/MSVC/14.44.35112/x64/Microsoft.VC143.CRT}; export REDIST
 WINSDK=${WINSDK:-$HOME/winsdk}
-for s in ${*:-build layout node bench win32 linux avx ffp sm gdi changelog}; do case $s in
+for s in ${*:-build layout node bench win32 linux avx ffp glffp sm gdi changelog}; do case $s in
   build)  step build build ;;
   layout) step layout tests/layout.sh ;;
   node)   LINES_SHOWN=8 step node tests/regress.sh ;;
@@ -308,6 +316,8 @@ for s in ${*:-build layout node bench win32 linux avx ffp sm gdi changelog}; do 
           elif [ ! -f out/gdk-samples/pbr-local/SimplePBR.exe ] && [ ! -d "$WINSDK/xwin" ]; then echo "skip  pbr: the sample is not built and there are no SDKs to build it in WINSDK=$WINSDK"
           else LINES_SHOWN=3 step pbr tests/gfx/pbr.sh; fi ;;
   images) LINES_SHOWN=9 step images tests/images.sh ;;
+  mohaa)  if [ -f "${MOHAA_ZIP:-$HOME/games/mohaaspdemo.zip}" ]; then LINES_SHOWN=4 step mohaa tests/gfx/mohaa.sh; else echo "skip  mohaa: no download at MOHAA_ZIP=${MOHAA_ZIP:-$HOME/games/mohaaspdemo.zip}"; fi ;;
+  glffp)  if command -v naga > /dev/null; then step glffp tests/gfx/gl-ffp.sh; else echo "skip  glffp: naga is not installed (tools/setup-toolchain.sh naga)"; fi ;;
   desire) if [ -f out/img-desire/index.json ]; then LINES_SHOWN=12 step desire tests/gfx/desire.sh; else echo "skip  desire: out/img-desire is not built (the desireplay step builds it)"; fi ;;
   desireplay) if [ ! -f "${DESIRE_ZIP:-$HOME/games/DESI-Re-v0.1-Windows-x64.zip}" ]; then echo "skip  desireplay: no zip at DESIRE_ZIP=${DESIRE_ZIP:-$HOME/games/DESI-Re-v0.1-Windows-x64.zip}"
           elif [ ! -f "$REDIST/vcruntime140.dll" ]; then echo "skip  desireplay: no MSVC runtime DLLs in REDIST=$REDIST"

@@ -50,10 +50,14 @@ static const AliasDef *alias_of(const char *full) {
   for (unsigned k = 0; k < rt_alias_table_count; k++) if (!strcmp(rt_alias_table[k].name, full)) return &rt_alias_table[k];
   return 0;
 }
-// a DLL that forwards its functions to another one's: wsock32's are ws2_32's (by name and by ordinal)
+// a DLL that forwards its functions to another one's: wsock32's are ws2_32's, by name and by ordinal; the ordinals
+// are the same but for three that the two number differently (wsock32's 10, 11, 12: inet_addr, inet_ntoa,
+// ioctlsocket; ws2_32's 11, 12, 10)
 static const char *forwarded(const char *full, char *buf, size_t cap) {
-  if (!strncmp(full, "wsock32.dll!", 12)) { snprintf(buf, cap, "ws2_32.dll!%s", full + 12); return buf; }
-  return full;
+  if (strncmp(full, "wsock32.dll!", 12)) return full;
+  const char *n = full + 12;
+  snprintf(buf, cap, "ws2_32.dll!%s", !strcmp(n, "#10") ? "#11" : !strcmp(n, "#11") ? "#12" : !strcmp(n, "#12") ? "#10" : n);
+  return buf;
 }
 static int stdcall_bytes(const char *full) {
   char fw[200]; full = forwarded(full, fw, sizeof fw);
@@ -358,7 +362,13 @@ Thread *rt_thread_new(u64 stack_size) {
 }
 
 // TLS callbacks and DllMain of every module (DLLs first, the exe last; in reverse on detach)
+// An on-demand module (MODULE_ON_DEMAND) is attached by LoadLibrary, not at start, and detached when FreeLibrary
+// takes its last reference; loaded again, its sections are read again from its file, as Windows maps a DLL afresh.
+static unsigned module_refs[256];
+static unsigned char module_was_loaded[256];
+int rt_module_loaded(const ModuleDef *m) { unsigned k = (unsigned)(m - rt_modules); return !(m->flags & MODULE_ON_DEMAND) || (k < 256 && module_refs[k]); }
 static void attach_module(Thread *t, const ModuleDef *m, int reason) {
+  if (!rt_module_loaded(m)) return;
   if (m->tls_dir) for (u64 cbs = MP(m->tls_dir + 3 * PTR_SIZE); cbs && MP(cbs); cbs += PTR_SIZE) rt_guest_call(&t->cpu, MP(cbs), m->base, (u64)reason, 0, 0);
   if (m->is_dll && m->entry && m->entry != m->base) rt_guest_call(&t->cpu, m->entry, m->base, (u64)reason, 0, 0);
 }
@@ -490,20 +500,47 @@ static void map_headers(const ModuleDef *m) {
   if (pe > n - 0x80 || M32(m->base + pe) != 0x4550) return;
   if (M16(m->base + pe + 24) == 0x10B) M32(m->base + pe + 24 + 28) = (u32)m->base; else M64(m->base + pe + 24 + 24) = m->base;   // ImageBase
 }
-static void load_modules(void) {
-  for (unsigned k = 0; k < rt_module_count; k++) {
-    const ModuleDef *m = &rt_modules[k];
-    map_headers(m);
-    for (unsigned i = 0; i < m->section_count; i++) {
-      u64 va = m->sections[i].va, n = m->sections[i].len;
-      if (n && host_read_file(m->name, (u32)strlen(m->name), m->sections[i].off, n, va) != n) rt_fatal("cannot read section %u of %s", i, m->name);
-    }
-    for (unsigned i = 0; i < m->reloc_count; i++) MP(m->relocs[i]) += m->base - m->file_base;
-#if GUEST_BITS == 32
-    set_security_cookie(m);
-#endif
-    if (m->tls_dir) M32(MP(m->tls_dir + 2 * PTR_SIZE)) = k; // the module's TLS index
+static void map_module(unsigned k) {
+  const ModuleDef *m = &rt_modules[k];
+  map_headers(m);
+  for (unsigned i = 0; i < m->section_count; i++) {
+    u64 va = m->sections[i].va, n = m->sections[i].len;
+    if (n && host_read_file(m->name, (u32)strlen(m->name), m->sections[i].off, n, va) != n) rt_fatal("cannot read section %u of %s", i, m->name);
+    if (m->sections[i].vsize > n) memset((void *)GP(va + n), 0, m->sections[i].vsize - n);   // the zero fill (again, on a reload)
   }
+  for (unsigned i = 0; i < m->reloc_count; i++) MP(m->relocs[i]) += m->base - m->file_base;
+#if GUEST_BITS == 32
+  set_security_cookie(m);
+#endif
+  if (m->tls_dir) M32(MP(m->tls_dir + 2 * PTR_SIZE)) = k; // the module's TLS index
+}
+u64 rt_module_load(Cpu *c, const ModuleDef *m) {
+  unsigned k = (unsigned)(m - rt_modules);
+  if (!(m->flags & MODULE_ON_DEMAND) || k >= 256) return m->base;
+  if (module_refs[k]++) return m->base;
+  if (module_was_loaded[k]) map_module(k);   // loaded before and freed since: its data as the file has it
+  module_was_loaded[k] = 1;
+  // the on-demand DLLs it imports first, as Windows' loader does
+  for (unsigned i = m->first_import; i < m->first_import + m->import_count; i++) {
+    char dll[64]; const char *bang = strchr(import_names[i], '!');
+    size_t n = bang ? (size_t)(bang - import_names[i]) : 0; if (!n || n >= sizeof dll) continue;
+    memcpy(dll, import_names[i], n); dll[n] = 0;
+    const ModuleDef *d = rt_module_named(dll);
+    if (d && d != m && (d->flags & MODULE_ON_DEMAND) && !module_refs[d - rt_modules]) rt_module_load(c, d);
+  }
+  if (rt_trace) rt_log("load %s at 0x%llx", m->name, m->base);
+  attach_module(THREAD(c), m, 1);   // DLL_PROCESS_ATTACH
+  return m->base;
+}
+int rt_module_free(Cpu *c, const ModuleDef *m) {
+  unsigned k = (unsigned)(m - rt_modules);
+  if (!(m->flags & MODULE_ON_DEMAND) || k >= 256 || !module_refs[k]) return 1;
+  if (module_refs[k] == 1) { attach_module(THREAD(c), m, 0); if (rt_trace) rt_log("free %s", m->name); }   // DLL_PROCESS_DETACH
+  module_refs[k]--;
+  return 1;
+}
+static void load_modules(void) {
+  for (unsigned k = 0; k < rt_module_count; k++) map_module(k);
   unsigned missing = 0;
   for (unsigned i = 0; i < import_count; i++) {
     import_name_of[i] = import_names[i];

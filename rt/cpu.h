@@ -40,6 +40,7 @@ typedef struct Cpu {
   struct Landing *landing; // the innermost frame an exception can resume in (rt/seh.c)
   u64 resume;     // a Linux title: the return address the function entered next goes on from (0: its entry)
   V yh[16];       // AVX: the high 128 bits of ymm0..15 (rt/avx.h)
+  u64 mm[8];      // MMX's registers, apart from the x87 ones (the lifter's mmx())
 } Cpu;
 // A lifted function with landing pads registers one while it runs. `jb` is a jmp_buf in its frame.
 typedef struct Landing { void *jb; u64 entry_rsp; u64 resume; struct Landing *prev; } Landing;

@@ -256,3 +256,81 @@ IMP(kernel32, GlobalMemoryStatus) { // MEMORYSTATUS: a 2 GB machine with most of
 IMP(kernel32, InterlockedCompareExchange) { u32 want = (u32)ARG(2); __atomic_compare_exchange_n((u32 *)GP(ARG(0)), &want, (u32)ARG(1), 0, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST); RET(want); }
 IMP(kernel32, IsDBCSLeadByte) { RET(0); }
 IMP(kernel32, lstrcmpiA) { int r = strcasecmp(GSTR(ARG(0)), GSTR(ARG(1))); RET((u32)(r < 0 ? -1 : r > 0)); }
+
+// ---- the environment's variables: the table above, then what the title sets ----
+static char *set_names[32], *set_values[32]; static unsigned set_count;
+static const char *env_get(const char *name) {
+  for (unsigned i = 0; i < set_count; i++) if (!strcasecmp(set_names[i], name)) return set_values[i];
+  size_t l = strlen(name);
+  for (unsigned i = 0; i < ENV_COUNT; i++) if (!strncasecmp(environment[i], name, l) && environment[i][l] == '=') return environment[i] + l + 1;
+  return 0;
+}
+IMP(kernel32, GetEnvironmentVariableA) { // (name, buffer, size): the length without the zero, or the size needed with it
+  const char *v = env_get(GSTR(ARG(0)));
+  if (!v) { SET_LAST_ERROR(203); RET(0); return; }   // ERROR_ENVVAR_NOT_FOUND
+  u32 n = (u32)strlen(v), cap = (u32)ARG(2);
+  if (n + 1 > cap) { RET(n + 1); return; }
+  memcpy(GSTR(ARG(1)), v, n + 1); RET(n);
+}
+static void env_set(const char *name, const char *value) {
+  unsigned i = 0; while (i < set_count && strcasecmp(set_names[i], name)) i++;
+  if (i == set_count) { if (set_count == 32) return; set_names[set_count++] = strdup(name); } else free(set_values[i]);
+  set_values[i] = strdup(value ? value : "");
+}
+IMP(kernel32, SetEnvironmentVariableA) { env_set(GSTR(ARG(0)), ARG(1) ? GSTR(ARG(1)) : 0); RET(1); }
+IMP(kernel32, SetEnvironmentVariableW) { char *n = rt_narrow(GWSTR(ARG(0))), *v = ARG(1) ? rt_narrow(GWSTR(ARG(1))) : 0; env_set(n, v); free(n); free(v); RET(1); }
+
+// ---- folders and drives: the system's are C:\WINDOWS's; the current folder is the title's (relative paths are) ----
+static u32 copy_out(Cpu *c, const char *s, u64 buf, u32 cap) { u32 n = (u32)strlen(s); if (n + 1 > cap) return n + 1; memcpy(GSTR(buf), s, n + 1); return n; }
+IMP(kernel32, GetCurrentDirectoryA) { RET(copy_out(c, "C:\\title", ARG(1), (u32)ARG(0))); }   // (size, buffer)
+IMP(kernel32, GetSystemDirectoryA) { RET(copy_out(c, "C:\\WINDOWS\\system32", ARG(0), (u32)ARG(1))); }
+IMP(kernel32, GetWindowsDirectoryA) { RET(copy_out(c, "C:\\WINDOWS", ARG(0), (u32)ARG(1))); }
+IMP(kernel32, GetDriveTypeA) { // DRIVE_FIXED for C:, DRIVE_NO_ROOT_DIR for the others
+  const char *p = ARG(0) ? GSTR(ARG(0)) : "C:"; RET((p[0] == 'C' || p[0] == 'c') ? 3 : 1);
+}
+IMP(kernel32, GetDiskFreeSpaceA) { // (root, sectors per cluster, bytes per sector, free clusters, clusters): 2 GB free of 4
+  if (ARG(1)) M32(ARG(1)) = 8; if (ARG(2)) M32(ARG(2)) = 512; if (ARG(3)) M32(ARG(3)) = 524288; if (ARG(4)) M32(ARG(4)) = 1048576; RET(1);
+}
+IMP(kernel32, GetProfileStringA) { // win.ini has nothing: the default (app, key, default, buffer, size)
+  const char *d = ARG(2) ? GSTR(ARG(2)) : ""; u32 cap = (u32)ARG(4), n = (u32)strlen(d);
+  if (!cap) { RET(0); return; } if (n >= cap) n = cap - 1;
+  memcpy(GSTR(ARG(3)), d, n); GSTR(ARG(3))[n] = 0; RET(n);
+}
+IMP(kernel32, CopyFileA) { // (from, to, fail if it exists)
+  u32 err = 0; VFile *in = vfs_open(GSTR(ARG(0)), 0x80000000u, 3, &err);
+  if (!in) { SET_LAST_ERROR(err ? err : 2); RET(0); return; }
+  VFile *out = vfs_open(GSTR(ARG(1)), 0x40000000u, ARG(2) ? 1 : 2, &err);   // CREATE_NEW or CREATE_ALWAYS
+  if (!out) { vfs_close(in); SET_LAST_ERROR(err ? err : 5); RET(0); return; }
+  char buf[65536]; s64 n;
+  while ((n = vfs_read(in, buf, sizeof buf)) > 0) vfs_write(out, buf, (u64)n);
+  vfs_close(in); vfs_close(out); RET(1);
+}
+// OpenFile(name, OFSTRUCT *, style): only OF_EXIST (0x4000) is answered; OFSTRUCT: cBytes, fFixedDisk, nErrCode, 2 reserved, szPathName
+IMP(kernel32, OpenFile) {
+  u64 of = ARG(1); u32 style = (u32)ARG(2), err = 0;
+  if (!(style & 0x4000)) { rt_log("kernel32: OpenFile %s with style 0x%x: only OF_EXIST is answered", GSTR(ARG(0)), style); SET_LAST_ERROR(2); RET(0xFFFFFFFFu); return; }
+  VFile *f = vfs_open(GSTR(ARG(0)), 0x80000000u, 3, &err);
+  if (of) { memset((void *)GP(of), 0, 136); M8(of) = 136; M8(of + 1) = 1; strncpy(GSTR(of + 8), GSTR(ARG(0)), 127); M16(of + 2) = f ? 0 : 2; }
+  if (!f) { SET_LAST_ERROR(2); RET(0xFFFFFFFFu); return; }
+  vfs_close(f); RET(1);
+}
+IMP(kernel32, SetErrorMode) { static u32 mode; u32 old = mode; mode = (u32)ARG(0); RET(old); }
+IMP(kernel32, SetConsoleCtrlHandler) { RET(1); }
+IMP(kernel32, MulDiv) { s32 d = (s32)ARG(2); if (!d) { RET(0xFFFFFFFFu); return; } s64 v = (s64)(s32)ARG(0) * (s32)ARG(1); s64 h = (v < 0) != (d < 0) ? -(llabs(d) / 2) : llabs(d) / 2; RET((u32)(s32)((v + h) / d)); }
+IMP(kernel32, lstrcatA) { strcat(GSTR(ARG(0)), GSTR(ARG(1))); RET(ARG(0)); }
+// CompareStringW(locale, flags, a, length, b, length): code unit by code unit; NORM_IGNORECASE (1) folds ASCII
+IMP(kernel32, CompareStringW) {
+  const wchar16 *a = GWSTR(ARG(2)), *b = GWSTR(ARG(4)); s32 na = (s32)ARG(3), nb = (s32)ARG(5);
+  if (na < 0) na = (s32)rt_wcslen(a); if (nb < 0) nb = (s32)rt_wcslen(b);
+  int fold = (u32)ARG(1) & 1;
+  for (s32 i = 0; i < na && i < nb; i++) {
+    u32 x = a[i], y = b[i]; if (fold) { if (x >= 'a' && x <= 'z') x -= 32; if (y >= 'a' && y <= 'z') y -= 32; }
+    if (x != y) { RET(x < y ? 1 : 3); return; }
+  }
+  RET(na < nb ? 1 : na > nb ? 3 : 2);
+}
+// Other programs are not started: a title that starts one (a settings program, a web page) is told it was not found
+IMP(kernel32, WinExec) { rt_log("kernel32: WinExec \"%s\": other programs are not started", GSTR(ARG(0))); RET(2); }
+IMP(kernel32, CreateProcessA) { rt_log("kernel32: CreateProcess \"%s\": other programs are not started", ARG(1) ? GSTR(ARG(1)) : ARG(0) ? GSTR(ARG(0)) : ""); SET_LAST_ERROR(2); RET(0); }
+IMP(shell32, ShellExecuteA) { rt_log("shell32: ShellExecute %s \"%s\": other programs are not started", ARG(1) ? GSTR(ARG(1)) : "open", ARG(2) ? GSTR(ARG(2)) : ""); RET(2); }
+IMP(kernel32, FatalAppExitA) { rt_fatal("FatalAppExit: %s", ARG(1) ? GSTR(ARG(1)) : ""); }
