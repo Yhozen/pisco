@@ -10,7 +10,7 @@ titles, its own next steps and its own goal:
 | [Windows x86](#windows-x86) | Narbacular Drop, playable; Tag: The Power of Paint into its second level | Tag played by hand on a real GPU, then its later levels | 32-bit Direct3D 9 games of the 2000s |
 | [Linux x64](#linux-x64) | fastfetch 2.71.0; neofetch 7.1.0 (bash, busybox); cowsay 3.8.4 (perl) | threads, signals, writes | statically linked command-line programs |
 | [PS5](ps5.md) | the raymarching tech demo (CPU-drawn, AVX2): its three scenes, pad and music in the browser | more system functions, a GPU (AGC) title | PS5 homebrew |
-| [Microvm x64](#microvm-x64) | Linux 6.18 and busybox lifted, as an image: `/init`'s programs print what they print on QEMU; a shell typed into in a terminal or the page | virtio block and network (K5) | Linux itself, lifted, and its programs |
+| [Microvm x64](#microvm-x64) | Linux 6.18 and busybox lifted, as an image: `/init`'s programs print what they print on QEMU; a shell typed into in a terminal or the page; a virtio disk | a network; programs found by content | Linux itself, lifted, and its programs |
 
 ## Shared: the recompiler, the core runtime, the packages
 
@@ -270,7 +270,9 @@ reasoning and the measurements: [research/kernel-as-a-title.md](research/kernel-
 - **K4, done**: the serial port's input (a terminal's keys, the page's, a pipe), idle that waits for keys, and
   `pisco build recipes/linux` (two builds with empty caches, the same manifest). A shell typed into answers as
   `recipes/linux/traces/console.txt`.
-- **Next, K5**: virtio block and network devices, so the machine has a disk and a network.
+- **K5, done**: virtio's block device (`rt/microvm-x64/virtio.c`, `SW_DISK`): `/init` formats the disk, writes it
+  and reads it again.
+- **Next**: a network, snapshots, programs found by content (bash beside busybox).
 
 ## Known limits
 
