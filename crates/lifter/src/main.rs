@@ -1937,6 +1937,7 @@ fn discover32(img: &Image, roots: &BTreeSet<u64>, forced: &BTreeSet<u64>) -> Fou
     let mut rejected: BTreeMap<u64, bool> = BTreeMap::new(); // -> it is inside an instruction
     let mut patterns: BTreeSet<u64> = BTreeSet::new();
     let mut tried: BTreeSet<u64> = BTreeSet::new();
+    let mut reconsidered: BTreeSet<u64> = BTreeSet::new();
     let mut funcs: BTreeMap<u64, Func> = BTreeMap::new();
     loop {
         loop {
@@ -1963,6 +1964,11 @@ fn discover32(img: &Image, roots: &BTreeSet<u64>, forced: &BTreeSet<u64>) -> Fou
             }
             // the soft candidates against that code
             for &s in &cand.clone() {
+                // a candidate turned down for lying inside an instruction of code that is no longer known (that code
+                // was found from an entry since dropped) is looked at again, once
+                if rejected.get(&s) == Some(&true) && known.get(s) != 2 && reconsidered.insert(s) {
+                    rejected.remove(&s);
+                }
                 if hard.contains(&s) || rejected.contains_key(&s) {
                     continue;
                 }
@@ -2024,7 +2030,8 @@ fn discover32(img: &Image, roots: &BTreeSet<u64>, forced: &BTreeSet<u64>) -> Fou
             eprintln!("soft 0x{s:x}: {} instructions, {}{}{}{}", f.insns.len(), if known.get(*s) == 1 { "in a hard function" } else { "on its own" }, if f.bad { ", runs into bytes that are no code" } else { "" }, if patterns.contains(s) { ", by pattern" } else { "" }, if in_data.contains(s) { ", in data" } else { "" });
         }
         for (s, inside) in &rejected {
-            eprintln!("no entry 0x{s:x}: {}", if *inside { "inside an instruction" } else { "does not decode as code" });
+            let by = if *inside { funcs.iter().find_map(|(e, f)| f.insns.values().find(|i| i.ip() < *s && *s < i.next_ip()).map(|i| format!(" (of 0x{:x}'s instruction at 0x{:x}{})", e, i.ip(), if hard.contains(e) { ", a hard entry" } else { "" }))).unwrap_or_default() } else { String::new() };
+            eprintln!("no entry 0x{s:x}: {}{by}", if *inside { "inside an instruction" } else { "does not decode as code" });
         }
     }
     // a soft entry inside another function's code is one more way into that function's body, not a copy of its

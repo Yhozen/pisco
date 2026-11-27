@@ -13,8 +13,8 @@
 //  Window y       OpenGL counts from the bottom, WebGPU from the top: viewport, scissor, raster positions and
 //                 glReadPixels rows are turned over here (set_view, draw_pixels, read_pixels).
 //  Clip z         -w..w against 0..w: the vertex stage maps it (gl_ffp.c); depth ranges are WebGPU's as they are.
-//  Winding        OpenGL's front face is counter-clockwise in window coordinates (y up), which is clockwise in
-//                 WebGPU's framebuffer coordinates (y down): GL_CCW is the ring's "clockwise".
+//  Winding        a triangle's turn is the one it has on the screen, in OpenGL, Direct3D and WebGPU alike:
+//                 GL_CCW is the ring's "counter-clockwise" (Direct3D 9's default front face is the clockwise one).
 //  Textures       every one is RGBA8 on the GPU; its base format (GL_RGB, GL_RGBA, GL_ALPHA, ...) is kept for the
 //                 texture environment, which reads only the components the format has.
 //  Clears         a glClear the scissor rectangle cuts is drawn as a rectangle; a whole one begins a pass.
@@ -419,7 +419,7 @@ static void draw(u32 mode, const GlVertex *verts, u32 nv, const u32 *idx, u32 n,
       if (gl.cull_face == GL_FRONT_AND_BACK) { free(list); return; }
       pk.cull = gl.cull_face == GL_FRONT ? 1 : 2;
     }
-    pk.front = gl.front_face == GL_CCW;
+    pk.front = gl.front_face == GL_CW;
     pk.write_mask = gl.color_mask;
     if (gl.blend) { pk.blend = 1; pk.src = blend_factor(gl.src, 0); pk.dst = blend_factor(gl.dst, 0); pk.src_a = blend_factor(gl.src, 1); pk.dst_a = blend_factor(gl.dst, 1); }
     pk.depth_compare = gl.depth_test ? (u8)(gl.depth_func - GL_NEVER + 1) : 8;

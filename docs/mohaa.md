@@ -83,6 +83,20 @@ no program of the installer's run. `--compare` against Wine's installed folder: 
 differ are those the game wrote). The exe and `system86.dll` are lifted and the image links (90 s); the game DLLs in
 `main\` and Miles in `snddrivers\` are not lifted yet (M1).
 
+## Play it
+
+```sh
+cat mohaaspdemo.zip.00* > mohaaspdemo.zip          # if the download came in parts
+target/release/pisco build recipes/mohaa --source mohaaspdemo.zip   # -> out/images/mohaa (about 10 minutes the first time)
+node tools/serve.mjs 8000 web out/images/mohaa     # then http://127.0.0.1:8000/browser/index.html?image=/files/0/
+```
+
+In a desktop browser with WebGPU. Click the page to give it the mouse (Pointer Lock): the engine's own cursor then
+follows it in the menus, and in the level the mouse looks around. The demo's keys are the game's: W A S D move,
+Space jumps, C crouches, E uses, R reloads, Tab shows the objectives, Esc opens the menu (leaving Pointer Lock sends
+Esc as well). From the menu: the big map on the wall, a difficulty, then Continue under the briefing. The settings,
+the autosave and the saves are kept in the browser's storage.
+
 ## Running it
 
 ```sh
@@ -126,6 +140,22 @@ tools/oracle-wine/mohaa-play.sh recipes/mohaa/sessions/menu.json menu1      # th
 - **Files**: what is still open for writing when the process ends (the console log) is saved, as Windows would have
   written it.
 
+## What M2 took
+
+- **Viewports past the window.** The menu's room is drawn by widgets that set their own viewport, and two of them
+  reach past the window (`0, -40, 640x640`, `600, -40, 320x640`). OpenGL clips such a viewport at the window; WebGPU
+  wants the viewport inside the target, and the back end narrowed it, which squeezed the picture. The viewport sent
+  is now the part inside the window, and the vertex stage scales clip space (`GlUniforms.view`) so that what is drawn
+  lands where OpenGL's viewport puts it.
+- **Which side is the front.** OpenGL's front face (`GL_CCW` by default) was given to WebGPU as the clockwise one,
+  on the idea that framebuffer coordinates turn a triangle over; they do not (a triangle turns as it does on the
+  screen in OpenGL, Direct3D and WebGPU alike). The menus have culling off and showed nothing; in the level the ground
+  and the crates were culled and the trench's logs seen from behind. Their first view is now within 3.5 of 255 of
+  Wine's on average, the rest being its leaves, which move.
+- **A function found and then lost.** Miles' 3D provider hands out a routine by its address; the lifter's discovery
+  had turned that address down for lying inside an instruction of code it later dropped, and the refusal stayed. Such
+  a candidate is now looked at again, once. (Lifted alone, `Mssfast.m3d` had it.)
+
 ## The plan
 
 | # | Milestone | Passes when |
@@ -145,3 +175,7 @@ tools/oracle-wine/mohaa-play.sh recipes/mohaa/sessions/menu.json menu1      # th
   (5,301 frames; the briefing, the help screen, the level's first view with 270 draws a frame). The console log is
   Wine's but for what describes the machine: 58 of 58 lines for `menu`, 78 of 78 for `level`. Without a sound driver
   (M3) the engine says so and goes on (`tests/run.sh mohaa`).
+- **M2** (2026-11-27): in headless Chrome (WebGPU on SwiftShader), strict, every WebGPU call accepted: the menu is
+  within 0.27 / 0.40 / 0.35 of 255 of Wine's screenshot on average (R, G, B), the hover over the map, the difficulty
+  menu and the briefing within 0.1 (`tests/run.sh mohaagfx`). The level's own views move (leaves, soldiers, Wine's
+  wall clock) and are printed, not judged.

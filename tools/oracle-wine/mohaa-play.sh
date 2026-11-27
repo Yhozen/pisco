@@ -13,7 +13,7 @@ export ORACLE_RUN=$root/out/oracle/mohaa/$name; rm -rf "$ORACLE_RUN"; mkdir -p "
 rm -rf "$game/sm.000" "$game/main/qconsole.log" "$game/main/configs" "$game/main/save"; : > "$game/sm.001"; : > "$game/sm.002"
 "$here/oracle.sh" reg mohaa delete 'HKCU\Software\2015\MOHAA' /f > /dev/null 2>&1 || true
 # Mesa's extension list overflows the engine's buffer: the year keeps it to what 2001 had
-MESA_EXTENSION_MAX_YEAR=2001 "$here/oracle.sh" start mohaa 'C:\Program Files (x86)\EA GAMES\MOHAADemo\MOHAADemo.exe' +set logfile 2 > /dev/null
+TRACE=${TRACE:-} MESA_EXTENSION_MAX_YEAR=2001 "$here/oracle.sh" start mohaa 'C:\Program Files (x86)\EA GAMES\MOHAADemo\MOHAADemo.exe' +set logfile 2 > /dev/null
 "$here/oracle.sh" play mohaa "$session"
 "$here/oracle.sh" stop mohaa > /dev/null 2>&1 || true
 cp "$game/main/qconsole.log" "$ORACLE_RUN/" 2>/dev/null || echo "mohaa-play.sh: the engine wrote no console log" >&2

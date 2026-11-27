@@ -73,6 +73,8 @@
 #            Node, strict: its calls until its main loop are Wine's, and its maze from Wine's seeds is Wine's (minutes)
 #   mohaa    tests/gfx/mohaa.sh: Medal of Honor: Allied Assault's demo (Windows x86, OpenGL) from the user's download
 #            (MOHAA_ZIP), in Node, strict, on the virtual clock: the logos to the menu; its console log against Wine's
+#   mohaagfx tests/gfx/mohaa-chrome.sh: the menu and level sessions in headless Chrome, the still screens against the
+#            oracle's screenshots (needs out/img-mohaa: the mohaa step; about an hour)
 #   glffp    tests/gfx/gl-ffp.sh: OpenGL's fixed-function shader generator, every key validated by naga
 #   desire   tests/gfx/desire.sh: Desire's sessions in headless Chrome, strict: a PNG at every checkpoint, the still
 #            screens close to the oracle's screenshots (needs out/img-desire: the desireplay step; half an hour)
@@ -317,6 +319,7 @@ for s in ${*:-build layout node bench win32 linux avx ffp glffp sm gdi changelog
           else LINES_SHOWN=3 step pbr tests/gfx/pbr.sh; fi ;;
   images) LINES_SHOWN=9 step images tests/images.sh ;;
   mohaa)  if [ -f "${MOHAA_ZIP:-$HOME/games/mohaaspdemo.zip}" ]; then LINES_SHOWN=4 step mohaa tests/gfx/mohaa.sh; else echo "skip  mohaa: no download at MOHAA_ZIP=${MOHAA_ZIP:-$HOME/games/mohaaspdemo.zip}"; fi ;;
+  mohaagfx) if [ -f out/img-mohaa/index.json ]; then LINES_SHOWN=5 step mohaagfx tests/gfx/mohaa-chrome.sh; else echo "skip  mohaagfx: out/img-mohaa is not built (the mohaa step builds it)"; fi ;;
   glffp)  if command -v naga > /dev/null; then step glffp tests/gfx/gl-ffp.sh; else echo "skip  glffp: naga is not installed (tools/setup-toolchain.sh naga)"; fi ;;
   desire) if [ -f out/img-desire/index.json ]; then LINES_SHOWN=12 step desire tests/gfx/desire.sh; else echo "skip  desire: out/img-desire is not built (the desireplay step builds it)"; fi ;;
   desireplay) if [ ! -f "${DESIRE_ZIP:-$HOME/games/DESI-Re-v0.1-Windows-x64.zip}" ]; then echo "skip  desireplay: no zip at DESIRE_ZIP=${DESIRE_ZIP:-$HOME/games/DESI-Re-v0.1-Windows-x64.zip}"

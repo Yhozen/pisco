@@ -208,7 +208,8 @@ loads itself and Miles Sound System 6.1c beside it ([mohaa.md](mohaa.md)). What 
 |---|---|---|
 | M0 | census, recipe, oracle | **done** (2026-11-27): the build's 801 files equal Wine's install |
 | M1 | lift and start in Node | **done** (2026-11-27): strict, on the virtual clock, the engine plays its logos and reaches the menu (2,649 frames, 48,715 draws, no record the null back end finds inconsistent); its console log is Wine's but for what the machines are (CPU, renderer, pixel formats, sound) |
-| M2 to M4 | OpenGL's pixels in Chrome, sound, played by hand | [mohaa.md](mohaa.md#the-plan) |
+| M2 | OpenGL's pixels in Chrome | **done** (2026-11-27): the menu within 0.4 of 255 of Wine's screenshot on average, the menus and the briefing within 0.1 |
+| M3 to M4 | Sound, played by hand | [mohaa.md](mohaa.md#the-plan) |
 
 ## Linux x64
 
