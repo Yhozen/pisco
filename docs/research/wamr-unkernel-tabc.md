@@ -39,7 +39,7 @@ None of them touches the Windows, Xbox Series or PS5 runtimes.
   1.8 GB of memory, for a 14 MB `.aot` from a 5.8 MB module.
 - **Memory model:** one linear memory per instance; on x86-64 a 32-bit memory reserves 8 GiB so that bounds checks
   are hardware traps. memory64 works in the classic interpreter and AOT only. Lifted FNV at 5 GiB gave the native
-  checksum in plain and shared memory (`tests/memory64/run.sh`, not in main).
+  checksum in plain and shared memory (`tests/memory64/run.sh`, not a step of `tests/run.sh`).
 - Wasmtime 51 compiles the same modules after `--translate-to-exnref` (`docs/hosts.md`); it remains the engine for a
   native host.
 
