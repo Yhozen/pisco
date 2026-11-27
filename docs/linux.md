@@ -247,6 +247,23 @@ has not mapped yet is read first, as a fetch would: the kernel's page fault hand
 - Checked: `/init` catches a signal sent into a busy loop, as on QEMU; a shell runs 500 programs one after another
   (`tests/run.sh kernel`). 4,000 programs took 5.2 s, the host's memory 635 MB at the end against 595 MB after 2,000.
 
+## What it took (K8): real programs
+
+The initramfs has four programs now, all static, all at `0x400000`, each lifted on its own into the kernel's module:
+busybox, `fixtures/linux-hello`, fastfetch 2.71.0 (MIT) and perl 5.44.0 with cowsay 3.8.4 (perl's licence is
+GPL-1.0-or-later or Artistic, so it can be linked with the GPL-2.0 kernel). `/init` runs fastfetch and cowsay, and
+their lines are QEMU's. `tools/build-linux.sh` builds them (`tools/build-fastfetch.sh`, `tools/build-cowsay.sh`) and
+copies only the perl modules cowsay loads: perl itself names them.
+
+fastfetch reads the kernel's own `/proc` and `/sys` now, not the Linux runtime's imitation of them:
+
+```
+Kernel: Linux 6.18.65
+CPU: pisco microvm-x64 (lifted) @ 1.00 GHz
+Memory: 17.16 MiB / 244.25 MiB (7%)
+Disk (/): 3.57 MiB / 118.45 MiB (3%) - rootfs
+```
+
 ## Limits
 
 - Only programs lifted with the kernel run (busybox and linux-hello). Programs under other licences than
@@ -272,4 +289,5 @@ has not mapped yet is read first, as a fetch would: the kernel's page fault hand
 | K5 | a virtio disk: formatted, written and read again by `/init` | done |
 | K6 | programs at the same addresses, found by the hash of their code pages: busybox and linux-hello | done |
 | K7 | signals delivered anywhere (on the way back from a fault or an interrupt); tasks' stacks freed when they end | done |
-| K8 | a module per program (bash beside the kernel), a network, snapshots | next |
+| K8 | real programs on it: fastfetch, and cowsay on perl, as on QEMU | done |
+| K9 | a module per program (bash beside the kernel), a network, snapshots | next |

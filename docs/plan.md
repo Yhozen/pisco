@@ -87,3 +87,4 @@ A new runtime is a new folder and a new base; a new title of an existing runtime
 | K5 | a virtio disk on the machine (`SW_DISK`): formatted, written and read again by Linux | done ([linux.md](linux.md#progress)) |
 | K6 | programs at the same addresses (busybox and linux-hello), each lifted on its own and found by the hash of its code pages | done ([linux.md](linux.md#progress)) |
 | K7 | signals delivered anywhere (nested runs for code sent elsewhere), tasks' stacks freed when they end: 4,000 programs in a row | done ([linux.md](linux.md#progress)) |
+| K8 | real programs on the lifted Linux: fastfetch and cowsay on perl, beside busybox, as on QEMU | done ([linux.md](linux.md#progress)) |

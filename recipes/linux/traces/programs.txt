@@ -5,7 +5,7 @@ awk: 299995
 sha256: bb9f8df61474d25e of 4194304 bytes written to a file
 sort: apple fig pear 
 sed: the kernel is a program
-ls: bin dev etc init proc root sys tmp 
+ls: bin dev etc init proc root sys tmp usr 
 id: 0:0
 hello: hello: 2 arguments
 hello: numbers: -7 3000000000 beef 1234567890123  3.14 6.020000e+23 0.3
@@ -19,6 +19,16 @@ trap: USR1 handled
 trap: the subshell ended with 3
 async: USR2 caught while counting
 async: counted to 30000
+fastfetch: Kernel: Linux 6.18.65
+fastfetch: Locale: C
+ _____________________________
+< Hello from the lifted Linux >
+ -----------------------------
+        \   ^__^
+         \  (oo)\_______
+            (__)\       )\/\
+                ||----w |
+                ||     ||
 spawn: 20 loops
 exec: 10 programs run
 init: done

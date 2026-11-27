@@ -276,6 +276,8 @@ reasoning and the measurements: [research/kernel-as-a-title.md](research/kernel-
   the code page that runs: busybox and linux-hello in one `/init`, as on QEMU.
 - **K7, done**: a signal delivered on the way back from a fault or an interrupt (the handler runs on top, the
   interrupted code goes on after `sigreturn`); a task's stacks freed when it ends: 4,000 programs in a row.
+- **K8, done**: fastfetch and cowsay on perl run on the lifted Linux beside busybox, as on QEMU; fastfetch reads the
+  kernel's own `/proc`.
 - **Next**: a module per program (so bash, GPL-3.0, can run beside the GPL-2.0 kernel), a network, snapshots.
 
 ## Known limits

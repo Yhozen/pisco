@@ -18,4 +18,4 @@ cmdline = "console=ttyS0,115200 earlyprintk=serial,ttyS0,115200 panic=-1 no_time
 
 [lifter]
 split = 16
-programs = ["/busybox", "/hello"]
+programs = ["/busybox", "/hello", "/fastfetch", "/perl"]

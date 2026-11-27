@@ -26,6 +26,10 @@ echo "id: $(id -u):$(id -g)"
 ( trap 'echo "trap: USR1 handled"; exit 3' USR1; sh -c 'kill -USR1 $PPID'; sleep 1000 ); echo "trap: the subshell ended with $?"
 # a signal into a program that computes (no system call to wait in): its handler runs, then the loop goes on
 sh -c 'trap "echo async: USR2 caught while counting" USR2; (sleep 0.05; kill -USR2 $$) & i=0; while [ $i -lt 30000 ]; do i=$((i + 1)); done; wait; echo "async: counted to $i"'
+# fastfetch (static, at the addresses of busybox and hello too): what it finds of this kernel
+fastfetch --pipe -l none -s Kernel:Locale 2>/dev/null | sed 's/^/fastfetch: /'
+# cowsay on perl (static, at those addresses too)
+cowsay "Hello from the lifted Linux"
 n=0; for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do true && n=$((n + 1)); done; echo "spawn: $n loops"
 for i in 1 2 3 4 5 6 7 8 9 10; do /bin/true; done; echo "exec: 10 programs run"
 

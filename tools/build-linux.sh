@@ -49,12 +49,24 @@ cp "$obj/vmlinux" "$out/vmlinux"; cp "$obj/arch/x86/boot/bzImage" "$out/bzImage"
 # the initramfs: a list for gen_init_cpio (every file owned by root, at time 0)
 bb=$("$root/tools/build-busybox.sh" "$out")
 MUSL=${MUSL:-$HOME/tools/musl-1.2.5} "$root/fixtures/linux-hello/build.sh" "$out/build/hello" > /dev/null; hello=$out/build/hello/hello
+# fastfetch 2.71.0 (MIT), static (tools/build-fastfetch.sh): a real program that reads the kernel's /proc and /sys
+ff=$root/out/fastfetch/fastfetch; [ -x "$ff" ] || "$root/tools/build-fastfetch.sh" > /dev/null
+# cowsay 3.8.4 on perl 5.44.0 (tools/build-cowsay.sh): perl, the modules cowsay loads (perl names them: %INC), the cows
+cr=$root/out/cowsay/root; [ -x "$cr/usr/bin/perl" ] || "$root/tools/build-cowsay.sh" > /dev/null
+mods=$(cd "$cr" && PERL5LIB=$cr/usr/lib/perl5/5.44.0/x86_64-linux:$cr/usr/lib/perl5/5.44.0 COWPATH=$cr/usr/share/cowsay/cows ./usr/bin/perl \
+  -e 'BEGIN { @ARGV = ("moo") } open STDOUT, ">", "/dev/null"; do "./usr/bin/cowsay"; print STDERR "$_\n" for sort values %INC' 2>&1 >/dev/null | grep "^$cr/usr/lib/" | sed "s|^$cr/||")
 { echo "dir /bin 755 0 0"; for d in dev proc sys tmp etc root; do echo "dir /$d 755 0 0"; done
   echo "nod /dev/console 600 0 0 c 5 1"
   echo "file /bin/busybox $bb 755 0 0"
   echo "file /bin/hello $hello 755 0 0"
+  echo "file /bin/fastfetch $ff 755 0 0"
+  for d in usr usr/bin usr/lib usr/share usr/share/cowsay usr/share/cowsay/cows; do echo "dir /$d 755 0 0"; done
+  echo "file /usr/bin/perl $cr/usr/bin/perl 755 0 0"; echo "file /usr/bin/cowsay $cr/usr/bin/cowsay 755 0 0"; echo "slink /usr/bin/env /bin/busybox 777 0 0"
+  for c in "$cr"/usr/share/cowsay/cows/*.cow; do echo "file /usr/share/cowsay/cows/$(basename "$c") $c 644 0 0"; done
+  for m in $mods; do d=$(dirname "$m"); while [ "$d" != usr/lib ] && [ "$d" != . ]; do echo "dir /$d 755 0 0"; d=$(dirname "$d"); done; done | sort -u
+  for m in $mods; do echo "file /$m $cr/$m 644 0 0"; done
   for a in $("$bb" --list); do echo "slink /bin/$a busybox 777 0 0"; done
   echo "file /init $root/recipes/linux/init 755 0 0"; } > "$out/initramfs.list"
 "$obj/usr/gen_init_cpio" -t 0 "$out/initramfs.list" > "$out/initramfs.cpio"
-rm -rf "$out/root"; mkdir -p "$out/root"; cp "$out/vmlinux" "$out/initramfs.cpio" "$out/root/"; cp "$bb" "$out/root/busybox"; cp "$hello" "$out/root/hello"
+rm -rf "$out/root"; mkdir -p "$out/root"; cp "$out/vmlinux" "$out/initramfs.cpio" "$out/root/"; cp "$bb" "$out/root/busybox"; cp "$hello" "$out/root/hello"; cp "$ff" "$out/root/fastfetch"; cp "$cr/usr/bin/perl" "$out/root/perl"
 echo "$out: vmlinux ($(stat -c %s "$out/vmlinux") bytes), bzImage, initramfs.cpio ($(stat -c %s "$out/initramfs.cpio") bytes), root/"
