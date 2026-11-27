@@ -97,6 +97,10 @@ Space jumps, C crouches, E uses, R reloads, Tab shows the objectives, Esc opens 
 Esc as well). From the menu: the big map on the wall, a difficulty, then Continue under the briefing. The settings,
 the autosave and the saves are kept in the browser's storage.
 
+After a run that did not end through the demo's own Quit (the tab closed, a crash), the next start ends at once:
+the demo finds its crash marker (`sm.000`), deletes it and asks for `Configure.exe s`, which on Windows asks whether
+to play in Safe Mode; other programs are not started here, so it just ends. The start after that is a normal one.
+
 ## Running it
 
 ```sh
@@ -169,6 +173,18 @@ tools/oracle-wine/mohaa-play.sh recipes/mohaa/sessions/menu.json menu1      # th
   and Miles take the paths they take under Wine on an Intel processor, and the engine's console names the same CPU.
 - **One more of Miles' mixer routines** (`MSSMIXER` at `0x2113d047` as linked) is found by no discovery rule and is
   named in the recipe's `[lifter] entries`.
+
+## What M4 took
+
+- **A function right after a switch table.** Played by hand, the level stopped on a call to `gamex86.dll`'s
+  `0xd0260`, which was not lifted. The function before it ends in a call that does not return (a C++ throw) and keeps
+  the table of its switch right after that call; the lifter decoded on past the call, read the table as instructions,
+  and one of those covered the next function's first byte, so the address was turned down as "inside an
+  instruction". What a function decodes inside its own jump tables now counts as no code, and an address inside a
+  table of known code is no entry. Across the demo's modules that finds 35 more functions and turns down 107
+  addresses that had been taken for functions: 89 jump tables and 18 index tables.
+- **A session that plays** (`play`): the level session, then forward, a turn, three shots, reload, the pistol, a step
+  left, a jump, a crouch, a quick save (F5, which writes `quick.sav`) and the in-game menu, in Node, strict.
 
 ## The plan
 

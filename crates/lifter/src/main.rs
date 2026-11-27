@@ -300,6 +300,14 @@ struct Func {
     /// forked process and a longjmp go on from a return address
     rets: BTreeSet<u64>,
 }
+impl Func {
+    /// 32-bit code: `ip` is in one of the function's own jump tables. Decoding went on past a call that does not
+    /// return (a throw) into the table that follows it: what it read there is no code, and it may cover the next
+    /// function's first bytes (MOHAA's gamex86.dll has a function right after such a table)
+    fn in_data(&self, ip: u64) -> bool {
+        self.data.iter().any(|&(a, e)| a <= ip && ip < e)
+    }
+}
 
 /// A near branch or call with its target in the instruction (far ones exist in 32-bit code).
 fn is_near(i: &Instruction) -> bool {
@@ -1844,6 +1852,9 @@ impl Cover {
     }
     fn add(&mut self, f: &Func) {
         for (&ip, i) in &f.insns {
+            if f.in_data(ip) {
+                continue;
+            }
             self.set(ip, 1);
             for a in ip + 1..i.next_ip() {
                 if self.get(a) != 1 {
@@ -1977,6 +1988,12 @@ fn discover32(img: &Image, roots: &BTreeSet<u64>, forced: &BTreeSet<u64>) -> Fou
                     soft.remove(&s);
                     continue;
                 }
+                // in a jump table or index table of known code: data
+                if known.get(s) == 3 && !forced.contains(&s) {
+                    rejected.insert(s, false);
+                    soft.remove(&s);
+                    continue;
+                }
                 let (f, calls, refs) = decode_func(img, s, &hard);
                 if !forced.contains(&s) && (!f.insns.contains_key(&s) || (known.get(s) != 1 && (f.bad || known.clashes(&f) || !starts_as_code(&f, s)))) {
                     rejected.insert(s, false);
@@ -1995,8 +2012,11 @@ fn discover32(img: &Image, roots: &BTreeSet<u64>, forced: &BTreeSet<u64>) -> Fou
                 let mut inner = Cover::new(img);
                 for (e, f) in funcs.iter().filter(|(e, _)| soft.contains(e) && !skip.contains(e)) {
                     let _ = e;
-                    for (&ip, i) in &f.insns {
+                    for (&ip, i) in f.insns.iter().filter(|(ip, _)| !f.in_data(**ip)) {
                         (ip + 1..i.next_ip()).for_each(|a| inner.set(a, 2));
+                    }
+                    for &(a, e) in &f.data {
+                        (a..e).for_each(|x| inner.set(x, 2));   // its tables: data
                     }
                 }
                 soft.iter().copied().filter(|s| inner.get(*s) == 2 && !forced.contains(s)).collect()
