@@ -7,6 +7,10 @@
 
 HOST("stat") s64 host_stat(const char *name, u32 len);                        // size, -1 missing, -2 directory
 HOST("list") u32 host_list(const char *name, u32 len, char *buf, u32 cap);   // "name\n" lines, directories end in '/'
+// A Linux drive has symbolic links and executable bits (docs/spec/image.md#files): the target of the link at a name
+// (its length; -1: not a link), and whether the file at a name is executable (1, 0; -1: the host does not know)
+HOST("link") s32 host_link(const char *name, u32 len, char *buf, u32 cap);
+HOST("exec") s32 host_exec(const char *name, u32 len);
 
 char linux_cwd[1024] = "/";
 // The absolute, normal form of `path` ("." and ".." and doubled slashes gone); a relative one is relative to the
@@ -48,10 +52,19 @@ int fs_lookup(const char *abs, Node *n, int follow) {
     memset(n, 0, sizeof *n); n->ino = ino_of(abs);
     if (!runtime_only(abs)) {
       char name[sizeof n->host]; if (!host_name(abs, name)) return -L_ENAMETOOLONG;
+      char target[512]; s32 tl = abs[1] ? host_link(name, (u32)strlen(name), target, sizeof target - 1) : -1;
+      if (tl >= 0) {   // a link of the drive: relative to its folder
+        target[tl] = 0; n->type = N_LINK;
+        if (!follow) { n->data = strdup(target); return 0; }
+        static char dir[1024], next[1024]; strcpy(dir, abs); char *slash = strrchr(dir, '/'); if (slash == dir) dir[1] = 0; else *slash = 0;
+        if (target[0] == '/') { if (fs_path(-100, target, next, sizeof next)) return -L_ENAMETOOLONG; }
+        else { char joined[1100]; if (snprintf(joined, sizeof joined, "%s/%s", dir, target) >= (int)sizeof joined) return -L_ENAMETOOLONG; if (fs_path(-100, joined, next, sizeof next)) return -L_ENAMETOOLONG; }
+        abs = next; continue;
+      }
       s64 s = host_stat(name, (u32)strlen(name));
       if (!abs[1]) s = -2;   // the root is always there
       if (s == -2) { n->type = N_DIR; return 0; }
-      if (s >= 0) { n->type = N_FILE; n->size = (u64)s; strcpy(n->host, name); return 0; }
+      if (s >= 0) { n->type = N_FILE; n->size = (u64)s; strcpy(n->host, name); n->noexec = host_exec(name, (u32)strlen(name)) == 0; return 0; }
     }
     if (fs_generated(abs, n)) {
       if (n->type != N_LINK || !follow) return 0;

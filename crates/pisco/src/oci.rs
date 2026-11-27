@@ -23,15 +23,17 @@ pub const ABI: &str = "pisco.host/0";
 pub fn sha256(data: &[u8]) -> String { hex(&Sha256::digest(data)) }
 pub fn hex(b: &[u8]) -> String { b.iter().map(|x| format!("{x:02x}")).collect() }
 /// A file tree's digest (docs/spec/image.md#the-tree-digest), in hex: one line per entry, `<type>\t<data>\t<path>\n`
-/// (`f` a file and its sha256, `d` a folder and `-`), sorted by path, hashed together
-pub fn tree_digest(entries: &[(String, Option<String>)]) -> String {
-    let mut lines: Vec<(&str, String)> = entries.iter().map(|(p, sha)| (p.as_str(), match sha { Some(h) => format!("f\t{h}\t{p}\n"), None => format!("d\t-\t{p}\n") })).collect();
+/// (`d` a folder and `-`; `f`, or `x` executable, a file and its sha256; `l` a symbolic link and its target), sorted
+/// by path, hashed together. Entries are (path, type, data)
+pub fn tree_digest(entries: &[(String, char, String)]) -> String {
+    let mut lines: Vec<(&str, String)> = entries.iter().map(|(p, t, d)| (p.as_str(), format!("{t}\t{d}\t{p}\n"))).collect();
     lines.sort_by(|a, b| a.0.as_bytes().cmp(b.0.as_bytes()));
     sha256(lines.into_iter().map(|l| l.1).collect::<String>().as_bytes())
 }
 
 // ---- tar ----
-pub enum Entry { Dir, File(Vec<u8>) }
+/// A folder; a file (and whether it is executable: only on a platform with modes); a symbolic link and its target
+pub enum Entry { Dir, File(Vec<u8>, bool), Link(String) }
 /// A layer's files: paths relative to C:\ with '/' separators, as the title's file system shows them (case kept).
 #[derive(Default)]
 pub struct Tree { pub entries: BTreeMap<String, Entry> }
@@ -46,28 +48,41 @@ impl Tree {
     }
     pub fn file(&mut self, path: &str, data: Vec<u8>) {
         if let Some((d, _)) = path.rsplit_once('/') { self.dir(d); }
-        self.entries.insert(path.to_string(), Entry::File(data));
+        self.entries.insert(path.to_string(), Entry::File(data, false));
+    }
+    /// A file with its mode (a Linux drive's), or a symbolic link
+    pub fn file_mode(&mut self, path: &str, data: Vec<u8>, exec: bool) {
+        if let Some((d, _)) = path.rsplit_once('/') { self.dir(d); }
+        self.entries.insert(path.to_string(), Entry::File(data, exec));
+    }
+    pub fn link(&mut self, path: &str, target: &str) {
+        if let Some((d, _)) = path.rsplit_once('/') { self.dir(d); }
+        self.entries.insert(path.to_string(), Entry::Link(target.to_string()));
     }
     /// The tree digest of these entries (docs/spec/image.md#the-tree-digest), in hex, and how many files they hold
     pub fn digest(&self) -> (String, usize) {
-        let e: Vec<(String, Option<String>)> = self.entries.iter().map(|(p, e)| (p.clone(), match e { Entry::Dir => None, Entry::File(d) => Some(sha256(d)) })).collect();
-        (tree_digest(&e), e.iter().filter(|x| x.1.is_some()).count())
+        let e: Vec<(String, char, String)> = self.entries.iter().map(|(p, e)| match e {
+            Entry::Dir => (p.clone(), 'd', "-".into()), Entry::File(d, x) => (p.clone(), if *x { 'x' } else { 'f' }, sha256(d)), Entry::Link(t) => (p.clone(), 'l', t.clone()) }).collect();
+        (tree_digest(&e), e.iter().filter(|x| x.1 != 'd').count())
     }
-    /// The tar: ustar headers (a pax header first when a name does not fit), directories "name/" mode 0755, files
-    /// mode 0644, mtime, uid and gid 0, two zero blocks at the end.
+    /// The tar: ustar headers (a pax header first when a name or a link's target does not fit), directories "name/"
+    /// mode 0755, files mode 0644 (0755 executable), links mode 0777, mtime, uid and gid 0, two zero blocks at the end.
     pub fn tar(&self) -> Vec<u8> {
         let mut out = Vec::new();
         for (name, e) in &self.entries {
-            let (full, size, kind, mode) = match e { Entry::Dir => (format!("{name}/"), 0, b'5', 0o755), Entry::File(d) => (name.clone(), d.len(), b'0', 0o644) };
+            let (full, size, kind, mode) = match e { Entry::Dir => (format!("{name}/"), 0, b'5', 0o755), Entry::File(d, x) => (name.clone(), d.len(), b'0', if *x { 0o755 } else { 0o644 }), Entry::Link(_) => (name.clone(), 0, b'2', 0o777) };
             let (prefix, short) = split_name(&full);
-            if short.is_none() {
-                let rec = pax_record("path", &full);
-                header(&mut out, "PaxHeaders/entry", "", rec.len(), b'x', 0o644);
+            let target = if let Entry::Link(t) = e { t.as_str() } else { "" };
+            if short.is_none() || target.len() > 100 {
+                let mut rec = String::new();
+                if short.is_none() { rec.push_str(&pax_record("path", &full)); }
+                if target.len() > 100 { rec.push_str(&pax_record("linkpath", target)); }
+                header(&mut out, "PaxHeaders/entry", "", rec.len(), b'x', 0o644, "");
                 out.extend_from_slice(rec.as_bytes()); pad(&mut out);
             }
             let (p, n) = match short { Some(n) => (prefix, n), None => ("", "long-name") };
-            header(&mut out, n, p, size, kind, mode);
-            if let Entry::File(d) = e { out.extend_from_slice(d); pad(&mut out); }
+            header(&mut out, n, p, size, kind, mode, if target.len() <= 100 { target } else { "" });
+            if let Entry::File(d, _) = e { out.extend_from_slice(d); pad(&mut out); }
         }
         out.extend_from_slice(&[0u8; 1024]);
         out
@@ -90,7 +105,7 @@ fn pax_record(key: &str, value: &str) -> String {
     while format!("{n}{body}").len() != n { n += 1; }
     format!("{n}{body}")
 }
-fn header(out: &mut Vec<u8>, name: &str, prefix: &str, size: usize, kind: u8, mode: u32) {
+fn header(out: &mut Vec<u8>, name: &str, prefix: &str, size: usize, kind: u8, mode: u32, link: &str) {
     let mut h = [0u8; 512];
     let put = |h: &mut [u8; 512], at: usize, s: &[u8]| h[at..at + s.len()].copy_from_slice(s);
     put(&mut h, 0, &name.as_bytes()[..name.len().min(100)]);
@@ -100,6 +115,7 @@ fn header(out: &mut Vec<u8>, name: &str, prefix: &str, size: usize, kind: u8, mo
     put(&mut h, 124, format!("{size:011o}\0").as_bytes());
     put(&mut h, 136, b"00000000000\0");
     h[156] = kind;
+    put(&mut h, 157, link.as_bytes());
     put(&mut h, 257, b"ustar\x0000");
     put(&mut h, 345, prefix.as_bytes());
     h[148..156].copy_from_slice(b"        ");

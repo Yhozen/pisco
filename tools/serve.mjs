@@ -97,6 +97,8 @@ http.createServer(async (req, res) => {
     const d = image.drive, name = p.slice(3), query = new URL(req.url, 'http://x').search;
     if (query === '?stat') { const s = d.stat(name); res.writeHead(s === -1 ? 404 : 200, head).end(s === -1 ? '' : String(s)); return; }
     if (query === '?list') { const l = d.list(name); res.writeHead(l === null ? 404 : 200, head).end(l ?? ''); return; }
+    if (query === '?link') { const t = d.link(name); res.writeHead(t === null ? 404 : 200, head).end(t ?? ''); return; }
+    if (query === '?exec') { res.writeHead(200, head).end(String(d.exec(name))); return; }
     const data = d.read(name); if (!data) { res.writeHead(404, head).end(); return; }
     res.writeHead(200, { ...head, 'Content-Type': types[path.extname(name)] || 'application/octet-stream', 'Content-Length': data.length }).end(data);
     return;
@@ -110,6 +112,8 @@ http.createServer(async (req, res) => {
   if (!file.startsWith(path.resolve(base))) { res.writeHead(403).end(); return; }
   const query = new URL(req.url, 'http://x').search;
   if (query === '?stat') { fs.stat(file, (err, st) => { if (err) res.writeHead(404, head).end(); else res.writeHead(200, head).end(String(st.isDirectory() ? -2 : st.size)); }); return; }
+  if (query === '?link') { fs.readlink(file, (err, t) => { if (err) res.writeHead(404, head).end(); else res.writeHead(200, head).end(t); }); return; }
+  if (query === '?exec') { fs.stat(file, (err, st) => res.writeHead(200, head).end(err || st.isDirectory() ? '-1' : st.mode & 0o100 ? '1' : '0')); return; }
   if (query === '?list') { fs.readdir(file, { withFileTypes: true }, (err, es) => { if (err) res.writeHead(404, head).end(); else res.writeHead(200, head).end(es.map((e) => e.name + (e.isDirectory() ? '/' : '') + '\n').join('')); }); return; }
   fs.stat(file, (err, st) => {
     if (err || !st.isFile()) { res.writeHead(404, head).end(); return; }

@@ -21,16 +21,30 @@ pub struct Opts { pub recipe: PathBuf, pub source: Option<PathBuf>, pub out: Opt
     pub lock: bool,
     /// inputs named on the command line: --input <id>=<path> (and --with <ID>=<folder>), matched without regard to case
     pub with: Vec<(String, PathBuf)> }
-/// A folder's tree digest (docs/spec/image.md#the-tree-digest), over `only` of its files when they are named
-pub fn folder_digest(dir: &Path, only: Option<&[String]>) -> R<String> {
-    let (mut fs, mut ds) = (Vec::new(), Vec::new()); walk(dir, "", &mut fs, &mut ds)?;
-    let mut e: Vec<(String, Option<String>)> = Vec::new();
+/// What a file of the builder's machine is on a drive with modes and links (`modes`: a Linux drive) or without:
+/// its target if it is a link, else its bytes and whether it is executable
+pub enum Found { Link(String), File(Vec<u8>, bool) }
+pub fn found(p: &Path, modes: bool) -> R<Found> {
+    use std::os::unix::fs::PermissionsExt;
+    let m = io(std::fs::symlink_metadata(p), p)?;
+    if modes && m.file_type().is_symlink() { return Ok(Found::Link(io(std::fs::read_link(p), p)?.to_string_lossy().into_owned())); }
+    let exec = modes && io(std::fs::metadata(p), p)?.permissions().mode() & 0o100 != 0;
+    Ok(Found::File(io(std::fs::read(p), p)?, exec))
+}
+fn digest_line(rel: &str, p: &Path, modes: bool) -> R<(String, char, String)> {
+    Ok(match found(p, modes)? { Found::Link(t) => (rel.to_string(), 'l', t), Found::File(d, x) => (rel.to_string(), if x { 'x' } else { 'f' }, oci::sha256(&d)) })
+}
+/// A folder's tree digest (docs/spec/image.md#the-tree-digest), over `only` of its files when they are named; with
+/// `modes`, its links and executable bits count (a Linux drive)
+pub fn folder_digest(dir: &Path, only: Option<&[String]>, modes: bool) -> R<String> {
+    let (mut fs, mut ds) = (Vec::new(), Vec::new()); walk_as(dir, "", &mut fs, &mut ds, modes)?;
+    let mut e: Vec<(String, char, String)> = Vec::new();
     match only {
         Some(names) => for n in names {
             let (rel, p) = fs.iter().find(|(r, _)| r.eq_ignore_ascii_case(n)).ok_or(format!("{}: has no {n}", dir.display()))?;
-            e.push((rel.clone(), Some(oci::sha256(&io(std::fs::read(p), p)?))));
+            e.push(digest_line(rel, p, modes)?);
         },
-        None => { for d in ds { e.push((d, None)); } for (rel, p) in fs { e.push((rel, Some(oci::sha256(&io(std::fs::read(&p), &p)?)))); } }
+        None => { for d in ds { e.push((d, 'd', "-".into())); } for (rel, p) in fs { e.push(digest_line(&rel, &p, modes)?); } }
     }
     Ok(oci::tree_digest(&e))
 }
@@ -43,6 +57,8 @@ fn check_pin(pin: &Pin, sha: &str, what: &str) -> R<()> {
         Pin::Unpinned(why) => { say(&format!("input: {what} is not pinned ({why}); it has {sha}")); Ok(()) }
     }
 }
+/// Whether the app's drive has modes and links (a Linux drive: docs/spec/image.md#files)
+fn modes(r: &Recipe) -> bool { matches!(r.platform.as_str(), "linux-x64" | "microvm-x64" | "ps5") }
 fn bound<'a>(with: &'a [(String, PathBuf)], id: &str) -> Option<&'a PathBuf> { with.iter().find(|(n, _)| n.eq_ignore_ascii_case(id)).map(|x| &x.1) }
 
 pub fn say(s: &str) { eprintln!("pisco: {s}"); }
@@ -107,13 +123,16 @@ fn innoextract() -> PathBuf {
     let p = home().join("tools/innoextract/bin/amd64/innoextract");
     if p.is_file() { p } else { "innoextract".into() }
 }
-fn walk(dir: &Path, rel: &str, files: &mut Vec<(String, PathBuf)>, dirs: &mut Vec<String>) -> R<()> {
+fn walk(dir: &Path, rel: &str, files: &mut Vec<(String, PathBuf)>, dirs: &mut Vec<String>) -> R<()> { walk_as(dir, rel, files, dirs, false) }
+/// With `links`, a symbolic link is an entry of its own (a Linux drive's), not what it points to
+fn walk_as(dir: &Path, rel: &str, files: &mut Vec<(String, PathBuf)>, dirs: &mut Vec<String>, links: bool) -> R<()> {
     let mut es: Vec<_> = io(std::fs::read_dir(dir), dir)?.filter_map(|e| e.ok()).collect();
     es.sort_by_key(|e| e.file_name());
     for e in es {
         let name = e.file_name().to_string_lossy().into_owned();
         let r = if rel.is_empty() { name.clone() } else { format!("{rel}/{name}") };
-        if e.path().is_dir() { dirs.push(r.clone()); walk(&e.path(), &r, files, dirs)?; } else { files.push((r, e.path())); }
+        let link = links && e.file_type().map(|t| t.is_symlink()).unwrap_or(false);
+        if !link && e.path().is_dir() { dirs.push(r.clone()); walk_as(&e.path(), &r, files, dirs, links)?; } else { files.push((r, e.path())); }
     }
     Ok(())
 }
@@ -217,7 +236,7 @@ fn added(r: &Recipe, with: &[(String, PathBuf)]) -> R<(Vec<(String, PathBuf)>, S
         let file = r.inputs.iter().find(|i| i.id == a.from).map(|i| r.dir.join(&i.file)).filter(|p| p.is_dir());
         let dir = bound(with, &a.from).cloned().or_else(|| std::env::var_os(&var).map(PathBuf::from)).or(file)
             .ok_or(format!("input {0}: say where its folder is: pisco build --input {0}=<folder> (or the environment variable {var})", a.from))?;
-        check_pin(&a.pin, &folder_digest(&dir, Some(&a.files))?, &format!("{} ({})", dir.display(), a.from))?;
+        check_pin(&a.pin, &folder_digest(&dir, Some(&a.files), modes(r))?, &format!("{} ({})", dir.display(), a.from))?;
         let to = recipe::drive_path(&a.to)?;
         let list: Vec<_> = io(std::fs::read_dir(&dir), &dir)?.filter_map(|e| e.ok()).collect();
         for f in &a.files {
@@ -252,10 +271,14 @@ fn extract(r: &Recipe, src: &Path, sha: &str, cache: &Path, with: &[(String, Pat
             }
             "folder" => { // the folder's files go to the exe's folder ({app}), as they are
                 if !src.is_dir() { return Err(format!("{}: [[extract]] folder wants a folder", src.display())); }
-                let (mut fs, mut ds) = (Vec::new(), Vec::new()); walk(src, "", &mut fs, &mut ds)?;
+                let (mut fs, mut ds) = (Vec::new(), Vec::new()); walk_as(src, "", &mut fs, &mut ds, modes(r))?;
                 for d in ds { io(std::fs::create_dir_all(tmp.join("app").join(&d)), &tmp)?; }
                 io(std::fs::create_dir_all(tmp.join("app")), &tmp)?;
-                for (rel, p) in fs { io(std::fs::copy(&p, tmp.join("app").join(&rel)), &p)?; }
+                for (rel, p) in fs {
+                    let dst = tmp.join("app").join(&rel);
+                    // a link stays a link on a Linux drive (its target as written); a file keeps its mode (std::fs::copy)
+                    match found(&p, modes(r))? { Found::Link(t) => io(std::os::unix::fs::symlink(&t, &dst), &dst)?, Found::File(..) => { io(std::fs::copy(&p, &dst), &p)?; } }
+                }
             }
             "zip" => unzip(src, r.source.root.as_deref(), &tmp.join("app"))?,
             "wise" => unwise(r, src, &tmp)?,
@@ -278,7 +301,7 @@ fn extract(r: &Recipe, src: &Path, sha: &str, cache: &Path, with: &[(String, Pat
             match r.source.map.get(&top) { Some(p) => recipe::drive_path(p)?, None => return Err(format!("the installer has files in {{{top}}}: say where they go in the first step's map = {{ {top} = 'C:\\...' }}")) }
         };
         let (mut fs, mut ds) = (Vec::new(), Vec::new());
-        walk(&e.path(), "", &mut fs, &mut ds)?;
+        walk_as(&e.path(), "", &mut fs, &mut ds, modes(r))?;
         let join = |rel: &str| if guest.is_empty() { rel.to_string() } else if rel.is_empty() { guest.clone() } else { format!("{guest}/{rel}") };
         dirs.push(join("")); for d in ds { dirs.push(join(&d)); }
         for (rel, host) in fs { files.insert(join(&rel), host); }
@@ -546,7 +569,7 @@ pub fn build(root: &Path, o: &Opts) -> R<()> {
     // a folder input (a title the user built or copied) is known by its tree digest
     let sha = if r.primary.folder {
         if !src.is_dir() { return Err(format!("{}: input {} is a folder", src.display(), r.primary.id)); }
-        folder_digest(&src, r.primary.files.as_deref())?
+        folder_digest(&src, r.primary.files.as_deref(), modes(&r))?
     } else { let data = io(std::fs::read(&src), &src)?; oci::sha256(&data) };
     check_pin(&r.primary.pin, &sha, &format!("{} ({})", src.display(), r.primary.id))?;
     let mut ex = extract(&r, &src, &sha, &cache, &o.with)?;
@@ -562,7 +585,7 @@ pub fn build(root: &Path, o: &Opts) -> R<()> {
     // the app's files: its layer, and their tree digest against the recipe's lock (docs/spec/recipe.md#the-lock)
     let mut game = Tree::default();
     for d in &ex.dirs { if !d.is_empty() { game.dir(d); } }
-    for (g, h) in &ex.files { game.file(g, io(std::fs::read(h), h)?); }
+    for (g, h) in &ex.files { match found(h, modes(&r))? { Found::Link(t) => game.link(g, &t), Found::File(d, x) => game.file_mode(g, d, x) } }
     if base.os != "linux" && base.os != "microvm" {   // a Windows drive: names are one without regard to case
         let mut seen: BTreeMap<String, &String> = BTreeMap::new();
         for p in game.entries.keys() { if let Some(o) = seen.insert(p.to_ascii_lowercase(), p) { say(&format!("warning: the app's files have {o} and {p}, one name on a drive that does not tell case apart: the host finds one of them")); } }
@@ -576,7 +599,7 @@ pub fn build(root: &Path, o: &Opts) -> R<()> {
     // program under two names is lifted once). A Linux title's exe may be a script: its first process starts in
     // any program's module and runs it (rt/linux-x64/start.c)
     let is_elf = |p: &Path| std::fs::File::open(p).ok().and_then(|mut f| { let mut b = [0u8; 4]; std::io::Read::read_exact(&mut f, &mut b).ok().map(|_| b == *b"\x7fELF") }).unwrap_or(false);
-    let programs: Vec<(String, PathBuf)> = if base.os == "linux" { ex.files.iter().filter(|(_, h)| is_elf(h)).map(|(g, h)| (g.clone(), h.clone())).collect() } else { vec![(exe_guest.clone(), exe.clone())] };
+    let programs: Vec<(String, PathBuf)> = if base.os == "linux" { ex.files.iter().filter(|(_, h)| !h.is_symlink() && is_elf(h)).map(|(g, h)| (g.clone(), h.clone())).collect() } else { vec![(exe_guest.clone(), exe.clone())] };
     if programs.is_empty() { return Err(format!("{}: no program among the app's files", r.exe)); }
     let mut lifts: Vec<Lifted> = Vec::new(); let mut lift_of: BTreeMap<String, usize> = BTreeMap::new(); let mut by_sha: BTreeMap<String, usize> = BTreeMap::new();
     for (g, h) in &programs {

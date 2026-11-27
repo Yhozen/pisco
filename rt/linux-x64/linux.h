@@ -31,6 +31,7 @@ typedef struct {
   int type; u64 size; u64 ino;
   char *data;        // a generated file's bytes or a link's target (malloc'd: the caller frees), or 0: a file of the title's folder
   char host[512];    // its name for the host
+  int noexec;        // a file of the drive without its executable bit (the host says so: host_exec)
 } Node;
 int fs_path(s64 dirfd, const char *path, char *out, size_t cap);   // the absolute, normal form; 0 or -errno
 int fs_lookup(const char *abs, Node *n, int follow);                // 0 or -errno

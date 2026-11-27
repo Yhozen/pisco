@@ -82,6 +82,9 @@ function run(d) {
       const o = Number(off), src = f.subarray(o, o + Number(len)); u8().set(src, Number(dst)); return src.length;
     },
     stat: (name, nlen) => { const r = ask(text(name, nlen), 'stat'); return r === null ? -1n : BigInt(r); },
+    // a Linux drive's links and executable bits (tools/serve.mjs answers ?link and ?exec)
+    link: (name, nlen, buf, cap) => { const r = ask(text(name, nlen), 'link'); if (r === null) return -1; const b = enc.encode(r); if (b.length > cap) return -1; u8().set(b, buf); return b.length; },
+    exec: (name, nlen) => { const r = ask(text(name, nlen), 'exec'); return r === null ? -1 : +r; },
     list: (name, nlen, buf, cap) => {
       const r = ask(text(name, nlen), 'list'); if (r === null) return 0;
       const b = enc.encode(r); if (buf && cap >= b.length) u8().set(b, buf); return b.length;

@@ -58,9 +58,16 @@ s64 sys_execve(const char *path, u64 argv, u64 envp) {
   s64 e = fs_path(-100, path, abs, sizeof abs); if (e) { free(args); return e; }
   // a script names the program that runs it (#!): that program, with the script's path among its arguments
   for (int depth = 0;; depth++) {
+    // a link: the program is its target (the host knows programs by the path they are at)
+    for (int hops = 0; hops < 8; hops++) {
+      Node l; e = fs_lookup(abs, &l, 0); if (e || l.type != N_LINK) { if (!e) free(l.data); break; }
+      char joined[2100], *slash = strrchr(abs, '/');
+      if (l.data[0] == '/') snprintf(joined, sizeof joined, "%s", l.data); else snprintf(joined, sizeof joined, "%.*s/%s", (int)(slash - abs), abs, l.data);
+      free(l.data); e = fs_path(-100, joined, abs, sizeof abs); if (e) { free(args); return e; }
+    }
     Node n; e = fs_lookup(abs, &n, 1); if (e) { free(args); return e; }
     if (n.type == N_DIR) { free(args); return -L_EACCES; }
-    if (n.type != N_FILE) { free(n.data); free(args); return -L_EACCES; }
+    if (n.type != N_FILE || n.noexec) { free(n.data); free(args); return -L_EACCES; }
     u64 len = n.size < sizeof first - 1 ? n.size : sizeof first - 1;
     if (n.data) memcpy(first, n.data, len); else len = host_read_file(n.host, (u32)strlen(n.host), 0, len, (u64)(uptr)first);
     first[len] = 0; free(n.data);

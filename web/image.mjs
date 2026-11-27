@@ -15,6 +15,8 @@ export const MEDIA = {
   module: 'application/vnd.pisco.module.v1.wasm',
 };
 const ROLE = 'org.pisco.layer.role';
+// the systems whose drive tells case apart and has links and modes (docs/spec/image.md#files)
+export const CASE_SENSITIVE = new Set(['linux', 'microvm', 'ps5']);
 const utf8 = new TextDecoder();
 
 // ---- the documents ----
@@ -60,9 +62,10 @@ export function driveName(name, folder) {
 }
 
 // ---- tar ----
-// The entries of a tar: read(offset, length) -> Uint8Array. Plain ustar, with pax and GNU long names.
+// The entries of a tar: read(offset, length) -> Uint8Array. Plain ustar, with pax and GNU long names; a file's
+// executable bit and a symbolic link's target (a Linux drive's: docs/spec/image.md#files).
 export function parseTar(read, size) {
-  const out = []; let at = 0, long = null;
+  const out = []; let at = 0, long = null, longLink = null;
   const field = (h, a, n) => { const s = h.subarray(a, a + n); const z = s.indexOf(0); return utf8.decode(z < 0 ? s : s.subarray(0, z)); };
   while (at + 512 <= size) {
     const h = read(at, 512);
@@ -70,11 +73,14 @@ export function parseTar(read, size) {
     const len = parseInt(field(h, 124, 12).trim() || '0', 8), kind = String.fromCharCode(h[156] || 48);
     let name = field(h, 0, 100); const prefix = field(h, 345, 155); if (prefix) name = `${prefix}/${name}`;
     const body = at + 512;
-    if (kind === 'x') { const rec = utf8.decode(read(body, len)); const m = rec.match(/^\d+ path=(.*)$/m); long = m ? m[1] : null; }
+    if (kind === 'x') { const rec = utf8.decode(read(body, len)); const m = rec.match(/^\d+ path=(.*)$/m); long = m ? m[1] : null; const l = rec.match(/^\d+ linkpath=(.*)$/m); longLink = l ? l[1] : null; }
     else if (kind === 'L') long = utf8.decode(read(body, len)).replace(/\0.*$/s, '');
     else {
       if (long !== null) { name = long; long = null; }
-      if (kind === '0' || kind === '\0' || kind === '5') out.push({ name: name.replace(/\/+$/, ''), offset: body, size: len, dir: kind === '5' });
+      const mode = parseInt(field(h, 100, 8).trim() || '0', 8);
+      if (kind === '0' || kind === '\0' || kind === '5') out.push({ name: name.replace(/\/+$/, ''), offset: body, size: len, dir: kind === '5', exec: kind !== '5' && (mode & 0o100) !== 0 });
+      else if (kind === '2') out.push({ name: name.replace(/\/+$/, ''), offset: body, size: 0, dir: false, link: longLink ?? field(h, 157, 100) });
+      longLink = null;
     }
     at = body + Math.ceil(len / 512) * 512;
   }
@@ -82,21 +88,25 @@ export function parseTar(read, size) {
 }
 
 // ---- the drive: the layers stacked ----
+// A Windows drive matches names without regard to case; a Linux one (caseSensitive) exactly, and has symbolic links
+// and executable bits (docs/spec/image.md#files)
 export class Drive {
   // layers: [{ entries (parseTar's), read(offset, length) -> Uint8Array }], lowest first
-  constructor(layers) {
+  constructor(layers, { caseSensitive = false } = {}) {
+    this.cs = caseSensitive; this.links = false;
     this.nodes = new Map([['', { dir: true, name: '', children: new Map() }]]);
     layers.forEach((layer, k) => { for (const e of layer.entries) this.#add(e, k, layer); });
   }
+  #key(p) { return this.cs ? p : p.toLowerCase(); }
   #parent(path) {
     const i = path.lastIndexOf('/'); const dir = i < 0 ? '' : path.slice(0, i);
-    if (!this.nodes.has(dir.toLowerCase())) this.#add({ name: dir, dir: true }, -1, null);
-    return this.nodes.get(dir.toLowerCase());
+    if (!this.nodes.has(this.#key(dir))) this.#add({ name: dir, dir: true }, -1, null);
+    return this.nodes.get(this.#key(dir));
   }
   #add(e, k, layer) {
-    const base = e.name.slice(e.name.lastIndexOf('/') + 1), lower = e.name.toLowerCase();
+    const base = e.name.slice(e.name.lastIndexOf('/') + 1), lower = this.#key(e.name);
     if (base.startsWith('.wh.')) { // a whiteout: what the layers below had there is gone
-      const gone = (e.name.slice(0, e.name.length - base.length) + base.slice(4)).toLowerCase();
+      const gone = this.#key(e.name.slice(0, e.name.length - base.length) + base.slice(4));
       for (const key of [...this.nodes.keys()]) if (key === gone || key.startsWith(gone + '/')) this.nodes.delete(key);
       this.#parent(gone).children.delete(gone.slice(gone.lastIndexOf('/') + 1));
       return;
@@ -104,10 +114,31 @@ export class Drive {
     if (!e.name) return;
     const parent = this.#parent(e.name), old = this.nodes.get(lower);
     if (e.dir && old?.dir) return;
-    const node = e.dir ? { dir: true, name: base, children: new Map() } : { dir: false, name: base, size: e.size, offset: e.offset, layer: k, read: layer.read };
-    this.nodes.set(lower, node); parent.children.set(base.toLowerCase(), node);
+    const node = e.dir ? { dir: true, name: base, children: new Map() } : e.link !== undefined ? { dir: false, name: base, size: 0, link: e.link }
+      : { dir: false, name: base, size: e.size, offset: e.offset, layer: k, read: layer.read, exec: !!e.exec };
+    if (e.link !== undefined) this.links = true;
+    this.nodes.set(lower, node); parent.children.set(this.#key(base), node);
   }
-  node(path) { return this.nodes.get(path.split('/').filter(Boolean).join('/').toLowerCase()) || null; }
+  // the node at a path; its links followed (the last one too unless `follow` is false), as a kernel resolves a path
+  node(path, follow = true) {
+    const parts = path.split('/').filter((x) => x && x !== '.');
+    if (!this.links) return this.nodes.get(this.#key(parts.join('/'))) || null;
+    let cur = [], hops = 0;
+    while (parts.length) {
+      const p = parts.shift();
+      if (p === '..') { cur.pop(); continue; }
+      const n = this.nodes.get(this.#key([...cur, p].join('/')));
+      if (!n) return null;
+      if (n.link === undefined || (!parts.length && !follow)) { cur.push(p); if (!parts.length) return n; continue; }
+      if (++hops > 40) return null;
+      const t = n.link.split('/').filter((x) => x && x !== '.');
+      if (n.link.startsWith('/')) cur = [];
+      parts.unshift(...t);
+    }
+    return this.nodes.get('') || null;
+  }
+  link(path) { const n = this.node(path, false); return n && n.link !== undefined ? n.link : null; }       // a link's target, or null
+  exec(path) { const n = this.node(path); return !n || n.dir ? -1 : n.exec ? 1 : 0; }                     // the executable bit
   stat(path) { const n = this.node(path); return !n ? -1 : n.dir ? -2 : n.size; }                     // as the runtime's host_stat
   list(path) { const n = this.node(path); if (!n?.dir) return null; return [...n.children.values()].map((c) => c.name + (c.dir ? '/' : '') + '\n').join(''); }
   // up to `length` bytes at `offset` of a file, or null
@@ -142,7 +173,7 @@ export async function openImageDir(dir, { verify = true, wasm = true } = {}) {
     const fd = fs.openSync(file(blobPath(l.digest)), 'r');
     const read = (offset, length) => { const b = Buffer.alloc(length); fs.readSync(fd, b, 0, length, offset); return new Uint8Array(b.buffer, b.byteOffset, length); };
     return { entries: parseTar(read, l.size), read };
-  }));
+  }), { caseSensitive: CASE_SENSITIVE.has(config.os) });
   let bytes = null;
   if (wasm) { check(module.digest); bytes = fs.readFileSync(file(blobPath(module.digest))); }
   return { dir, digest: desc.digest, manifest, config, settings: settings(config), drive, wasm: bytes };

@@ -60,9 +60,9 @@ How the drive behaves is the platform's:
 
 | | Windows platforms, Xbox Series | Linux, the machine, PS5 |
 |---|---|---|
-| names | matched without regard to case (ASCII); a name keeps its case | today as on Windows: to be matched exactly |
-| modes | none: folders are 0755, files 0644 in the tar | today none: an executable bit to come |
-| links | none | today none (a link is placed as a copy of its target): symbolic links to come |
+| names | matched without regard to case (ASCII); a name keeps its case | matched exactly |
+| modes | none: folders are 0755, files 0644 in the tar | a file is executable (0755) or not (0644) |
+| links | none | symbolic links (tar type `2`), their target as written |
 
 Two names on a Windows drive that differ only by case are one name: a builder should warn of them, and which one a
 host finds is not said.

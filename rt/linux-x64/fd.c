@@ -179,7 +179,7 @@ s64 sys_lseek(s64 fd, s64 off, u64 whence) {
 typedef struct { u32 mode; u64 size, ino, rdev; } What;
 static void what_node(const Node *n, What *w) {
   w->ino = n->ino; w->size = n->size; w->rdev = 0;
-  w->mode = n->type == N_DIR ? 0040555 : n->type == N_LINK ? 0120777 : n->type == N_FILE ? 0100555 : 0020666;
+  w->mode = n->type == N_DIR ? 0040555 : n->type == N_LINK ? 0120777 : n->type == N_FILE ? (n->noexec ? 0100444 : 0100555) : 0020666;
   if (n->type == N_NULL) w->rdev = 0x103; else if (n->type == N_RANDOM) w->rdev = 0x109; else if (n->type == N_TTY) w->rdev = 0x500;
 }
 static int what_fd(s64 fd, What *w) {
@@ -222,6 +222,7 @@ s64 sys_statx(s64 dirfd, const char *path, u64 flags, u64 mask, u64 x) {
 }
 s64 sys_faccessat(s64 dirfd, const char *path, u64 mode) {
   What w; s64 e = what_at(dirfd, path, 0, &w); if (e) return e;
+  if ((mode & 1) && (w.mode & 0170000) == 0100000 && !(w.mode & 0111)) return -L_EACCES;   // X_OK: a file without its bit
   return (mode & 2) && (w.mode & 0170000) != 0020000 ? -L_EROFS : 0;   // nothing but a device can be written
 }
 s64 sys_readlinkat(s64 dirfd, const char *path, char *buf, u64 n) {
