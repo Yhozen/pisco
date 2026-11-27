@@ -28,7 +28,7 @@ packages  Doom as a console title, XCL's   Stockfish, SimpleTriangleDesktop,    
 | Xbox Series | `base/xbox-series:1` | `rt/gdk/`, `rt/xbox-series/` | Doom (D3D12.X on WebGPU, XAudio2, GameInput, saves), XCL's console test title 50/50 | the rungs in [status.md](status.md#xbox-series) | Minecraft (Bedrock), the Xbox Series build |
 | Windows x64 | `base/windows-x64:1` | `rt/gdk/`, `rt/windows-x64/` | Stockfish 19, Microsoft's SimpleTriangleDesktop and SimplePBR | Desire, a small D3D12 game on its own engine ([desire.md](desire.md)) | desktop D3D12 titles |
 | Windows x86 | `base/windows-x86:1` | `rt/windows-x86/` | Narbacular Drop, playable; Tag: The Power of Paint into its second level (Direct3D 9 shaders as WGSL, D3DX's effects, FMOD Ex) | Tag played by hand on a real GPU (T6's check), then its later levels | 32-bit Direct3D 9 games of the 2000s |
-| Linux x64 | `base/linux-x64:1` | `rt/linux-x64/` | fastfetch 2.71.0; neofetch 7.1.0 on bash and busybox, its processes forked and executed ([fastfetch.md](fastfetch.md), [neofetch.md](neofetch.md)) | threads, signals, a file system that can be written | statically linked command-line programs |
+| Linux x64 | `base/linux-x64:1` | `rt/linux-x64/` | fastfetch 2.71.0; neofetch 7.1.0 on bash and busybox, its processes forked and executed; cowsay on perl 5.44 ([fastfetch.md](fastfetch.md), [neofetch.md](neofetch.md), [cowsay.md](cowsay.md)) | threads, signals, a file system that can be written | statically linked command-line programs |
 
 A new runtime is a new folder and a new base; a new title of an existing runtime is a recipe.
 
@@ -69,3 +69,4 @@ A new runtime is a new folder and a new base; a new title of an existing runtime
 | D3 | Desire's main loop in Node on the virtual clock: keyboard and window messages for 64-bit titles | done ([desire.md](desire.md#progress)) |
 | D4 | Desire's pixels in Chrome against Wine's | done ([desire.md](desire.md#progress)) |
 | D5 | Desire playable by hand: the docs and how to play it are done; playing it by hand on a real GPU is still to do | under way |
+| B0 | experimental, optional: development on boat.dev sandboxes (a snapshot with everything built, the tests on several sandboxes at once); cowsay ported that way | done ([dev-machines.md](dev-machines.md)) |

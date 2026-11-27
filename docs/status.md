@@ -8,7 +8,7 @@ titles, its own next steps and its own goal:
 | [Xbox Series](#xbox-series) | Doom as a console title, XCL's console test title (50/50) | D3D12.X shaders from RDNA2 code | Minecraft, the Xbox Series build |
 | [Windows x64](#windows-x64) | Stockfish 19, SimpleTriangleDesktop, SimplePBR; Desire, logo to ending, in Node and headless Chrome | Desire played by hand on a real GPU | desktop D3D12 titles |
 | [Windows x86](#windows-x86) | Narbacular Drop, playable; Tag: The Power of Paint into its second level | Tag played by hand on a real GPU, then its later levels | 32-bit Direct3D 9 games of the 2000s |
-| [Linux x64](#linux-x64) | fastfetch 2.71.0; neofetch 7.1.0 (bash, busybox) | threads, signals, writes | statically linked command-line programs |
+| [Linux x64](#linux-x64) | fastfetch 2.71.0; neofetch 7.1.0 (bash, busybox); cowsay 3.8.4 (perl) | threads, signals, writes | statically linked command-line programs |
 
 ## Shared: the recompiler, the core runtime, the packages
 
@@ -193,6 +193,8 @@ Still to do: playing it by hand on a real GPU (T6 of [the plan](plan.md)); the l
 - **neofetch 7.1.0** ([its page](neofetch.md)) on bash 5.2.37 and busybox 1.36.1, each lifted into a module of its
   own: 83 processes a run (82 forks, 10 programs executed), in strict mode in Node and in headless Chrome
   (`tests/run.sh neofetch`). The page is a terminal (a cursor that moves).
+- **cowsay 3.8.4** ([its page](cowsay.md)) on perl 5.44.0: six runs print what the same perl prints natively, in
+  Node and in headless Chrome (`tests/run.sh cowsay`).
 - **`fixtures/linux-proc`** (in `tests/run.sh linux`): fork, a pipe from child to parent, execve, a script run
   through its `#!`, wait4, a longjmp across a fork, against its native run.
 - A process is an instance of its program's module with memory of its own; the host keeps the process table and
@@ -210,6 +212,7 @@ Still to do: playing it by hand on a real GPU (T6 of [the plan](plan.md)); the l
    binaries can be titles, and function discovery good enough for a stripped one.
 5. **Input**: the page's keyboard as standard input, and answers to a terminal's queries; then an interactive shell.
 6. **Fork without copying everything**: a fork copies the whole memory (64 MiB for bash, about 20 ms).
+7. **Smaller modules for large programs**: perl's is 34 MB, some of its code decoded into more than one function.
 
 ## Known limits
 

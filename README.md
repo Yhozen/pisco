@@ -35,7 +35,8 @@ its second level, paints and erases, with FMOD Ex's calls as Wine's ([the game's
 fastfetch, built from its source as a static Linux program, is the first title of the Linux x64 runtime: it prints
 the machine it finds, a Linux x86-64 system imitated in WebAssembly, with its logo and colours in the page
 ([its page](docs/fastfetch.md)). neofetch, a bash script, runs on bash and busybox built the same way: 83 processes
-forked and executed, each in a worker with memory of its own ([its page](docs/neofetch.md)).
+forked and executed, each in a worker with memory of its own ([its page](docs/neofetch.md)). cowsay runs on perl 5.44
+built the same way ([its page](docs/cowsay.md)).
 
 Desire (DESI:Re v0.1), a free maze escape on its author's own Direct3D 12 engine, is the first such game on the
 Windows x64 runtime: built from its zip and your copy of Microsoft's C++ runtime DLLs, its HLSL compiled when the
@@ -48,7 +49,7 @@ from [XCL](https://github.com/ivall/xcl) are GPL-2.0-only). See [LICENSING.md](L
 Docs: [the plan](docs/plan.md) (the structure, the runtimes, the rules a change follows) ·
 [the journey so far](docs/journey.md) (what was built, measured and learned, roadblocks) ·
 [status and next steps, by runtime](docs/status.md) · [first run of a console title](docs/first-run.md) · [wasm32 or wasm64](docs/memory.md) ·
-[Narbacular Drop, the first Windows PC title](docs/narbacular-drop.md) · [fastfetch, the first Linux title](docs/fastfetch.md) · [neofetch, on bash and busybox](docs/neofetch.md) · [title images and `pisco`](docs/images.md) ·
+[Narbacular Drop, the first Windows PC title](docs/narbacular-drop.md) · [fastfetch, the first Linux title](docs/fastfetch.md) · [neofetch, on bash and busybox](docs/neofetch.md) · [cowsay, on perl](docs/cowsay.md) · [developing on boat.dev sandboxes](docs/dev-machines.md) · [title images and `pisco`](docs/images.md) ·
 [hosts: the browser, its limits and a native host](docs/hosts.md)
 
 ## How it works

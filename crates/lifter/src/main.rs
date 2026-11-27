@@ -336,17 +336,33 @@ fn table_bound(prev: &[&Instruction], load_ip: u64, index: Register) -> Option<u
 /// - relative: `lea B,[rip+T] ... movsxd R,[B+I*4]; add R,B; jmp R` (LLVM, GCC; B may be set far earlier);
 /// - image-relative (MSVC): `lea B,[__ImageBase] ... mov R32,[B+I*4+rva]; add R,B; jmp R`.
 /// The bound comes from the `cmp I,N; ja` before it; without one, entries are read while they land in the function.
+/// The bound of a jump table whose block is reached by a branch from far away (GCC puts the table's block at the end
+/// of the function: `cmp I,N; jbe <block>` near its start): the compare before a conditional branch to the block.
+fn table_bound_by_branch(insns: &BTreeMap<u64, Instruction>, load: &Instruction, index: Register) -> Option<u64> {
+    // the block's start: back from the load while the instruction before falls through to the next one
+    let mut start = load.ip();
+    for (_, i) in insns.range(..load.ip()).rev() {
+        if i.next_ip() != start || !matches!(i.flow_control(), FlowControl::Next | FlowControl::Call) { break; }
+        start = i.ip();
+    }
+    for (_, j) in insns.iter() {
+        if j.flow_control() != FlowControl::ConditionalBranch || j.near_branch_target() != start { continue; }
+        let prev: Vec<&Instruction> = std::iter::once(load).chain(std::iter::once(j)).chain(insns.range(..j.ip()).rev().take(16).map(|(_, i)| i)).collect();
+        if let Some(b) = table_bound(&prev, load.ip(), index) { return Some(b); }
+    }
+    None
+}
 /// A `switch` of code that is not position-independent (a static Linux program): `jmp [I*8+T]`, T a table of
 /// absolute addresses in data. Bounded by the `cmp I,N; ja` before it, else read while the entries land between the
 /// function's start and the next function a symbol names.
 fn jump_table_abs64(img: &Image, insns: &BTreeMap<u64, Instruction>, jmp: &Instruction, entry: u64) -> Option<Vec<u64>> {
-    if jmp.op0_kind() != OpKind::Memory || jmp.memory_base() != Register::None || jmp.memory_index() == Register::None || jmp.memory_index_scale() != 8 || jmp.segment_prefix() != Register::None {
+    if jmp.op0_kind() != OpKind::Memory || jmp.memory_base() != Register::None || jmp.memory_index() == Register::None || jmp.memory_index_scale() != 8 || !matches!(jmp.segment_prefix(), Register::None | Register::DS) {   // (DS: `notrack`, CET's)
         return None;
     }
     let table = jmp.memory_displacement64();
     if img.is_code(table) { return None; }
     let prev: Vec<&Instruction> = std::iter::once(jmp).chain(insns.range(..jmp.ip()).rev().take(32).map(|(_, i)| i)).collect();
-    let bound = table_bound(&prev, jmp.ip(), jmp.memory_index().full_register());
+    let bound = table_bound(&prev, jmp.ip(), jmp.memory_index().full_register()).or_else(|| table_bound_by_branch(insns, jmp, jmp.memory_index().full_register()));
     let end = img.seeds.iter().copied().find(|&s| s > entry).unwrap_or(u64::MAX);
     let mut out = Vec::new();
     for k in 0..bound.unwrap_or(1024).min(4096) {
@@ -445,7 +461,8 @@ fn jump_table(img: &Image, insns: &BTreeMap<u64, Instruction>, jmp: &Instruction
             }
         }
     }
-    let bound = bound.or_else(|| sim_at(load.ip(), index)).or_else(|| table_bound(&prev, load.ip(), index));
+    let bound = bound.or_else(|| sim_at(load.ip(), index)).or_else(|| table_bound(&prev, load.ip(), index)).or_else(|| table_bound_by_branch(insns, &load, index));
+    if bound.is_none() && std::env::var_os("LIFTER_DEBUG").is_some() { eprintln!("table without bound: jmp at 0x{:x}, load at 0x{:x}", jmp.ip(), load.ip()); }
     let bound = Some(bound?); // a table with no bound is not trusted: its end is unknown
     // a target may be in another part of the function (GCC's .cold): any code will do
     let _ = range;
