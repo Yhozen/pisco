@@ -121,7 +121,7 @@ function run(d) {
   const machine = WebAssembly.Module.exports(module).some((e) => e.name === 'rt_co_entry');
   let coEntry = null;
   if (machine) {
-    host.program_missing = () => 0;   // (programs lifted when they first run need the lifter: Node only, web/lift.mjs)
+    host.program_image = () => 0;   // (programs lifted when they first run need the lifter: Node only, web/lift.mjs)
     const parked = new Map();
     host.co_switch = new WebAssembly.Suspending((from, to, begin, dead) => {
       const mine = new Promise((resolve) => { if (!dead) parked.set(from, resolve); });   // (a task that died is never resumed: its stack is dropped)

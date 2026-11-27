@@ -57,6 +57,14 @@ cr=$root/out/cowsay/root; [ -x "$cr/usr/bin/perl" ] || "$root/tools/build-cowsay
 bash_=$("$root/tools/build-bash.sh" "$out")
 # fixtures/linux-proc's program: in the initramfs only, lifted by no build (the host lifts it when it first runs)
 proc=$(MUSL=${MUSL:-$HOME/tools/musl-1.2.5} "$root/fixtures/linux-proc/build.sh" "$out/build/proc")
+# a distribution's program: Alpine 3.24.4's busybox (GPL-2.0-only), dynamically linked and position-independent, with
+# its loader and C library, musl's ld-musl (MIT): from Alpine's minirootfs, checked by sha256
+af=$out/src/alpine-minirootfs-3.24.4-x86_64.tar.gz
+[ -f "$af" ] || { curl -fsSL -o "$af.part" https://dl-cdn.alpinelinux.org/alpine/v3.24/releases/x86_64/alpine-minirootfs-3.24.4-x86_64.tar.gz
+  echo "cdaa38cb8de3537967ee5b6c9b6cd00cc962da2b018e6eea48696bb274923012  $af.part" | sha256sum -c --quiet; mv "$af.part" "$af"; }
+al=$out/build/alpine; rm -rf "$al"; mkdir -p "$al"; tar -xzf "$af" -C "$al" ./bin/busybox ./lib/ld-musl-x86_64.so.1
+# fixtures/linux-dyn: a program of our own with libraries of its own, one it is linked against and one it opens
+dyn=$(MUSL=${MUSL:-$HOME/tools/musl-1.2.5} "$root/fixtures/linux-dyn/build.sh" "$out/build/dyn" "$al/lib/ld-musl-x86_64.so.1")
 mods=$(cd "$cr" && PERL5LIB=$cr/usr/lib/perl5/5.44.0/x86_64-linux:$cr/usr/lib/perl5/5.44.0 COWPATH=$cr/usr/share/cowsay/cows ./usr/bin/perl \
   -e 'BEGIN { @ARGV = ("moo") } open STDOUT, ">", "/dev/null"; do "./usr/bin/cowsay"; print STDERR "$_\n" for sort values %INC' 2>&1 >/dev/null | grep "^$cr/usr/lib/" | sed "s|^$cr/||")
 { echo "dir /bin 755 0 0"; for d in dev proc sys tmp etc root; do echo "dir /$d 755 0 0"; done
@@ -66,6 +74,10 @@ mods=$(cd "$cr" && PERL5LIB=$cr/usr/lib/perl5/5.44.0/x86_64-linux:$cr/usr/lib/pe
   echo "file /bin/fastfetch $ff 755 0 0"
   echo "file /bin/bash $bash_ 755 0 0"
   echo "file /bin/proc $proc 755 0 0"
+  echo "dir /lib 755 0 0"; echo "dir /alpine 755 0 0"
+  echo "file /lib/ld-musl-x86_64.so.1 $al/lib/ld-musl-x86_64.so.1 755 0 0"; echo "slink /lib/libc.musl-x86_64.so.1 ld-musl-x86_64.so.1 777 0 0"
+  echo "file /alpine/busybox $al/bin/busybox 755 0 0"
+  echo "file /bin/dyn $dyn/dyn 755 0 0"; echo "file /lib/libgreet.so $dyn/libgreet.so 755 0 0"; echo "file /lib/libplug.so $dyn/libplug.so 755 0 0"
   for d in usr usr/bin usr/lib usr/share usr/share/cowsay usr/share/cowsay/cows; do echo "dir /$d 755 0 0"; done
   echo "file /usr/bin/perl $cr/usr/bin/perl 755 0 0"; echo "file /usr/bin/cowsay $cr/usr/bin/cowsay 755 0 0"; echo "slink /usr/bin/env /bin/busybox 777 0 0"
   for c in "$cr"/usr/share/cowsay/cows/*.cow; do echo "file /usr/share/cowsay/cows/$(basename "$c") $c 644 0 0"; done

@@ -279,23 +279,74 @@ bash is GPL-3.0-or-later and cannot be linked into the GPL-2.0-only kernel's mod
   title's module exports what the side modules import (`pisco` reads their import sections).
 - `/init` runs bash as it runs on QEMU, in Node and in headless Chrome.
 
-## What it took (K10): programs lifted when they first run
+## What it took (K10, K11): programs lifted when they first run
 
-A program no build lifted can run now, in Node. When the machine meets user code that no program it has holds, it
-hands the page there to the host (`program_missing`). `web/lift.mjs` finds the program of the initramfs whose code
-page at that address is the same, byte for byte. It lifts it into a module of its own (`tools/build-side.sh`: the
-lifter, wasi-sdk, `wasm-ld -shared`), caches it by the file's sha256 in `out/lift-cache`, and loads it, and the
-machine goes on. A machine's title therefore exports whatever a lifted program may import
+A program no build lifted can run now, in Node, from wherever its file is: the initramfs, the disk, a pipe. When the
+machine meets a program no module of its holds, it is at the program's entry point, and the program is in memory as
+the kernel loaded it. Its stack's auxiliary vector says where its program headers are (`AT_PHDR`); its segments'
+bytes, read from memory (its pages faulted in as reads would), are its file again, as the file has them when it
+starts. The machine hands that image to the host (`program_image`). `web/lift.mjs` lifts it into a module of its
+own (`tools/build-side.sh`: the lifter, wasi-sdk, `wasm-ld -shared`), caches it by the image's sha256 in
+`out/lift-cache`, and loads it, and the machine goes on. (K10 found the file in the initramfs by its code page; K11
+needs no file.)
+
+An image from memory has no symbols, so the lifter now also takes a function's address from an immediate (`mov
+$f, %eax`, as musl's start does for `libc_start_main_stage2`). A machine's title therefore exports whatever a lifted program may import
 (`rt/microvm-x64/side-exports.txt`), not only what the programs of its build import.
 
 `/init` runs `/bin/proc` (`fixtures/linux-proc`), which is in the initramfs but in no recipe list: it is lifted in
-2.7 s the first time and taken from the cache after, and prints what it prints on QEMU. The page cannot lift (it
+under 3 s the first time and taken from the cache after, and prints what it prints on QEMU; with a disk, `/init`
+copies it there and runs it from the disk. The page cannot lift (it
 has no lifter): there such a program stops the machine.
+
+## What it took (K12): a distribution's program, dynamically linked
+
+`/init` runs Alpine 3.24.4's busybox, as Alpine ships it: position-independent and dynamically linked against musl,
+whose loader (`/lib/ld-musl-x86_64.so.1`) is also its C library. Both are lifted when they first run, each into a
+module of its own, and print what they print on QEMU.
+
+- **The loader runs first.** The kernel starts it, not the program: at the loader's first instruction the auxiliary
+  vector's `AT_BASE` says where it is, and its ELF header there gives its program headers. The machine takes its
+  image from there, and at the program's entry point (`AT_ENTRY`) the program's, its load bias found from its
+  `PT_PHDR`.
+- **Each image as it is loaded.** The machine moves the image's addresses by its bias and makes it an `ET_EXEC` (no
+  dynamic headers, no sections), so the lifter reads it as a static program at those addresses. The loader relocates
+  itself when it starts, after the image was taken, so the machine applies its relocations to the copy first
+  (`R_X86_64_RELATIVE`, RELR, and `64`, `GLOB_DAT` and `JUMP_SLOT` to symbols it defines itself): code addresses in
+  its data are then addresses, which is how the lifter finds functions. A program the loader has relocated already
+  is taken as it is.
+- **Functions found by name.** The loader calls some of its own functions through pointers it finds by name in its
+  symbol table (musl's `__dls2b`, `__dls3`), so no instruction names them. The machine reads the image's dynamic
+  symbols and gives the host the address of each function among them; the lifter takes them as function starts
+  (`--entry`).
+- **The same addresses each time**: `norandmaps` on the kernel's command line places the loader and the program
+  where they were the last time, so the images, and the lift cache's keys, are the same from one run to the next.
+- **The x87's maths** (`expm1`, `log2`... which the lifter emits for `f2xm1` or `fyl2x`) is exported by the title for
+  such a module too (`rt/microvm-x64/side-exports.txt`): musl's maths has x87 code.
+
+The loader (669 KB) lifts in about a minute and busybox (803 KB) in two, on four cores; from the cache, nothing.
+
+## What it took (K13): libraries
+
+`/init` runs `/bin/dyn` (`fixtures/linux-dyn`, linked against Alpine's musl), which has libraries of its own:
+`libgreet.so`, which it is linked against (a constructor, a table of function pointers, a call through its PLT), and
+`libplug.so`, which it opens itself (`dlopen`) and calls by name (`dlsym`). Each is lifted into a module of its own
+when its code is first met, and they print what they print on QEMU.
+
+A library's code is met in the middle of a run, not where a program starts: the loader calls its constructor, or the
+program calls into it. There the stack holds no auxiliary vector, so the machine finds the image another way: the
+nearest ELF header below the code, on a page that is there (the loader has read the library's headers and dynamic
+tables), whose executable segments hold it. Its bias is where its first segment is. The loader has relocated it
+already, so its image is taken as it is, and the address where it was met is a function start the lifter is told of
+(a constructor no symbol names).
 
 ## Limits
 
-- In the page only programs lifted when the image is built run; in Node a program of the initramfs is lifted when it
-  first runs. Programs on the disk, or written while the machine runs, are not found yet.
+- In the page only programs lifted when the image is built run; in Node any program or library is lifted when its
+  code is first met, static or dynamically linked.
+- A library's image is taken when its code is first met, with its data as it is then: a library whose data the
+  program has written before calling it (no constructor) has another image, and another lift, when that data
+  differs.
 - Model-specific registers the machine does not know read as 0 where a CPU raises #GP, which some of the kernel's
   `rdmsr_safe` callers would want.
 - A store that faults between its read and its write (an add to memory whose page must be copied) reads again after
@@ -320,4 +371,7 @@ has no lifter): there such a program stops the machine.
 | K8 | real programs on it: fastfetch, and cowsay on perl, as on QEMU | done |
 | K9 | a program in a module of its own: bash (GPL-3.0) beside the kernel, as on QEMU | done |
 | K10 | programs lifted when they first run (Node: from the initramfs, cached by sha256) | done |
-| K11 | a network, programs from the disk, snapshots | next |
+| K11 | programs lifted from their image in memory: from the disk, a pipe, anywhere | done |
+| K12 | a distribution's program, position-independent and dynamically linked: Alpine's busybox on musl's loader | done |
+| K13 | libraries: one a program is linked against, one it opens (`dlopen`), each lifted when its code is first met | done |
+| K14 | a network, snapshots | next |

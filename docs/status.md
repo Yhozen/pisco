@@ -281,7 +281,13 @@ reasoning and the measurements: [research/kernel-as-a-title.md](research/kernel-
 - **K9, done**: bash (GPL-3.0) in a wasm module of its own, loaded by the host beside the kernel's
   (`web/side.mjs`, `[lifter] modules`), runs as on QEMU.
 - **K10, done**: in Node, a program no build lifted is lifted when it first runs (`web/lift.mjs`, `out/lift-cache`).
-- **Next**: a network, programs from the disk, snapshots.
+- **K11, done**: the program's image is taken from memory at its entry point, so a static program runs from the disk
+  or anywhere, lifted when it first runs.
+- **K12, done**: Alpine's busybox, position-independent and dynamically linked, runs on musl's loader, both lifted
+  when they first run, as on QEMU.
+- **K13, done**: a program's own libraries, linked or opened with `dlopen`, are each lifted when their code is
+  first met (`fixtures/linux-dyn`), as on QEMU.
+- **Next**: a network, snapshots.
 
 ## Known limits
 

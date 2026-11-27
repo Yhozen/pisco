@@ -5,7 +5,7 @@ awk: 299995
 sha256: bb9f8df61474d25e of 4194304 bytes written to a file
 sort: apple fig pear 
 sed: the kernel is a program
-ls: bin dev etc init proc root sys tmp usr 
+ls: alpine bin dev etc init lib proc root sys tmp usr 
 id: 0:0
 hello: hello: 2 arguments
 hello: numbers: -7 3000000000 beef 1234567890123  3.14 6.020000e+23 0.3
@@ -23,6 +23,9 @@ fastfetch: Kernel: Linux 6.18.65
 fastfetch: Locale: C
 bash: 5.2.37, 42, 6 parts of a version
 proc: lifted when it first ran, exit 5
+alpine: a program of a distribution, dynamically linked (BusyBox v1.37.0)
+dyn: hello lifted from a library, 42, ops 14 49
+dyn: a plugin opened: 4 sorted: apple fig kiwi pear
  _____________________________
 < Hello from the lifted Linux >
  -----------------------------

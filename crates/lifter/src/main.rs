@@ -976,6 +976,11 @@ fn decode_func(img: &Image, entry: u64, entries: &BTreeSet<u64>) -> (Func, BTree
                 if ins.mnemonic() == Mnemonic::Lea && ins.is_ip_rel_memory_operand() && img.is_code(ins.ip_rel_memory_address()) {
                     taken.insert(ins.ip_rel_memory_address());
                 }
+                // a program that is not position-independent takes a function's address as an immediate too
+                // (`mov $f, %eax`: musl's libc_start_main_stage2); with no symbols, that is how it is found
+                if !m32 && img.elf && ins.mnemonic() == Mnemonic::Mov && ins.op_count() == 2 && matches!(ins.op_kind(1), OpKind::Immediate32 | OpKind::Immediate32to64 | OpKind::Immediate64) && img.is_code(ins.immediate(1)) {
+                    taken.insert(ins.immediate(1));
+                }
                 // 32-bit code has no RIP-relative `lea`: an address is taken as an immediate (`push offset f`, `mov [x], offset f`)
                 if m32 && matches!(ins.mnemonic(), Mnemonic::Push | Mnemonic::Mov) {
                     for n in 0..ins.op_count() {
@@ -2597,6 +2602,11 @@ fn lift() {
         funcs = std::mem::take(&mut found.funcs);
         found32 = Some(found);
     } else {
+        // --entry <hex>: function starts the lifter is told of (a machine's program rebuilt from memory: the functions
+        // its dynamic symbols name, which its loader may call through pointers it finds by name)
+        for (i, _) in args.iter().enumerate().filter(|(_, a)| *a == "--entry") {
+            if let Some(e) = args.get(i + 1).and_then(|v| u64::from_str_radix(v.trim_start_matches("0x"), 16).ok()) { if img.is_code(e) { entries.insert(e); } }
+        }
         // code addresses stored in data (function pointer tables, vtables). A static Linux program's switches are
         // tables of absolute addresses in data too: their slots, once a jump through them is found, are no
         // function's entry, and the functions are found again without them (else every case would be a function

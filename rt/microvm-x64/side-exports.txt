@@ -11,4 +11,6 @@ __fixtfdi __fixtfsi __fixtfti __fixunstfdi __fixunstfsi __fixunstfti __floatditf
 __eqtf2 __netf2 __lttf2 __letf2 __gttf2 __getf2 __unordtf2
 __multi3 __divti3 __udivti3 __modti3 __umodti3 __ashlti3 __lshrti3 __ashrti3
 truncl floorl ceill rintl sqrtl fabsl scalbnl fmodl remainderl frexpl ldexpl
+# (and the double maths the x87 instructions are lifted to: fsin, fcos, fptan, fpatan, f2xm1, fyl2x, fyl2xp1, fscale)
+sin cos tan atan2 expm1 log2 log1p exp2 ldexp
 memcpy memset memmove
