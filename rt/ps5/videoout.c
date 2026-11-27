@@ -5,6 +5,8 @@
 // the page's canvas. Waiting for vertical blank paces the title at 60 frames a second on the host's clock (with a
 // virtual clock, SW_CLOCK, the clock moves by a frame instead).
 #include "ps5.h"
+HOST("frame_dump") void host_frame_dump(u32 pixels, u32 width, u32 height, u32 frame);
+
 #include "gpu_ring.h"
 
 #define MAX_BUFFERS 16
@@ -69,6 +71,13 @@ static void show(u32 index) {
   }
   rt_gpu_present((u32)vo.texture, ++vo.flips, 1);
   rt_clock_advance_frame();
+  static int dump_raw = -1, max_frames;
+  if (dump_raw < 0) {
+    const char *d = getenv("SW_DUMP_RAW"), *m = getenv("SW_MAX_FRAMES");
+    dump_raw = d && *d; max_frames = m && *m ? atoi(m) : 0;
+  }
+  if (dump_raw) host_frame_dump((u32)(uptr)src, vo.width, vo.height, (u32)vo.flips);
+  if (max_frames && vo.flips >= (u32)max_frames) ps5_exit(0, 0);  /* Cpu unused */
 }
 // SW_SHOT_EVERY=<n>: every nth flip is saved by the page as shots/flip-<n>.png (a progress picture)
 static u32 shot_every = ~0u;

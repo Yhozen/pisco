@@ -42,7 +42,7 @@ IMP(libkernel, scePthreadCreate) {
   RET(0);
 }
 IMP(libkernel, scePthreadJoin) { u64 r = 0; int e = ps5_thread_join(A0, &r); if (!e && A1) M64(A1) = r; RET(e ? SCE_KERNEL_ERROR(ESRCH) : 0); }
-IMP(libkernel, scePthreadYield) { sched_yield(); if (rt_clock_virtual()) rt_clock_polled(); RET(0); }
+IMP(libkernel, scePthreadYield) { sched_yield(); RET(0); }  // a yield is not a clock-wait loop: the virtual clock moves on a flip or a sleep, not here
 IMP(libkernel, scePthreadSelf) { RET((u64)(uptr)c); }
 
 // ---- the system, as a title asks for it by name ----

@@ -35,6 +35,15 @@ Z / V the d-pad left / right (music), H L3 (help), M Options, P the touchpad. Cl
 Settings (as for every title): `SW_CLOCK=16667` a virtual clock (a frame per flip, deterministic), `SW_PACE=off`
 flips without waiting for vertical blank, `SW_SHOT_EVERY=<n>` a PNG of every n-th flip (headless Chrome).
 
+An offline render in Node (no browser; each flip dumped, then encoded): `SW_CLOCK=16667`, `SW_DUMP_RAW=<file>` (packed
+RGBA, 1920x1080), `SW_AUDIO_WAV=<file>` (48 kHz stereo float), `SW_MAX_FRAMES=<n>`, and optionally `SW_KEYS=<json>`
+(the same list as `tools/run-chrome.mjs`, times in milliseconds on the virtual clock). Then ffmpeg:
+
+```
+ffmpeg -f rawvideo -pix_fmt rgba -s 1920x1080 -r 60 -i frames.rgba -i audio.wav \
+  -c:v libx264 -profile:v high -pix_fmt yuv420p -crf 17 -c:a aac -b:a 192k -movflags +faststart out.mp4
+```
+
 ## How
 
 - **The executable** (`crates/lifter/src/ps5.rs`): its PT_LOAD segments are the sections; the dynamic segment's

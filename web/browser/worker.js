@@ -94,6 +94,7 @@ function run(d) {
     gpu_open: (ring) => bus.postMessage({ gpu: ring >>> 0 }),     // the page runs the GPU back end on this ring
     audio_open: (ring) => bus.postMessage({ audio: ring >>> 0 }), // and plays this one
     audio_dump: () => {}, // SW_AUDIO_WAV is Node's: a recording in the browser reads the ring (main.js)
+    frame_dump: () => {}, // SW_DUMP_RAW is Node's: an offline render writes presented frames (run-node.mjs)
     input_open: (block) => bus.postMessage({ input: block >>> 0 }), // and writes the keyboard and gamepad here
     win32_input_open: (ring) => bus.postMessage({ win32input: ring >>> 0 }), // a desktop title's keyboard and mouse events (rt/windows-x86/input.c)
     exit: (code) => exit(code),
