@@ -16,6 +16,19 @@ Videos: <a href="https://github.com/Yhozen/pisco/releases">releases</a></p>
 <h2>Changelog</h2>
 <!-- changelog:start -->
 
+<h3>The PS5 raymarching tech demo, in the browser <span class="d">2026-11-27</span><span class="tag">PR #39</span></h3>
+<video src="https://github.com/Yhozen/pisco/releases/download/ps5-raymarch-video-2026-11-27/ps5-raymarch-techdemo-in-the-browser.mp4" poster="https://github.com/Yhozen/pisco/releases/download/ps5-raymarch-video-2026-11-27/poster.png" controls playsinline preload="metadata"></video>
+<p><a href="https://github.com/Alexius0815/ps5-raymarch-techdemo">ps5-raymarch-techdemo</a> v1.4, a CPU raymarcher built as PS5 homebrew (ten threads, AVX2 and FMA for the console's Zen 2), now runs as a web title on a new <code>base/ps5</code> runtime. Its three scenes, DualSense and synthesized music work in Node and in headless Chrome. <a href="https://github.com/boykopovar/AnyPS5">AnyPS5</a> was the reference for the executable's format and for what the system functions do; nothing of Sony's is used or needed.</p>
+<ul>
+<li><b>The lifter</b> reads a native PS5 executable (an ELF of type 0xFE10): its loadable segments, relative relocations (their values kept for the runtime; the file holds 0 there) and imports by NID, named through <code>ps5_nids.txt</code>. The functions start from the entry point and every FDE of <code>.eh_frame_hdr</code>.</li>
+<li><b>AVX, AVX2, FMA and BMI</b> are lifted (<code>avx.rs</code>, <code>rt/avx.h</code>) instead of trapping: the demo has about 4,700 such instructions. A ymm register is its xmm register and <code>c-&gt;yh[n]</code>. <code>tests/avx.sh</code> checks 120 results of a Zen 2 build against what the CPU printed. A fused multiply-add is a multiply then an add by default (the last bit can differ); <code>OPT='-O2 -DPISCO_FMA_EXACT=1'</code> makes float ones exact but for rare double rounding, about a third slower in the demo. CPUID still does not report AVX, so titles that check it take their SSE paths; a PS5 title does not ask.</li>
+<li><b>The runtime</b> (<code>rt/ps5/</code>) answers the 38 system functions this demo calls: libkernel (direct memory, time, pthreads, sysctl), the C library, the system and user services, VideoOut (frame buffers flipped to the GPU back end as a texture), Pad (the page's keys and gamepad as a DualSense) and AudioOut (ports as mixer sources). <code>tools/build-title.sh</code> picks the base for <code>OS=ps5</code>.</li>
+<li><b>Headless Chrome</b> now passes <code>--use-vulkan=swiftshader</code>. Without it, Chrome 156 on the machine we used could not create the canvas's 1920x1080 swap chain texture, and the WebGPU device was lost on the first present.</li>
+<li><b><code>tools/build-ps5-raymarch.sh</code></b> downloads the demo's v1.4 release (GPL-3.0-or-later, not vendored), checks its SHA-256 and builds it. <code>docs/ps5.md</code> says how to run it, what works and what does not.</li>
+<li><b>An offline render</b> in Node (<code>SW_CLOCK</code>, <code>SW_DUMP_RAW</code>, <code>SW_AUDIO_WAV</code>, <code>SW_MAX_FRAMES</code>, <code>SW_KEYS</code>) dumps each 1920x1080 frame and the mix for ffmpeg. Worker yields no longer move the virtual clock, so the demo's own timers stay at 60 frames a second.</li>
+</ul>
+<p>Still missing: only these 38 functions are there, and an import without a name traps when called; no GPU (AGC) title runs (this one draws on the CPU); <code>pisco build</code> images of a PS5 title are not wired up (<code>tools/build-title.sh</code> is the way); <code>kern.proc.pathname</code> is not answered (the demo prints <code>path=-</code>).</p>
+
 <h3>This changelog, from files <span class="d">2026-11-27</span><span class="tag">PR #38</span></h3>
 <p>Each pull request now adds its entry as a file in <code>changelog/</code>, and a workflow on <code>main</code> draws this page from them
 and publishes the release holding an entry's video, in the manner of
