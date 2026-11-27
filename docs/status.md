@@ -9,6 +9,7 @@ titles, its own next steps and its own goal:
 | [Windows x64](#windows-x64) | Stockfish 19, SimpleTriangleDesktop, SimplePBR | more desktop D3D12 titles | desktop D3D12 titles |
 | [Windows x86](#windows-x86) | Narbacular Drop, playable; Tag: The Power of Paint into its second level | Tag played by hand on a real GPU, then its later levels | 32-bit Direct3D 9 games of the 2000s |
 | [Linux x64](#linux-x64) | fastfetch 2.71.0; neofetch 7.1.0 (bash, busybox) | threads, signals, writes | statically linked command-line programs |
+| [PS5](ps5.md) | the raymarching tech demo (CPU-drawn, AVX2): its three scenes, pad and music in the browser | more system functions, a GPU (AGC) title | PS5 homebrew |
 
 ## Shared: the recompiler, the core runtime, the packages
 
