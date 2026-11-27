@@ -13,7 +13,11 @@ pub enum RegData { Dword(u32), Sz(String) }
 pub struct RegValue { pub key: String, pub name: String, pub data: RegData }
 
 pub struct Source { pub file: String, pub sha256: Option<String>, pub extract: String, pub app: Option<String>, pub map: BTreeMap<String, String>, pub cabs: Vec<Cab>,
-    pub root: Option<String>, pub adds: Vec<Add> }
+    pub root: Option<String>, pub adds: Vec<Add>,
+    /// [source.installshield] groups: where each file group of an InstallShield 5 / 6 setup inside the installer
+    /// goes, below the title's folder ("" the folder itself, "-" not installed); InstallShield's own script says
+    /// it, and is not read
+    pub installshield: Option<BTreeMap<String, String>> }
 /// [[source.add]]: further files of the user's that the title needs and its download does not carry (Microsoft's
 /// C++ runtime DLLs beside a title built with /MD), taken from a folder named on the command line
 /// (`pisco build --with NAME=<folder>`) or by the environment variable NAME, put in a folder of C:
@@ -25,6 +29,10 @@ pub struct Recipe {
     pub exe: String, pub display: Option<String>, pub args: Vec<String>,
     pub cpu: Option<Vec<String>>, pub dll: BTreeMap<String, String>, pub registry: Vec<RegValue>,
     pub split: usize, pub entries: Vec<u64>, pub base_address: Option<u64>, pub opt: String,
+    /// [lifter] load: DLLs the title loads itself (LoadLibrary) from its folder or below it, lifted with it
+    pub load: Vec<String>,
+    /// [files]: small text files a setup step would write (settings), by their place on C:
+    pub files: BTreeMap<String, String>,
     pub heap_fill: Option<u8>, // [quirks] heap_fill: the byte a heap block the title did not ask to be zeroed holds
     pub shaders: Option<Shaders>,
 }
@@ -102,7 +110,7 @@ pub fn load_recipe(dir: &Path) -> R<Recipe> {
     let path = if dir.is_dir() { dir.join("title.toml") } else { dir.to_path_buf() };
     let t = load(&path)?;
     let dir = path.parent().unwrap().to_path_buf();
-    let known = ["name", "from", "libraries", "source", "run", "cpu", "dll", "registry", "lifter", "build", "quirks", "shaders"];
+    let known = ["name", "from", "libraries", "source", "run", "cpu", "dll", "registry", "lifter", "build", "quirks", "shaders", "files"];
     if let Some(k) = t.keys().find(|k| !known.contains(&k.as_str())) { return Err(format!("{}: {k} is not a recipe key ({})", path.display(), known.join(", "))); }
     let src = table(&t, "source")?.ok_or(format!("{}: no [source]", path.display()))?;
     let run = table(&t, "run")?.ok_or(format!("{}: no [run]", path.display()))?;
@@ -131,6 +139,14 @@ pub fn load_recipe(dir: &Path) -> R<Recipe> {
         },
         Some(_) => return Err("[[source.add]]: an array of tables".into()),
     }
+    let installshield = match table(src, "installshield")? {
+        None => None,
+        Some(is) => {
+            let mut g = BTreeMap::new();
+            for (k, v) in table(is, "groups")?.ok_or("[source.installshield] groups = { \"group\" = 'folder', ... }")? { g.insert(k.clone(), v.as_str().ok_or("[source.installshield] groups: strings")?.to_string()); }
+            Some(g)
+        }
+    };
     let mut dll = BTreeMap::new();
     for (k, v) in table(&t, "dll")?.into_iter().flatten() {
         let how = v.as_str().ok_or("[dll]: \"name.dll\" = \"builtin\"")?;
@@ -142,15 +158,17 @@ pub fn load_recipe(dir: &Path) -> R<Recipe> {
         from: s(&t, "from").ok_or("recipe: no from (a base, e.g. \"base/windows-x86:1\")")?,
         libraries: strs(&t, "libraries")?.unwrap_or_default(),
         source: Source { file: s(src, "file").ok_or("[source] file")?, sha256: s(src, "sha256").map(|x| x.to_ascii_lowercase()), extract: s(src, "extract").unwrap_or("file".into()), app: s(src, "app"), map, cabs,
-            root: s(src, "root").map(|r| r.trim_matches('/').to_string()), adds },
+            root: s(src, "root").map(|r| r.trim_matches('/').to_string()), adds, installshield },
         exe: s(run, "exe").ok_or("[run] exe")?,
         display: s(run, "display"),
         args: strs(run, "args")?.unwrap_or_default(),
         cpu: match table(&t, "cpu")? { Some(c) => strs(c, "features")?, None => None },
         dll,
         registry: registry(table(&t, "registry")?)?,
+        files: match table(&t, "files")? { None => BTreeMap::new(), Some(f) => f.iter().map(|(k, v)| v.as_str().map(|x| (k.clone(), x.to_string())).ok_or(format!("[files] {k}: a string"))).collect::<R<_>>()? },
         split: lifter.get("split").map(|v| v.as_integer().filter(|n| *n >= 1).ok_or("lifter.split: a number from 1")).transpose()?.unwrap_or(8) as usize,
         entries: match lifter.get("entries") { Some(Value::Array(a)) => a.iter().map(|v| int(v, "lifter.entries")).collect::<R<_>>()?, _ => vec![] },
+        load: strs(&lifter, "load")?.unwrap_or_default(),
         base_address: lifter.get("base").map(|v| int(v, "lifter.base")).transpose()?,
         opt: s(&build, "opt").unwrap_or("-O2".into()),
         heap_fill: match table(&t, "quirks")?.and_then(|q| q.get("heap_fill")) {

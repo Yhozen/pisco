@@ -8,8 +8,9 @@ typedef struct {
   unsigned is_dll;
   unsigned long long entry, tls_dir, pdata; unsigned pdata_size;
   unsigned long long exports, stack_reserve;
-  unsigned flags;
+  unsigned flags;                   // MODULE_ON_DEMAND: a DLL the title loads itself (LoadLibrary), not at start
   const ModuleSection *sections; unsigned section_count;
   const unsigned long long *relocs; unsigned reloc_count;
   unsigned first_import, import_count;
 } ModuleDef;
+enum { MODULE_ON_DEMAND = 1 };

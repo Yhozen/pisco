@@ -182,6 +182,37 @@ lifted beside the exe. Measured ([docs/tag.md](tag.md) has each milestone):
 
 Still to do: playing it by hand on a real GPU (T6 of [the plan](plan.md)); the later levels.
 
+### Medal of Honor: Allied Assault's demo (2001), the third title
+
+The first OpenGL game, on id Tech 3 (Ritual's version of the Quake III engine), with game code in DLLs the engine
+loads itself and Miles Sound System 6.1c beside it ([mohaa.md](mohaa.md)). What it brought to the runtime:
+
+- **The lifter**: MMX (eight registers of their own, `c->mm[]`; each operation the SSE2 one on the low half, the
+  high unpacks and the packs arranged to agree; `fixtures/mmx` prints Wine's 63 lines), `push`/`pop` of DS, ES and SS
+  in a flat address space, and Miles' hand-written mixer found as code (balanced segment saves are not data).
+- **Images**: `extract = "wise"` (a Wise installer and the InstallShield 5 / 6 cabinets inside it, read without
+  running either), `[lifter] load` (DLLs a title loads itself from its folder or below it, lifted with it), `[files]`
+  (the settings a setup step writes).
+- **The process**: DLLs loaded on demand (DllMain at LoadLibrary, PROCESS_DETACH at the last FreeLibrary, the
+  sections read again on a second load), files still open at the end saved as Windows would have written them,
+  wsock32's ordinals that differ from ws2_32's (10, 11, 12).
+- **user32**: input as window messages (`WM_KEYDOWN`, `WM_CHAR` from TranslateMessage, the mouse's), `GetMessageA`,
+  timers, the cursor (moved by the page's motion under Pointer Lock, set by `SetCursorPos`), display modes.
+- **OpenGL 1.1** (`[libraries.opengl32]`, `rt/windows-x86/opengl32.c`): immediate mode and client arrays packed into
+  one vertex stream, two texture units with their environments as WGSL (`gl_ffp.c`, every key validated by naga in
+  `tests/gfx/gl-ffp.sh`), alpha test, fog, polygon offset, one clip plane, `glDrawPixels`, `glReadPixels`, pixel
+  formats and `SwapBuffers` in gdi32. Not yet: lighting, texture coordinate generation, stencil, display lists,
+  `glCopyTexSubImage2D`.
+- **DirectSound** (`[libraries.dsound]`): software buffers on the runtime's mixer (no hardware buffers, no 3D).
+
+| # | Milestone | State |
+|---|---|---|
+| M0 | census, recipe, oracle | **done** (2026-11-27): the build's 801 files equal Wine's install |
+| M1 | lift and start in Node | **done** (2026-11-27): strict, on the virtual clock, the engine plays its logos and reaches the menu (2,649 frames, 48,715 draws, no record the null back end finds inconsistent); its console log is Wine's but for what the machines are (CPU, renderer, pixel formats, sound) |
+| M2 | OpenGL's pixels in Chrome | **done** (2026-11-27): the menu within 0.4 of 255 of Wine's screenshot on average, the menus and the briefing within 0.1 |
+| M3 | Sound: Miles on DirectSound | **done** (2026-11-27): the level session's sound within 0.3 dB of Wine's recording on average, the same course (correlation 0.93) |
+| M4 | Played by hand | under way: how to play it is in [mohaa.md](mohaa.md#play-it); by hand on a real GPU still to do |
+
 ## Linux x64
 
 - **fastfetch 2.71.0** ([its page](fastfetch.md)), built from its source as one static x86-64 musl program: every

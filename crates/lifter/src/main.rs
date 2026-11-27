@@ -300,6 +300,14 @@ struct Func {
     /// forked process and a longjmp go on from a return address
     rets: BTreeSet<u64>,
 }
+impl Func {
+    /// 32-bit code: `ip` is in one of the function's own jump tables. Decoding went on past a call that does not
+    /// return (a throw) into the table that follows it: what it read there is no code, and it may cover the next
+    /// function's first bytes (MOHAA's gamex86.dll has a function right after such a table)
+    fn in_data(&self, ip: u64) -> bool {
+        self.data.iter().any(|&(a, e)| a <= ip && ip < e)
+    }
+}
 
 /// A near branch or call with its target in the instruction (far ones exist in 32-bit code).
 fn is_near(i: &Instruction) -> bool {
@@ -1192,10 +1200,94 @@ fn cond(cc: ConditionCode) -> &'static str {
     }
 }
 
+/// MMX: eight 64-bit registers of their own (c->mm[], rt/cpu.h). On a real CPU they are the x87 registers' mantissas;
+/// here they are apart from them, which code that keeps to the rule (EMMS between MMX and x87 code) cannot tell.
+/// Each operation is the SSE2 one on the low half of a vector, where the two agree; the unpacks of the high halves
+/// and the packs are arranged so that they do. None: not an MMX instruction.
+fn mmx(i: &Instruction) -> Option<String> {
+    use Mnemonic as M;
+    let m = i.mnemonic();
+    let is_mm = |n: u32| n < i.op_count() && i.op_kind(n) == OpKind::Register && i.op_register(n).is_mm();
+    if !(0..i.op_count()).any(is_mm) && !matches!(m, M::Emms | M::Femms) { return None; }
+    if i.encoding() == iced_x86::EncodingKind::D3NOW { return None; }   // 3DNow!: not reported by the virtual CPU
+    let reg = |n: u32| i.op_register(n).number();
+    // an operand as 64 bits: an MMX or XMM register's (low) bits, memory, or a general register
+    let src = |n: u32| -> String {
+        match i.op_kind(n) {
+            OpKind::Register if i.op_register(n).is_mm() => format!("c->mm[{}]", reg(n)),
+            OpKind::Register if i.op_register(n).is_xmm() => format!("X[{}].q[0]", reg(n)),
+            OpKind::Register => format!("(u64){}", rreg(i.op_register(n))),
+            OpKind::Memory => format!("M64({})", ea(i)),
+            _ => format!("{}ull", i.immediate(n)),
+        }
+    };
+    let d = if i.op_count() > 0 && is_mm(0) { reg(0) } else { 0 };
+    // d = f(d, s) on vectors whose low halves are the MMX registers
+    let vop = |e: &str| format!("{{V a=vfrom64(c->mm[{d}]),s=vfrom64({});V r={e};c->mm[{d}]=r.q[0];}}", src(1));
+    let lanes = |fld: &str, op: &str| vop(&format!("({{V t;t.{fld}=a.{fld}{op}s.{fld};t;}})"));
+    let cmp = |fld: &str, op: &str| vop(&format!("({{V t;t.{fld}=(typeof(t.{fld}))(a.{fld}{op}s.{fld});t;}})"));
+    let named = |f: &str| vop(&format!("{f}(a,s)"));
+    let high = |f: &str| vop(&format!("{f}(vfrom64(a.q[0]>>32),vfrom64(s.q[0]>>32))"));
+    let pack = |f: &str| vop(&format!("{f}(punpcklqdq(a,s),vzero())"));
+    let shift = |f: &str| {
+        let n = if is_imm(i.op_kind(1)) { format!("{}", i.immediate(1)) } else { src(1) };
+        format!("{{V r={f}(vfrom64(c->mm[{d}]),{n});c->mm[{d}]=r.q[0];}}")
+    };
+    Some(match m {
+        M::Emms | M::Femms => String::new(),
+        M::Movd => if is_mm(0) { format!("c->mm[{d}]=(u32)({});", if i.op_kind(1) == OpKind::Memory { format!("M32({})", ea(i)) } else { rreg(i.op_register(1)) }) }
+            else if i.op_kind(0) == OpKind::Memory { format!("M32({})=(u32)c->mm[{}];", ea(i), reg(1)) }
+            else { wreg(i.op_register(0), &format!("(u32)c->mm[{}]", reg(1))) },
+        M::Movq | M::Movntq => if is_mm(0) { format!("c->mm[{d}]={};", src(1)) }
+            else if i.op_kind(0) == OpKind::Memory { format!("M64({})=c->mm[{}];", ea(i), reg(1)) }
+            else if i.op_register(0).is_xmm() { format!("X[{}]=vfrom64(c->mm[{}]);", reg(0), reg(1)) }
+            else { wreg(i.op_register(0), &format!("c->mm[{}]", reg(1))) },
+        M::Movq2dq => format!("X[{}]=vfrom64(c->mm[{}]);", reg(0), reg(1)),
+        M::Movdq2q => format!("c->mm[{d}]=X[{}].q[0];", reg(1)),
+        M::Pxor => format!("c->mm[{d}]^={};", src(1)),
+        M::Pand => format!("c->mm[{d}]&={};", src(1)),
+        M::Por => format!("c->mm[{d}]|={};", src(1)),
+        M::Pandn => format!("c->mm[{d}]=~c->mm[{d}]&{};", src(1)),
+        M::Paddb => lanes("b", "+"), M::Paddw => lanes("w", "+"), M::Paddd => lanes("d", "+"), M::Paddq => lanes("q", "+"),
+        M::Psubb => lanes("b", "-"), M::Psubw => lanes("w", "-"), M::Psubd => lanes("d", "-"), M::Psubq => lanes("q", "-"),
+        M::Pmullw => lanes("w", "*"),
+        M::Pcmpeqb => cmp("b", "=="), M::Pcmpeqw => cmp("w", "=="), M::Pcmpeqd => cmp("d", "=="),
+        M::Pcmpgtb => cmp("sb", ">"), M::Pcmpgtw => cmp("sw", ">"), M::Pcmpgtd => cmp("sd", ">"),
+        M::Paddsb | M::Paddsw | M::Paddusb | M::Paddusw | M::Psubsb | M::Psubsw | M::Psubusb | M::Psubusw | M::Pmulhw | M::Pmulhuw
+        | M::Pmaddwd | M::Pminub | M::Pmaxub | M::Pminsw | M::Pmaxsw | M::Pavgb | M::Pavgw | M::Psadbw | M::Pmuludq => named(&format!("{m:?}").to_lowercase()),
+        M::Punpcklbw | M::Punpcklwd | M::Punpckldq => named(&format!("{m:?}").to_lowercase()),
+        M::Punpckhbw => high("punpcklbw"), M::Punpckhwd => high("punpcklwd"), M::Punpckhdq => high("punpckldq"),
+        M::Packsswb | M::Packssdw | M::Packuswb => pack(&format!("{m:?}").to_lowercase()),
+        M::Psllw | M::Pslld | M::Psllq | M::Psrlw | M::Psrld | M::Psrlq | M::Psraw | M::Psrad => shift(&format!("{m:?}").to_lowercase()),
+        M::Pshufw => {
+            let k = i.immediate(2);
+            let parts: Vec<String> = (0..4).map(|j| format!("(((s>>{})&0xFFFFull)<<{})", 16 * ((k >> (2 * j)) & 3), 16 * j)).collect();
+            format!("{{u64 s={};c->mm[{d}]={};}}", src(1), parts.join("|"))
+        }
+        M::Pinsrw => {
+            let k = 16 * (i.immediate(2) & 3);
+            let v = if i.op_kind(1) == OpKind::Memory { format!("M16({})", ea(i)) } else { rreg(i.op_register(1)) };
+            format!("c->mm[{d}]=(c->mm[{d}]&~(0xFFFFull<<{k}))|((u64)(u16)({v})<<{k});")
+        }
+        M::Pextrw => wreg(i.op_register(0), &format!("(u32)(u16)(c->mm[{}]>>{})", reg(1), 16 * (i.immediate(2) & 3))),
+        M::Pmovmskb => wreg(i.op_register(0), &format!("pmovmskb(vfrom64(c->mm[{}]))&0xFF", reg(1))),
+        M::Cvtpi2ps => format!("{{u64 s={};X[{x}].ps[0]=(float)(s32)s;X[{x}].ps[1]=(float)(s32)(s>>32);}}", src(1), x = reg(0)),
+        M::Cvttps2pi | M::Cvtps2pi => {
+            let s = if i.op_kind(1) == OpKind::Memory { format!("vfrom64(M64({}))", ea(i)) } else { format!("X[{}]", reg(1)) };
+            let (l, r) = if m == M::Cvtps2pi { ("__builtin_rintf(", ")") } else { ("", "") };
+            format!("{{V v={s};c->mm[{d}]=(u64)(u32)cvt_f2i32({l}v.ps[0]{r})|((u64)(u32)cvt_f2i32({l}v.ps[1]{r})<<32);}}")
+        }
+        _ => return Some(String::from("\u{1}")),   // not lifted: the caller counts it
+    })
+}
+
 impl Emit<'_> {
     fn insn(&mut self, i: &Instruction, f: &Func, entries: &BTreeSet<u64>, entry: u64) -> String {
         use Mnemonic as M;
         let m = i.mnemonic();
+        if let Some(s) = mmx(i) {
+            return if s == "\u{1}" { self.not_lifted(i) } else { s };
+        }
         if is32(i) {
             if let Some(s) = self.insn32(i, f, entries, entry) {
                 return s;
@@ -1467,11 +1559,18 @@ impl Emit<'_> {
 
     /// 32-bit code: what differs from 64-bit code (4-byte stack slots, the direction flag, FS, addresses that wrap
     /// at 4 GiB) and what only 32-bit titles use. None: the emitters shared with 64-bit code handle it.
-    /// MMX and 3DNow are not modelled: the virtual CPU of a 32-bit title does not report them.
+    /// 3DNow is not modelled: the virtual CPU of a 32-bit title does not report it (MMX: mmx(), above).
     fn insn32(&mut self, i: &Instruction, f: &Func, entries: &BTreeSet<u64>, entry: u64) -> Option<String> {
         use Mnemonic as M;
         let m = i.mnemonic();
         let (ip, next) = (i.ip(), i.next_ip());
+        // segment registers in a flat address space: saving and restoring DS, ES and SS around a routine (Miles' mixer
+        // does) moves the stack and nothing else; a pushed selector is the one Windows gives them (0x23). FS and GS
+        // are left to the general case below, as are moves into segment registers.
+        if matches!(m, M::Push | M::Pop) && i.op_count() == 1 && i.op_kind(0) == OpKind::Register && matches!(i.op_register(0), Register::DS | Register::ES | Register::SS) {
+            let slot = i.stack_pointer_increment().unsigned_abs();
+            return Some(if m == M::Push { format!("PUSH{b}(0x23);", b = slot * 8) } else { format!("R[RSP]=(u32)(R[RSP]+{slot});") });
+        }
         let foreign = (0..i.op_count()).any(|n| i.op_kind(n) == OpKind::Register && { let r = i.op_register(n); !(r.is_gpr() || r.is_xmm() || r.is_st()) });
         let far = i.is_call_far() || i.is_call_far_indirect() || i.is_jmp_far() || i.is_jmp_far_indirect() || i.op_kind(0) == OpKind::NearBranch16;
         if foreign || far || i.encoding() == iced_x86::EncodingKind::D3NOW || matches!(m, M::Emms | M::Femms | M::Rdrand | M::Rdseed) {
@@ -1753,6 +1852,9 @@ impl Cover {
     }
     fn add(&mut self, f: &Func) {
         for (&ip, i) in &f.insns {
+            if f.in_data(ip) {
+                continue;
+            }
             self.set(ip, 1);
             for a in ip + 1..i.next_ip() {
                 if self.get(a) != 1 {
@@ -1846,6 +1948,7 @@ fn discover32(img: &Image, roots: &BTreeSet<u64>, forced: &BTreeSet<u64>) -> Fou
     let mut rejected: BTreeMap<u64, bool> = BTreeMap::new(); // -> it is inside an instruction
     let mut patterns: BTreeSet<u64> = BTreeSet::new();
     let mut tried: BTreeSet<u64> = BTreeSet::new();
+    let mut reconsidered: BTreeSet<u64> = BTreeSet::new();
     let mut funcs: BTreeMap<u64, Func> = BTreeMap::new();
     loop {
         loop {
@@ -1872,11 +1975,22 @@ fn discover32(img: &Image, roots: &BTreeSet<u64>, forced: &BTreeSet<u64>) -> Fou
             }
             // the soft candidates against that code
             for &s in &cand.clone() {
+                // a candidate turned down for lying inside an instruction of code that is no longer known (that code
+                // was found from an entry since dropped) is looked at again, once
+                if rejected.get(&s) == Some(&true) && known.get(s) != 2 && reconsidered.insert(s) {
+                    rejected.remove(&s);
+                }
                 if hard.contains(&s) || rejected.contains_key(&s) {
                     continue;
                 }
                 if known.get(s) == 2 && !forced.contains(&s) {
                     rejected.insert(s, true);
+                    soft.remove(&s);
+                    continue;
+                }
+                // in a jump table or index table of known code: data
+                if known.get(s) == 3 && !forced.contains(&s) {
+                    rejected.insert(s, false);
                     soft.remove(&s);
                     continue;
                 }
@@ -1898,8 +2012,11 @@ fn discover32(img: &Image, roots: &BTreeSet<u64>, forced: &BTreeSet<u64>) -> Fou
                 let mut inner = Cover::new(img);
                 for (e, f) in funcs.iter().filter(|(e, _)| soft.contains(e) && !skip.contains(e)) {
                     let _ = e;
-                    for (&ip, i) in &f.insns {
+                    for (&ip, i) in f.insns.iter().filter(|(ip, _)| !f.in_data(**ip)) {
                         (ip + 1..i.next_ip()).for_each(|a| inner.set(a, 2));
+                    }
+                    for &(a, e) in &f.data {
+                        (a..e).for_each(|x| inner.set(x, 2));   // its tables: data
                     }
                 }
                 soft.iter().copied().filter(|s| inner.get(*s) == 2 && !forced.contains(s)).collect()
@@ -1933,7 +2050,8 @@ fn discover32(img: &Image, roots: &BTreeSet<u64>, forced: &BTreeSet<u64>) -> Fou
             eprintln!("soft 0x{s:x}: {} instructions, {}{}{}{}", f.insns.len(), if known.get(*s) == 1 { "in a hard function" } else { "on its own" }, if f.bad { ", runs into bytes that are no code" } else { "" }, if patterns.contains(s) { ", by pattern" } else { "" }, if in_data.contains(s) { ", in data" } else { "" });
         }
         for (s, inside) in &rejected {
-            eprintln!("no entry 0x{s:x}: {}", if *inside { "inside an instruction" } else { "does not decode as code" });
+            let by = if *inside { funcs.iter().find_map(|(e, f)| f.insns.values().find(|i| i.ip() < *s && *s < i.next_ip()).map(|i| format!(" (of 0x{:x}'s instruction at 0x{:x}{})", e, i.ip(), if hard.contains(e) { ", a hard entry" } else { "" }))).unwrap_or_default() } else { String::new() };
+            eprintln!("no entry 0x{s:x}: {}{by}", if *inside { "inside an instruction" } else { "does not decode as code" });
         }
     }
     // a soft entry inside another function's code is one more way into that function's body, not a copy of its
@@ -2035,10 +2153,17 @@ fn starts_as_code(f: &Func, entry: u64) -> bool {
     if f.insns.get(&entry).is_some_and(|i| i.mnemonic() == Mnemonic::Int3) {
         return false; // the padding between two functions
     }
+    // hand-written routines that save DS and ES (Miles' mixer) push and pop them in pairs and return: those
+    // pushes and pops are not data read as code
+    let seg = |i: &Instruction, m: Mnemonic, r: Register| i.mnemonic() == m && i.op_count() == 1 && i.op_kind(0) == OpKind::Register && i.op_register(0) == r;
+    let count = |m: Mnemonic, r: Register| f.insns.values().filter(|i| seg(i, m, r)).count();
+    // (in pairs taken together: `push ds; pop es` copies DS into ES)
+    let saves = f.insns.values().any(|i| i.flow_control() == FlowControl::Return)
+        && [Register::DS, Register::ES].iter().map(|&r| count(Mnemonic::Push, r)).sum::<usize>() == [Register::DS, Register::ES].iter().map(|&r| count(Mnemonic::Pop, r)).sum::<usize>();
     let mut ip = entry;
     for _ in 0..24 {
         let Some(i) = f.insns.get(&ip) else { break };
-        if odd(i) {
+        if odd(i) && !(saves && [Register::DS, Register::ES].iter().any(|&r| seg(i, Mnemonic::Push, r) || seg(i, Mnemonic::Pop, r))) {
             return false;
         }
         if !matches!(i.flow_control(), FlowControl::Next | FlowControl::Call | FlowControl::IndirectCall | FlowControl::ConditionalBranch) {
@@ -2060,7 +2185,7 @@ fn main() {
 fn lift() {
     let args: Vec<String> = std::env::args().collect();
     if args.len() < 3 {
-        eprintln!("usage: lifter <image.exe> <out.c> [--split N] [--base hex] [--entry hex]... [--builtin name.dll]... [--dll-dir <folder>=<guest folder>]... [--trace-pc]");
+        eprintln!("usage: lifter <image.exe> <out.c> [--split N] [--base hex] [--entry hex]... [--builtin name.dll]... [--dll-dir <folder>=<guest folder>]... [--load <file>=<name>]... [--trace-pc]");
         std::process::exit(2);
     }
     let exe = std::path::Path::new(&args[1]);
@@ -2075,9 +2200,21 @@ fn lift() {
         let list = std::fs::read_dir(host).map(|d| d.filter_map(|e| e.ok()).map(|e| e.file_name().to_string_lossy().into_owned()).collect()).unwrap_or_default();
         (std::path::PathBuf::from(host), guest.trim_end_matches('/').to_string(), list)
     }).collect();
+    // --load <file>=<name>: a DLL the title loads itself (LoadLibrary), which nothing imports: lifted with the title
+    // under its name (its path in the title's folder, "main/gamex86.dll"), loaded on demand (rt/process.c). The
+    // DLLs only such a DLL imports are loaded on demand too.
+    let loads: Vec<(String, std::path::PathBuf)> = args.iter().enumerate().filter(|(_, a)| *a == "--load").filter_map(|(i, _)| args.get(i + 1)).map(|a| {
+        let (host, name) = a.split_once('=').expect("--load <file>=<name>");
+        (name.replace('\\', "/"), std::path::PathBuf::from(host))
+    }).collect();
     let mut mods: Vec<(String, Image)> = Vec::new();
+    let mut eager = 0usize;   // the modules the exe's imports reach: mods[..eager]
     let mut queue = vec![(exe.file_name().unwrap().to_string_lossy().into_owned(), exe.to_path_buf())];
-    while let Some((name, path)) = queue.pop() {
+    let mut pending_loads = loads.clone(); pending_loads.reverse();
+    loop {
+        let Some((name, path)) = queue.pop().or_else(|| { if eager == 0 { eager = mods.len(); } pending_loads.pop() }) else { break };
+        let base_name = name.rsplit('/').next().unwrap_or(&name).to_string();
+        if mods.iter().any(|(n, _)| n.rsplit('/').next().unwrap_or(n).eq_ignore_ascii_case(&base_name)) { continue; }
         if mods.iter().any(|(n, _)| n.eq_ignore_ascii_case(&name)) { continue; }
         let data = std::fs::read(&path).expect("read image");
         let img = Image::load(&data).unwrap_or_else(|e| panic!("{name}: {e}"));
@@ -2096,6 +2233,7 @@ fn lift() {
         }
         mods.push((name, img));
     }
+    if eager == 0 { eager = mods.len(); }
     let bits = mods[0].1.bits;
     if let Some((name, m)) = mods.iter().find(|(_, m)| m.bits != bits) {
         panic!("{name}: a {}-bit image in a {bits}-bit title (32- and 64-bit images cannot be lifted together)", m.bits);
@@ -2287,7 +2425,7 @@ fn lift() {
         defs.push(format!(
             "{{\"{}\",0x{:x}ull,0x{:x}ull,0x{:x}ull,{},0x{:x}ull,0x{:x}ull,0x{:x}ull,{},0x{:x}ull,0x{:x}ull,{},secs_{k},{},relocs_{k},{},{},{}}}",
             name.replace('\\', "/"), m.base, m.orig_base, m.size, m.is_dll as u32, m.entry, va(9), va(3), dir(3).1, va(0), m.stack_reserve.max(1 << 20),
-            0, m.sections.len(), m.relocs.len(), first_import, m.imports.len()
+            (k >= eager) as u32, m.sections.len(), m.relocs.len(), first_import, m.imports.len()
         ));
     }
     writeln!(out, "const ModuleDef rt_modules[]={{{}}};const unsigned rt_module_count={};", defs.join(","), mods.len()).unwrap();

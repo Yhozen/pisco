@@ -1,0 +1,118 @@
+# The recipe for the Medal of Honor: Allied Assault single-player demo (2001, 2015 Inc. / Electronic Arts; id Tech 3,
+# OpenGL): `pisco build recipes/mohaa --source mohaaspdemo.zip` makes its image (docs/images.md). What is known of the
+# title: docs/mohaa.md.
+name = "mohaa"
+from = "base/windows-x86:1"
+libraries = ["opengl32", "dsound"]   # both loaded at run time (LoadLibrary: the engine and Miles): the census does not see them
+
+[source]
+# the user's own copy of the demo's download: a zip around a Wise installer, which carries an InstallShield 6 setup.
+# Never stored in the repository, nor in any image that leaves the machine
+file = "mohaaspdemo.zip"
+sha256 = "236e23d9bcf07ac9a6b5a862a4b6f25f5566ceeab4072278b54407e9ffc22197"
+extract = "wise"
+app = 'C:\Program Files\EA GAMES\MOHAADemo'
+
+[source.installshield.groups]
+# where the setup's file groups go below the title's folder, as the setup puts them under Wine ('-': not installed;
+# the <Engine>, <Support> and <Disk1> groups are the setup's own files)
+"Program Executable Files" = ''
+"Data Files Minimal" = 'main'
+"Data Files Complete" = 'main'
+"Program DLLs" = 'main'
+"Program DLLs2" = 'main'
+"SoundDriver Files" = 'snddrivers'
+"Video Files" = 'main\video'
+"Music Files" = 'main\sound\music'
+"Sound Files" = 'main\sound'
+"Sound Amb Files" = 'main\sound\amb'
+"Sound AmbStereo Files" = 'main\sound\amb_stereo'
+"Sound Mechanics Files" = 'main\sound\mechanics'
+"Sound Dialogue Files" = 'main\sound\dialogue'
+"Sound Weapons Files" = 'main\sound\weapons'
+"DirectX8 Files" = 'redist\directx8'
+"Help Files EN-US" = 'eReg'
+"eReg Files" = 'eReg'
+"Redist Files" = 'redist'
+"CD Only Files" = '-'
+"Example Files" = '-'
+"Shared DLLs" = '-'
+"<Engine>Engine Files" = '-'
+"<Engine>Kernel Placeholder" = '-'
+"<Engine>ScriptEngine" = '-'
+"<Engine>SelfRegistering" = '-'
+"<Support>Script" = '-'
+"<Support>Language Independent OS Independent Files" = '-'
+"<Support>Language Independent Intel 32 Files" = '-'
+"<Support>English OS Independent Files" = '-'
+"<Support>English Intel 32 Files" = '-'
+"<Support>English String Tables" = '-'
+"<Support>Non-SelfRegistering" = '-'
+"<Support>English Files" = '-'
+"<Disk1>Disk1 Files(1)" = '-'
+"<Disk1>Disk1 Files(2)" = '-'
+"<Disk1>Disk1 Files(3)" = '-'
+
+[run]
+exe = 'C:\Program Files\EA GAMES\MOHAADemo\MOHAADemo.exe'
+display = "800x600"   # the engine's default mode 4, full screen, as the oracle runs it
+
+[files]
+# What the demo's first start leaves to Configure.exe ("Configure.exe a": EA's settings program, in its automatic
+# mode), which is not run: without the markers sm.001 and sm.002 the engine starts it and exits, and it picks
+# settings for the machine it finds from main\config.csv, writes them to main\newconfig.cfg, writes the markers and
+# starts the engine again. These are the files it wrote under Wine (the oracle), so that both start from the same
+# settings. (sm.000 is the engine's own: there while it runs; found at start, it means the last run crashed.)
+'C:\Program Files\EA GAMES\MOHAADemo\sm.001' = ''
+'C:\Program Files\EA GAMES\MOHAADemo\sm.002' = ''
+'C:\Program Files\EA GAMES\MOHAADemo\main\newconfig.cfg' = """
+//
+// Video Card Family: NVidia GeForce
+// Video Card Driver: NVIDIA GeForce GTX 470
+//
+// Mhz 1100
+// Vidmem 64
+// Sysmem 256
+//
+
+seta cg_drawviewmodel 2
+seta r_fastdlights 0
+seta r_fastentlight 0
+seta r_subdivisions 4
+seta r_lodscale 0.55
+seta r_lodcap 0.5
+seta r_lodviewmodelcap 0.55
+seta cg_effectdetail 0.8
+seta vss_maxcount 15
+seta ter_error 4
+seta ter_maxlod 6
+seta ter_maxtris 24576
+seta cg_rain 1
+seta cg_shadows 1
+seta s_khz 44
+seta cg_marks_add 1
+seta r_mode 4
+seta r_picmip 0
+seta r_colorbits 32
+seta r_texturebits 32
+seta g_ddayfodderguys 2
+seta g_ddayfog 0
+seta g_ddayshingleguys 2
+seta r_drawstaticdecals 1
+seta r_ext_compressed_textures 1
+"""
+
+[cpu]
+# a Pentium III, as the oracle's machine is to the engine ("found Intel Pentium III"): MMX and SSE, which the engine's
+# own code and Miles' mixer use when the processor has them. Not 3DNow!, an AMD processor's, which they would also use
+features = ["fpu", "tsc", "cx8", "cmov", "mmx", "fxsr", "sse"]
+
+[lifter]
+split = 16
+# function starts the lifter's discovery does not find: Mss32.dll's MSSMIXER routine at 0x2113d047 as linked
+# (0x213d047 where the lift places it), handed out by AIL_get_preference's table of mixer routines
+entries = [0x213d047]
+# the DLLs the engine loads itself: the game and the client game (main\), the force-feedback mouse's, and Miles with
+# the plugins it finds beside it (snddrivers\)
+load = ['main\gamex86.dll', 'main\cgamex86.dll', 'main\ffx86.dll', 'snddrivers\Mss32.dll', 'snddrivers\Mssfast.m3d', 'snddrivers\Mp3dec.asi',
+  'snddrivers\Reverb3.flt', 'snddrivers\Lowpass.flt']

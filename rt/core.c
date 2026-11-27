@@ -96,6 +96,7 @@ u64 rt_rdtsc(void) { return (u64)(host_now_us() * 3000.0); }
 // ---- the end of the process ----
 HOST("exit") __attribute__((noreturn)) void host_exit(u32 code);
 void (*rt_exit_hook)(void);
-void rt_exit_process(u32 code) { void (*hook)(void) = rt_exit_hook; rt_exit_hook = 0; if (hook) hook(); host_exit(code); }
+__attribute__((weak)) void vfs_sync_open(void) {}   // rt/vfs.c, where a runtime has it: files still open are saved
+void rt_exit_process(u32 code) { void (*hook)(void) = rt_exit_hook; rt_exit_hook = 0; if (hook) hook(); vfs_sync_open(); host_exit(code); }
 
 u64 rt_random64(void) { u64 v = 0; arc4random_buf(&v, sizeof v); return v; }

@@ -1,0 +1,213 @@
+{
+ "title": "mohaa",
+ "about": "The level session, then a little play: forward, a turn, three shots, reload, the pistol, a step left, a jump, a crouch, F5, and the in-game menu opened and closed.",
+ "steps": [
+  {
+   "wait": 45000
+  },
+  {
+   "focus": true
+  },
+  {
+   "move": [
+    294,
+    211
+   ],
+   "ms": 600
+  },
+  {
+   "wait": 500
+  },
+  {
+   "shot": "hover"
+  },
+  {
+   "click": "left"
+  },
+  {
+   "wait": 2000
+  },
+  {
+   "shot": "difficulty"
+  },
+  {
+   "move": [
+    106,
+    59
+   ],
+   "ms": 300
+  },
+  {
+   "wait": 500
+  },
+  {
+   "click": "left"
+  },
+  {
+   "wait": 30000
+  },
+  {
+   "shot": "briefing"
+  },
+  {
+   "move": [
+    -1000,
+    -1000
+   ],
+   "ms": 300
+  },
+  {
+   "move": [
+    400,
+    575
+   ],
+   "ms": 600
+  },
+  {
+   "wait": 500
+  },
+  {
+   "click": "left"
+  },
+  {
+   "wait": 10000
+  },
+  {
+   "shot": "help"
+  },
+  {
+   "key": "Escape"
+  },
+  {
+   "wait": 2000
+  },
+  {
+   "shot": "level"
+  },
+  {
+   "wait": 1000
+  },
+  {
+   "key": "w",
+   "down": true
+  },
+  {
+   "wait": 3000
+  },
+  {
+   "key": "w",
+   "down": false
+  },
+  {
+   "shot": "walked"
+  },
+  {
+   "move": [
+    700,
+    575
+   ],
+   "ms": 600
+  },
+  {
+   "wait": 500
+  },
+  {
+   "shot": "turned"
+  },
+  {
+   "click": "left"
+  },
+  {
+   "wait": 700
+  },
+  {
+   "click": "left"
+  },
+  {
+   "wait": 700
+  },
+  {
+   "click": "left"
+  },
+  {
+   "wait": 1500
+  },
+  {
+   "shot": "fired"
+  },
+  {
+   "key": "r"
+  },
+  {
+   "wait": 3000
+  },
+  {
+   "key": "2"
+  },
+  {
+   "wait": 2000
+  },
+  {
+   "click": "left"
+  },
+  {
+   "wait": 1000
+  },
+  {
+   "shot": "pistol"
+  },
+  {
+   "key": "a",
+   "down": true
+  },
+  {
+   "wait": 1500
+  },
+  {
+   "key": "a",
+   "down": false
+  },
+  {
+   "key": "space"
+  },
+  {
+   "wait": 1500
+  },
+  {
+   "key": "c"
+  },
+  {
+   "wait": 1500
+  },
+  {
+   "shot": "crouched"
+  },
+  {
+   "key": "F5"
+  },
+  {
+   "wait": 3000
+  },
+  {
+   "key": "Escape"
+  },
+  {
+   "wait": 2000
+  },
+  {
+   "shot": "paused"
+  },
+  {
+   "key": "Escape"
+  },
+  {
+   "wait": 2000
+  },
+  {
+   "shot": "resumed"
+  },
+  {
+   "wait": 1000
+  }
+ ]
+}

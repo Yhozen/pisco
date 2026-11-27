@@ -22,7 +22,7 @@ A runtime imitates one system. A title image is built FROM one of them (its base
 |---|---|---|---|
 | **Xbox Series** (`base/xbox-series`) | the GDK's console build: kernelx, XMem, XGameRuntime, D3D12.X, DirectStorage, XAudio2 | Doom as a console title; XCL's console test title, 50/50 | Minecraft (Bedrock), the Xbox Series build |
 | **Windows x64** (`base/windows-x64`) | 64-bit Windows desktop: DXGI, D3D12, WIC, the PC GDK, the MSVC runtimes | Stockfish 19 (official build); Microsoft's SimpleTriangleDesktop and SimplePBR; [Desire](docs/desire.md) (2026), logo to ending | desktop D3D12 titles |
-| **Windows x86** (`base/windows-x86`) | 32-bit Windows desktop of the 2000s: Win32, GDI, Direct3D 9, DirectInput, FMOD | [Narbacular Drop](docs/narbacular-drop.md) (2005), playable; [Tag: The Power of Paint](docs/tag.md) (2008) into its second level | 32-bit Direct3D 9 games of the 2000s |
+| **Windows x86** (`base/windows-x86`) | 32-bit Windows desktop of the 2000s: Win32, GDI, Direct3D 9, OpenGL 1.1, DirectInput, DirectSound, FMOD | [Narbacular Drop](docs/narbacular-drop.md) (2005), playable; [Tag: The Power of Paint](docs/tag.md) (2008) into its second level; [Medal of Honor: Allied Assault's demo](docs/mohaa.md) (2001, OpenGL), logos to its level | 32-bit Direct3D 9 and OpenGL games of the 2000s |
 | **Linux x64** (`base/linux-x64`) | Linux at its system calls, for statically linked programs: files, memory, the clock, a generated `/proc`, fork / exec / pipes | [fastfetch](docs/fastfetch.md) 2.71.0; [neofetch](docs/neofetch.md) 7.1.0 on bash and busybox; [cowsay](docs/cowsay.md) 3.8.4 on perl | statically linked command-line programs |
 | **PS5** (`base/ps5`) | the PS5's system libraries for homebrew: libkernel, VideoOut, Pad, AudioOut | the [raymarching tech demo](docs/ps5.md) v1.4 (CPU-drawn, AVX2): its three scenes, pad and music | PS5 homebrew |
 
@@ -81,7 +81,7 @@ A game is built the same way from its recipe and your own installer
   measured and learned.
 - [How it works](docs/how-it-works.md) · [title images and `pisco`](docs/images.md) ·
   [wasm32 or wasm64](docs/memory.md) · [hosts: the browser, its limits and a native host](docs/hosts.md)
-- Titles: [Narbacular Drop](docs/narbacular-drop.md) · [Tag](docs/tag.md) · [Desire](docs/desire.md) ·
+- Titles: [Narbacular Drop](docs/narbacular-drop.md) · [Tag](docs/tag.md) · [Desire](docs/desire.md) · [MOHAA's demo](docs/mohaa.md) ·
   [fastfetch](docs/fastfetch.md) · [neofetch](docs/neofetch.md) · [cowsay](docs/cowsay.md) ·
   [the PS5 demo](docs/ps5.md) · [first run of a console title](docs/first-run.md)
 - [Developing on boat.dev sandboxes](docs/dev-machines.md) · [writing a changelog entry](changelog/README.md)

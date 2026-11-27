@@ -36,7 +36,10 @@ impl Census {
             if let Some(at) = name.rfind('@') { if name.starts_with('_') && name[at + 1..].starts_with(|c: char| c.is_ascii_digit()) { names.push(format!("{dll}!{}", &name[1..at])); } }
             if dll.starts_with("api-ms-win-crt-") || dll == "ucrtbase.dll" || dll.starts_with("vcruntime140") { names.push(format!("ucrtbase.dll!{name}")); names.push(format!("msvcrt.dll!{name}")); }
             if dll.starts_with("api-ms-win-core-") || dll == "kernelbase.dll" || dll == "ntdll.dll" { names.push(format!("kernel32.dll!{name}")); }
-            if dll == "wsock32.dll" { names.push(format!("ws2_32.dll!{name}")); }   // its functions are ws2_32's
+            if dll == "wsock32.dll" {   // its functions are ws2_32's; three ordinals are numbered differently (rt/process.c)
+                let n = match &name[..] { "#10" => "#11", "#11" => "#12", "#12" => "#10", x => x };
+                names.push(format!("ws2_32.dll!{n}"));
+            }
             if dll == "psapi.dll" { names.push(format!("kernel32.dll!K32{name}")); }
             match names.iter().find_map(|n| self.provider.get(n)) {
                 Some(p) if p.iter().any(|x| x == "base") => { *by.entry("base".into()).or_default() += 1; lines.push(format!("base     {imp}")); }

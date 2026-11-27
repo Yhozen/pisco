@@ -27,7 +27,7 @@ packages  Doom as a console title, XCL's   Stockfish, SimpleTriangleDesktop,    
 |---|---|---|---|---|---|
 | Xbox Series | `base/xbox-series:1` | `rt/gdk/`, `rt/xbox-series/` | Doom (D3D12.X on WebGPU, XAudio2, GameInput, saves), XCL's console test title 50/50 | the rungs in [status.md](status.md#xbox-series) | Minecraft (Bedrock), the Xbox Series build |
 | Windows x64 | `base/windows-x64:1` | `rt/gdk/`, `rt/windows-x64/` | Stockfish 19, Microsoft's SimpleTriangleDesktop and SimplePBR | Desire, a small D3D12 game on its own engine ([desire.md](desire.md)) | desktop D3D12 titles |
-| Windows x86 | `base/windows-x86:1` | `rt/windows-x86/` | Narbacular Drop, playable; Tag: The Power of Paint into its second level (Direct3D 9 shaders as WGSL, D3DX's effects, FMOD Ex) | Tag played by hand on a real GPU (T6's check), then its later levels | 32-bit Direct3D 9 games of the 2000s |
+| Windows x86 | `base/windows-x86:1` | `rt/windows-x86/` | Narbacular Drop, playable; Tag: The Power of Paint into its second level (Direct3D 9 shaders as WGSL, D3DX's effects, FMOD Ex) | Medal of Honor: Allied Assault's demo, an OpenGL game on id Tech 3 ([mohaa.md](mohaa.md)) | 32-bit Direct3D 9 games of the 2000s |
 | Linux x64 | `base/linux-x64:1` | `rt/linux-x64/` | fastfetch 2.71.0; neofetch 7.1.0 on bash and busybox, its processes forked and executed; cowsay on perl 5.44 ([fastfetch.md](fastfetch.md), [neofetch.md](neofetch.md), [cowsay.md](cowsay.md)) | threads, signals, a file system that can be written | statically linked command-line programs |
 | PS5 | `base/ps5:1` | `rt/ps5/` | the raymarching tech demo v1.4 (CPU-drawn, AVX2 and FMA): its three scenes, pad and music ([ps5.md](ps5.md)) | more system functions, a GPU (AGC) title, images by `pisco build` | PS5 homebrew |
 
@@ -70,6 +70,11 @@ A new runtime is a new folder and a new base; a new title of an existing runtime
 | D2 | MSVC's FH4 exception tables in the lifter | done ([desire.md](desire.md#progress)) |
 | D3 | Desire's main loop in Node on the virtual clock: keyboard and window messages for 64-bit titles | done ([desire.md](desire.md#progress)) |
 | D4 | Desire's pixels in Chrome against Wine's | done ([desire.md](desire.md#progress)) |
-| D5 | Desire playable by hand: the docs and how to play it are done; playing it by hand on a real GPU is still to do | under way |
+| D5 | Desire playable by hand: played in Chrome on an M1 MacBook Pro, about 38 frames a second | done ([desire.md](desire.md#progress)) |
+| M0 | Medal of Honor: Allied Assault's demo on the Windows x86 runtime: census, recipe (`pisco build` reads a Wise installer and the InstallShield 6 setup inside it), the oracle (OpenGL under Wine on llvmpipe) | done ([mohaa.md](mohaa.md#progress)) |
+| M1 | the demo lifted and started in Node: MMX in the lifter, DLLs loaded on demand, input as window messages, OpenGL 1.1 on the GPU ring; strict, from the logos to the menu and into the level, its console log Wine's | done ([mohaa.md](mohaa.md#progress)) |
+| M2 | MOHAA's demo in Chrome: OpenGL's viewports past the window, one more function found; the menus and the briefing within 0.4 of 255 of Wine's | done ([mohaa.md](mohaa.md#progress)) |
+| M3 | MOHAA's sound: DirectSound for Miles, a Pentium III; the level's sound within 0.3 dB of Wine's | done ([mohaa.md](mohaa.md#progress)) |
+| M4 | MOHAA's demo playable by hand: the docs and how to play it are done; playing it by hand on a real GPU is still to do | under way ([mohaa.md](mohaa.md#play-it)) |
 | B0 | experimental, optional: development on boat.dev sandboxes (a snapshot with everything built, the tests on several sandboxes at once); cowsay ported that way | done ([dev-machines.md](dev-machines.md)) |
 | B1 | the changelog on GitHub Pages drawn from `changelog/*.md` by a workflow on `main`, video releases published by it | done ([changelog/README.md](../changelog/README.md)) |

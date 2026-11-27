@@ -136,9 +136,14 @@ IMP(dinput8, IDirectInputDevice8A_Acquire) {
   if (!d->data_size) { RET(DIERR_INVALIDPARAM); return; }
   if (d->acquired) { RET(S_FALSE); return; }
   d->acquired = 1; d->next_event = input_event_count(); input_mouse_position(&d->x, &d->y, &d->wheel);
+  if (d->kind == MOUSE && (d->cooperative & 1)) input_mouse_exclusive++;   // DISCL_EXCLUSIVE: the windows get no mouse messages
   RET(DI_OK);
 }
-IMP(dinput8, IDirectInputDevice8A_Unacquire) { Device *d = DEV; u32 was = (u32)d->acquired; d->acquired = 0; RET(was ? DI_OK : S_FALSE); }
+IMP(dinput8, IDirectInputDevice8A_Unacquire) {
+  Device *d = DEV; u32 was = (u32)d->acquired; d->acquired = 0;
+  if (was && d->kind == MOUSE && (d->cooperative & 1) && input_mouse_exclusive > 0) input_mouse_exclusive--;
+  RET(was ? DI_OK : S_FALSE);
+}
 IMP(dinput8, IDirectInputDevice8A_Poll) { RET(DEV->acquired ? S_FALSE : DIERR_NOTACQUIRED); }   // neither device needs polling
 // GetDeviceState(size, data): the state now
 IMP(dinput8, IDirectInputDevice8A_GetDeviceState) {
