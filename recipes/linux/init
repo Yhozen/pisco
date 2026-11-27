@@ -32,6 +32,9 @@ fastfetch --pipe -l none -s Kernel:Locale 2>/dev/null | sed 's/^/fastfetch: /'
 bash -c 'echo "bash: ${BASH_VERSION%%(*}, $(( 6 * 7 )), ${#BASH_VERSINFO[@]} parts of a version"'
 # a program no build lifted (fixtures/linux-proc): the host lifts it when it first runs (web/lift.mjs)
 out=$(/bin/proc --echo lifted when it first ran); r=$?; echo "proc: $out, exit $r"
+# a distribution's program: Alpine's busybox, position-independent and dynamically linked (lifted when it first runs,
+# with its loader: web/lift.mjs)
+echo "alpine: $(/alpine/busybox echo a program of a distribution, dynamically linked) ($(/alpine/busybox | head -1 | cut -d ' ' -f1-2))"
 # cowsay on perl (static, at those addresses too)
 cowsay "Hello from the lifted Linux"
 n=0; for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do true && n=$((n + 1)); done; echo "spawn: $n loops"

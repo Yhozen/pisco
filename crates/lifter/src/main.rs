@@ -2602,6 +2602,11 @@ fn lift() {
         funcs = std::mem::take(&mut found.funcs);
         found32 = Some(found);
     } else {
+        // --entry <hex>: function starts the lifter is told of (a machine's program rebuilt from memory: the functions
+        // its dynamic symbols name, which its loader may call through pointers it finds by name)
+        for (i, _) in args.iter().enumerate().filter(|(_, a)| *a == "--entry") {
+            if let Some(e) = args.get(i + 1).and_then(|v| u64::from_str_radix(v.trim_start_matches("0x"), 16).ok()) { if img.is_code(e) { entries.insert(e); } }
+        }
         // code addresses stored in data (function pointer tables, vtables). A static Linux program's switches are
         // tables of absolute addresses in data too: their slots, once a jump through them is found, are no
         // function's entry, and the functions are found again without them (else every case would be a function

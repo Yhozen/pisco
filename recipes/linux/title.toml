@@ -14,7 +14,7 @@ app = "/"
 [run]
 exe = "/vmlinux"
 initrd = "/initramfs.cpio"
-cmdline = "console=ttyS0,115200 earlyprintk=serial,ttyS0,115200 panic=-1 no_timer_check vdso=0 tsc=reliable 8250.nr_uarts=1"
+cmdline = "console=ttyS0,115200 earlyprintk=serial,ttyS0,115200 panic=-1 no_timer_check vdso=0 tsc=reliable 8250.nr_uarts=1 norandmaps"
 
 [lifter]
 split = 16

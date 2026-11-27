@@ -1,5 +1,5 @@
 Linux version 6.18.65 (pisco@pisco)
-Command line: console=ttyS0,115200 earlyprintk=serial,ttyS0,115200 panic=-1 no_timer_check vdso=0 tsc=reliable 8250.nr_uarts=1
+Command line: console=ttyS0,115200 earlyprintk=serial,ttyS0,115200 panic=-1 no_timer_check vdso=0 tsc=reliable 8250.nr_uarts=1 norandmaps
 KERNEL supported cpus:
   Intel GenuineIntel
 Disabled fast string operations
@@ -16,7 +16,7 @@ last_pfn = 0x10000 max_arch_pfn = 0x400000000
 x86/PAT: PAT support disabled because CONFIG_X86_PAT is disabled in the kernel.
 x86/PAT: Configuration [0-7]: WB  WT  UC- UC  WB  WT  UC- UC  
 found SMP MP-table at [mem 0x0009fc00-0x0009fc0f]
-RAMDISK: [mem 0x0f600000-0x0ffc4fff]
+RAMDISK: [mem 0x0f400000-0x0ff2cfff]
 Intel MultiProcessor Specification v1.4
 MPTABLE: OEM ID: PISCO   
 MPTABLE: Product ID: microvm-x64 
@@ -48,7 +48,7 @@ CPU topo: Num. threads per package:   1
 CPU topo: Allowing 1 present CPUs plus 0 hotplug CPUs
 [mem 0x10000000-0xffffffff] available for PCI devices
 clocksource: refined-jiffies: mask: 0xffffffff max_cycles: 0xffffffff, max_idle_ns: 7645519600211568 ns
-Kernel command line: console=ttyS0,115200 earlyprintk=serial,ttyS0,115200 panic=-1 no_timer_check vdso=0 tsc=reliable 8250.nr_uarts=1
+Kernel command line: console=ttyS0,115200 earlyprintk=serial,ttyS0,115200 panic=-1 no_timer_check vdso=0 tsc=reliable 8250.nr_uarts=1 norandmaps
 printk: log buffer data + meta data: 131072 + 458752 = 589824 bytes
 Dentry cache hash table entries: 32768 (order: 6, 262144 bytes, linear)
 Inode-cache hash table entries: 16384 (order: 5, 131072 bytes, linear)
@@ -99,7 +99,7 @@ Serial: 8250/16550 driver, 1 ports, IRQ sharing disabled
 serial8250: ttyS0 at I/O 0x3f8 (irq = 4, base_baud = 115200) is a 16550A
 microcode: Current revision: 0xffffffff
 sched_clock: Marking stable (times)
-Freeing initrd memory: 10004K
+Freeing initrd memory: 11444K
 Freeing unused kernel image (initmem) memory: 580K
 Write protecting the kernel read-only data: 8192k
 Freeing unused kernel image (text/rodata gap) memory: 1764K

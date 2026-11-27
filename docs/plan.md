@@ -91,3 +91,4 @@ A new runtime is a new folder and a new base; a new title of an existing runtime
 | K9 | a program in a module of its own (a wasm side module the host loads): bash beside the GPL-2.0 kernel | done ([linux.md](linux.md#progress)) |
 | K10 | programs lifted when they first run: in Node, a program of the initramfs no build lifted, found by its code page, lifted, cached and loaded | done ([linux.md](linux.md#progress)) |
 | K11 | programs lifted from their image in memory (the auxiliary vector's headers, the segments as loaded): from the disk or anywhere | done ([linux.md](linux.md#progress)) |
+| K12 | a distribution's program, position-independent and dynamically linked: Alpine's busybox, and musl's loader, lifted when they first run | done ([linux.md](linux.md#progress)) |

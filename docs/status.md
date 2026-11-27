@@ -283,7 +283,9 @@ reasoning and the measurements: [research/kernel-as-a-title.md](research/kernel-
 - **K10, done**: in Node, a program no build lifted is lifted when it first runs (`web/lift.mjs`, `out/lift-cache`).
 - **K11, done**: the program's image is taken from memory at its entry point, so a static program runs from the disk
   or anywhere, lifted when it first runs.
-- **Next**: position-independent and dynamically linked programs (a distribution's), a network, snapshots.
+- **K12, done**: Alpine's busybox, position-independent and dynamically linked, runs on musl's loader, both lifted
+  when they first run, as on QEMU.
+- **Next**: shared libraries the loader opens, a network, snapshots.
 
 ## Known limits
 

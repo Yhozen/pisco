@@ -69,7 +69,8 @@ them; `pisco sources` prints it): `base/windows-x86` is the core (`rt/*.c`) plus
 title is linked statically with a C library, musl's being MIT; that is the title's code, built outside the repository,
 not the runtime's. A machine's title is a kernel: Linux's is GPL-2.0-only, so a module with it is under GPL-2.0, and
 so are the programs lifted into that module, which must allow it: busybox and hello are GPL-2.0, fastfetch MIT, perl
-GPL-1.0-or-later. A program whose licence does not, bash's GPL-3.0-or-later, is a module of its own (`[lifter]
+GPL-1.0-or-later. (Alpine's busybox, GPL-2.0, and musl's loader, MIT, are lifted when they first run, each into a
+module of its own in the user's cache.) A program whose licence does not, bash's GPL-3.0-or-later, is a module of its own (`[lifter]
 modules`): a separate wasm file the host loads beside the kernel's, which reaches the kernel only through its system
 calls, the boundary Linux's own licence note puts between the kernel and the programs it runs. Whether two modules
 loaded into one host process are separate works is a question of law this page does not answer; PISCO keeps them

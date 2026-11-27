@@ -10,16 +10,19 @@ const root = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..')
 
 export function programImage({ instance, memory, log }) {
   const tried = new Set();
-  return (addr, len) => {
+  return (addr, len, fns, nfns) => {
     const image = Buffer.from(new Uint8Array(memory.buffer, addr, len));
+    // the functions its dynamic symbols name (the machine read them): function starts the lifter is told of
+    const entries = [...new BigUint64Array(memory.buffer.slice(fns, fns + 8 * nfns))].map((v) => v.toString(16));
     const sha = crypto.createHash('sha256').update(image).digest('hex'), name = `p_${sha.slice(0, 16)}`;
     if (tried.has(sha)) return 0; tried.add(sha);
     const dir = path.join(root, 'out/lift-cache'), wasm = path.join(dir, `${sha}.wasm`);
     if (!fs.existsSync(wasm)) {
       fs.mkdirSync(dir, { recursive: true }); const tmp = path.join(dir, `${sha}.elf`); fs.writeFileSync(tmp, image);
       log(`lifting a program met when it first ran (${len} bytes, sha256 ${sha.slice(0, 16)})`); const t0 = Date.now();
-      try { execFileSync(path.join(root, 'tools/build-side.sh'), [tmp, name, wasm], { stdio: ['ignore', 'ignore', 'inherit'] }); }
-      catch { log(`could not lift it (sha256 ${sha.slice(0, 16)})`); return 0; } finally { fs.rmSync(tmp, { force: true }); }
+      try { execFileSync(path.join(root, 'tools/build-side.sh'), [tmp, name, wasm, ...entries], { stdio: ['ignore', 'ignore', 'inherit'] }); }
+      catch { log(`could not lift it (sha256 ${sha.slice(0, 16)}: the image is kept, ${tmp})`); return 0; }
+      fs.rmSync(tmp, { force: true });
       log(`lifted it in ${((Date.now() - t0) / 1000).toFixed(1)} s (out/lift-cache)`);
     }
     loadSide(fs.readFileSync(wasm), instance, memory, name);

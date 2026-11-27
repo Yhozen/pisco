@@ -299,11 +299,38 @@ under 3 s the first time and taken from the cache after, and prints what it prin
 copies it there and runs it from the disk. The page cannot lift (it
 has no lifter): there such a program stops the machine.
 
+## What it took (K12): a distribution's program, dynamically linked
+
+`/init` runs Alpine 3.24.4's busybox, as Alpine ships it: position-independent and dynamically linked against musl,
+whose loader (`/lib/ld-musl-x86_64.so.1`) is also its C library. Both are lifted when they first run, each into a
+module of its own, and print what they print on QEMU.
+
+- **The loader runs first.** The kernel starts it, not the program: at the loader's first instruction the auxiliary
+  vector's `AT_BASE` says where it is, and its ELF header there gives its program headers. The machine takes its
+  image from there, and at the program's entry point (`AT_ENTRY`) the program's, its load bias found from its
+  `PT_PHDR`.
+- **Each image as it is loaded.** The machine moves the image's addresses by its bias and makes it an `ET_EXEC` (no
+  dynamic headers, no sections), so the lifter reads it as a static program at those addresses. The loader relocates
+  itself when it starts, after the image was taken, so the machine applies its relocations to the copy first
+  (`R_X86_64_RELATIVE`, RELR, and `64`, `GLOB_DAT` and `JUMP_SLOT` to symbols it defines itself): code addresses in
+  its data are then addresses, which is how the lifter finds functions. A program the loader has relocated already
+  is taken as it is.
+- **Functions found by name.** The loader calls some of its own functions through pointers it finds by name in its
+  symbol table (musl's `__dls2b`, `__dls3`), so no instruction names them. The machine reads the image's dynamic
+  symbols and gives the host the address of each function among them; the lifter takes them as function starts
+  (`--entry`).
+- **The same addresses each time**: `norandmaps` on the kernel's command line places the loader and the program
+  where they were the last time, so the images, and the lift cache's keys, are the same from one run to the next.
+- **The x87's maths** (`expm1`, `log2`... which the lifter emits for `f2xm1` or `fyl2x`) is exported by the title for
+  such a module too (`rt/microvm-x64/side-exports.txt`): musl's maths has x87 code.
+
+The loader (669 KB) lifts in about a minute and busybox (803 KB) in two, on four cores; from the cache, nothing.
+
 ## Limits
 
-- In the page only programs lifted when the image is built run; in Node any static program that is not
-  position-independent is lifted when it first runs. Position-independent and dynamically linked programs (most of a
-  distribution's) are not yet: they are somewhere else each time.
+- In the page only programs lifted when the image is built run; in Node any program is lifted when it first runs,
+  static or dynamically linked. A library the loader opens (`dlopen`, or a program's own shared libraries beside
+  musl's) is not lifted yet: its code is met inside the loader's run, not at a program's entry point.
 - Model-specific registers the machine does not know read as 0 where a CPU raises #GP, which some of the kernel's
   `rdmsr_safe` callers would want.
 - A store that faults between its read and its write (an add to memory whose page must be copied) reads again after
@@ -329,4 +356,5 @@ has no lifter): there such a program stops the machine.
 | K9 | a program in a module of its own: bash (GPL-3.0) beside the kernel, as on QEMU | done |
 | K10 | programs lifted when they first run (Node: from the initramfs, cached by sha256) | done |
 | K11 | programs lifted from their image in memory: from the disk, a pipe, anywhere | done |
-| K12 | position-independent and dynamically linked programs, a network, snapshots | next |
+| K12 | a distribution's program, position-independent and dynamically linked: Alpine's busybox on musl's loader | done |
+| K13 | shared libraries the loader opens, a network, snapshots | next |

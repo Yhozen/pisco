@@ -74,7 +74,7 @@ static u64 code_hash(Cpu *c, u64 pc, u64 lo, u64 hi) {
 // headers and its segments' bytes, read from memory (its pages faulted in as reads would), are its file again,
 // as the file has them when it starts (the machine meets a program first at its entry point). The host lifts that
 // into a module of its own (web/lift.mjs, cached by the image's sha256), loads it and registers it; 1 when it did.
-HOST("program_image") int host_program_image(u32 image, u32 len);
+HOST("program_image") int host_program_image(u32 image, u32 len, u32 fns, u32 n_fns);   // and its functions' addresses (u64s)
 static const ProgramDef *program_at(Cpu *c, u64 pc);
 // fault: a page not mapped yet is faulted in (only inside the program's segments: there the kernel maps it); else
 // 0 when a page is not there (the stack, which the kernel has just written at a program's start)
@@ -87,31 +87,98 @@ static int user_read(Cpu *c, u64 va, void *out, unsigned n, int fault) {
   }
   return 1;
 }
+// the file offset of a virtual address of an image (its PT_LOAD headers), or ~0
+static u64 off_of(const u8 *ph, unsigned phnum, u64 va) {
+  for (unsigned i = 0; i < phnum; i++) { u32 t; u64 off, v, fs; memcpy(&t, ph + 56 * i, 4); memcpy(&off, ph + 56 * i + 8, 8); memcpy(&v, ph + 56 * i + 16, 8); memcpy(&fs, ph + 56 * i + 32, 8);
+    if (t == 1 && va >= v && va < v + fs) return off + (va - v); }
+  return ~0ull;
+}
+// an image's functions, by its dynamic symbols (a loader calls its own through pointers it finds by name: musl's
+// __dls2b, __dls3), into fns (their addresses as loaded): the host tells the lifter of them
+static u64 fns[4096]; static unsigned n_fns;
+static void dynamic_functions(const u8 *img, u64 size, const u8 *ph, unsigned phnum, u64 bias, u64 symtab, u64 strtab) {
+  u64 so = symtab ? off_of(ph, phnum, symtab) : ~0ull; if (so == ~0ull || strtab <= symtab) return;
+  for (u64 k = 0; k < (strtab - symtab) / 24 && so + 24 * (k + 1) <= size && n_fns < 4096; k++) {
+    u8 info = img[so + 24 * k + 4]; u16 shndx; u64 value; memcpy(&shndx, img + so + 24 * k + 6, 2); memcpy(&value, img + so + 24 * k + 8, 8);
+    if ((info & 15) == 2 && shndx && value) fns[n_fns++] = bias + value;   // STT_FUNC, defined
+  }
+}
+// its relocations (RELA's and the PLT's, RELR), applied to the copy as its loader applies them to memory, when apply
+// (a program its loader has relocated already has them): so that the code addresses its data holds are addresses
+// (what the lifter finds functions by). Its functions found by its dynamic symbols either way
+static void relocate(u8 *img, u64 size, const u8 *ph, unsigned phnum, u64 bias, int apply) {
+  u64 dyn = ~0ull, dynsz = 0;
+  for (unsigned i = 0; i < phnum; i++) { u32 t; memcpy(&t, ph + 56 * i, 4); if (t == 2) { memcpy(&dyn, ph + 56 * i + 8, 8); memcpy(&dynsz, ph + 56 * i + 32, 8); } }
+  if (dyn == ~0ull || dyn + dynsz > size) return;
+  u64 rela = 0, relasz = 0, relr = 0, relrsz = 0, jmprel = 0, pltsz = 0, symtab = 0, strtab = 0;
+  for (u64 k = 0; k + 16 <= dynsz; k += 16) { u64 tag, v; memcpy(&tag, img + dyn + k, 8); memcpy(&v, img + dyn + k + 8, 8);
+    if (tag == 0) break; if (tag == 7) rela = v; if (tag == 8) relasz = v; if (tag == 35) relrsz = v; if (tag == 36) relr = v;   // DT_RELRSZ, DT_RELR
+    if (tag == 23) jmprel = v; if (tag == 2) pltsz = v; if (tag == 6) symtab = v; if (tag == 5) strtab = v; }
+  dynamic_functions(img, size, ph, phnum, bias, symtab, strtab);
+  if (!apply) return;
+  // RELA and the PLT's: relative ones, and those to a symbol the image defines itself (its own functions, called
+  // through its PLT or its GOT: R_X86_64_64, GLOB_DAT, JUMP_SLOT)
+  u64 so = symtab ? off_of(ph, phnum, symtab) : ~0ull;
+  for (int t = 0; t < 2; t++) {
+    u64 o = t ? (jmprel ? off_of(ph, phnum, jmprel) : ~0ull) : (rela ? off_of(ph, phnum, rela) : ~0ull), n = t ? pltsz : relasz;
+    for (u64 k = 0; o != ~0ull && k + 24 <= n && o + k + 24 <= size; k += 24) {
+      u64 where, info, add; memcpy(&where, img + o + k, 8); memcpy(&info, img + o + k + 8, 8); memcpy(&add, img + o + k + 16, 8);
+      u64 w = off_of(ph, phnum, where); if (w == ~0ull || w + 8 > size) continue;
+      u32 type = (u32)info; u64 sym = info >> 32, val;
+      if (type == 8) { val = bias + add; memcpy(img + w, &val, 8); continue; }
+      if ((type == 1 || type == 6 || type == 7) && so != ~0ull && so + 24 * (sym + 1) <= size) {
+        u16 shndx; u64 value; memcpy(&shndx, img + so + 24 * sym + 6, 2); memcpy(&value, img + so + 24 * sym + 8, 8);
+        if (shndx) { val = bias + value + (type == 1 ? add : 0); memcpy(img + w, &val, 8); }
+      }
+    }
+  }
+  u64 o = relr ? off_of(ph, phnum, relr) : ~0ull, at = 0;
+  for (u64 k = 0; o != ~0ull && k + 8 <= relrsz && o + k + 8 <= size; k += 8) {
+    u64 e; memcpy(&e, img + o + k, 8);
+    if (!(e & 1)) { at = e; u64 w = off_of(ph, phnum, at); if (w != ~0ull && w + 8 <= size) { u64 v; memcpy(&v, img + w, 8); v += bias; memcpy(img + w, &v, 8); } at += 8; }
+    else { for (int bit = 1; bit < 64; bit++) if (e >> bit & 1) { u64 w = off_of(ph, phnum, at + 8ull * (bit - 1)); if (w != ~0ull && w + 8 <= size) { u64 v; memcpy(&v, img + w, 8); v += bias; memcpy(img + w, &v, 8); } } at += 63 * 8; }
+  }
+}
 static int ask_host(Cpu *c, u64 pc) {
-  // its auxiliary vector, on its stack at its entry point: where its program headers are (AT_PHDR) and its entry
-  u64 sp = R[RSP], argc, v, phdr = 0, phnum = 0, entry = 0;
+  // its auxiliary vector, on its stack where it starts: its program headers (AT_PHDR), its entry, its interpreter's
+  // base (AT_BASE: a dynamically linked program's loader, which runs first)
+  u64 sp = R[RSP], argc, v, aphdr = 0, aphnum = 0, entry = 0, ibase = 0;
   if (!user_read(c, sp, &argc, 8, 0) || argc > 4096) return 0;
   u64 at = sp + 8 * (argc + 2);
   for (int k = 0; k < 4096; k++, at += 8) { if (!user_read(c, at, &v, 8, 0)) return 0; if (!v) break; }   // the environment
   for (int k = 0; k < 64; k++) {
     u64 kv[2]; at += 8; if (!user_read(c, at, kv, 16, 0)) return 0; at += 8;
-    if (kv[0] == 0) break; if (kv[0] == 3) phdr = kv[1]; if (kv[0] == 5) phnum = kv[1]; if (kv[0] == 9) entry = kv[1];
+    if (kv[0] == 0) break; if (kv[0] == 3) aphdr = kv[1]; if (kv[0] == 5) aphnum = kv[1]; if (kv[0] == 7) ibase = kv[1]; if (kv[0] == 9) entry = kv[1];
   }
-  if (entry != pc || !phdr || !phnum || phnum > 64) return 0;   // (only a program that starts: then it is as its file has it)
-  u8 ph[64 * 56]; if (!user_read(c, phdr, ph, 56u * (unsigned)phnum, 1)) return 0;
+  // which image: the program at its entry, or its interpreter where it starts (its ELF header at its base)
+  u8 h[64], ph[64 * 56]; u64 phdr, phnum, bias = 0; int loader = 0;
+  if (pc == entry && aphdr && aphnum && aphnum <= 64) { phdr = aphdr; phnum = aphnum; }
+  else if (ibase) { if (!user_read(c, ibase, h, 64, 1) || memcmp(h, "\x7f" "ELF\x02\x01", 6)) return 0; u64 po; u16 pn; memcpy(&po, h + 32, 8); memcpy(&pn, h + 56, 2); phdr = ibase + po; phnum = pn; bias = ibase; loader = 1; if (phnum > 64) return 0; }
+  else return 0;
+  if (!user_read(c, phdr, ph, 56u * (unsigned)phnum, 1)) return 0;
+  if (!loader) for (unsigned i = 0; i < phnum; i++) { u32 t; u64 va; memcpy(&t, ph + 56 * i, 4); memcpy(&va, ph + 56 * i + 16, 8); if (t == 6) bias = phdr - va; }   // PT_PHDR: a position-independent program's load bias
   // its first segment (file offset 0) holds its ELF header; the image is its segments' bytes at their offsets
   u64 size = 0, base = ~0ull; int holds = 0;
   for (unsigned i = 0; i < phnum; i++) { u32 t, fl; u64 off, va, fs, ms; memcpy(&t, ph + 56 * i, 4); memcpy(&fl, ph + 56 * i + 4, 4); memcpy(&off, ph + 56 * i + 8, 8); memcpy(&va, ph + 56 * i + 16, 8); memcpy(&fs, ph + 56 * i + 32, 8); memcpy(&ms, ph + 56 * i + 40, 8);
-    if (t != 1) continue; if (off + fs > size) size = off + fs; if (off == 0) base = va; if ((fl & 1) && pc >= va && pc < va + ms) holds = 1; }
+    if (t != 1) continue; if (off + fs > size) size = off + fs; if (off == 0) base = va + bias; if ((fl & 1) && pc >= va + bias && pc < va + bias + ms) holds = 1; }
   if (!holds || base == ~0ull || size > (256u << 20)) return 0;
-  u8 h[64]; if (!user_read(c, base, h, 64, 1) || memcmp(h, "\x7f" "ELF\x02\x01", 6)) return 0;
-  u16 type; memcpy(&type, h + 16, 2); if (type != 2) return 0;   // (ET_EXEC: a position-independent program is elsewhere each time)
+  if (!user_read(c, base, h, 64, 1) || memcmp(h, "\x7f" "ELF\x02\x01", 6)) return 0;
   u8 *img = calloc(1, size); if (!img) return 0;
   for (unsigned i = 0; i < phnum; i++) { u32 t; u64 off, va, fs; memcpy(&t, ph + 56 * i, 4); memcpy(&off, ph + 56 * i + 8, 8); memcpy(&va, ph + 56 * i + 16, 8); memcpy(&fs, ph + 56 * i + 32, 8);
-    if (t == 1 && fs && !user_read(c, va, img + off, (unsigned)fs, 1)) { free(img); return 0; } }
-  memset(img + 40, 0, 8); memset(img + 60, 0, 4);   // (no section headers: what memory has is the segments)
+    if (t == 1 && fs && !user_read(c, va + bias, img + off, (unsigned)fs, 1)) { free(img); return 0; } }
+  // a loader, or a program that relocates itself, has not run its relocations yet where it starts: done in the copy
+  n_fns = 0; relocate(img, size, ph, (unsigned)phnum, bias, loader || !ibase);
+  // as a program at the addresses it was loaded at: no dynamic headers, its addresses moved by its bias, no sections
+  u64 po; memcpy(&po, h + 32, 8); u8 *p = img + po; u16 pn; memcpy(&pn, h + 56, 2);
+  if (po + 56u * pn <= size) for (unsigned i = 0; i < pn; i++) {
+    u32 t; memcpy(&t, p + 56 * i, 4);
+    if (t == 2 || t == 3 || t == 0x6474e550 || t == 0x6474e552) { t = 0; memcpy(p + 56 * i, &t, 4); continue; }   // DYNAMIC, INTERP, GNU_EH_FRAME, GNU_RELRO
+    u64 va; memcpy(&va, p + 56 * i + 16, 8); va += bias; memcpy(p + 56 * i + 16, &va, 8); memcpy(p + 56 * i + 24, &va, 8);
+  }
+  u16 exec = 2; memcpy(img + 16, &exec, 2); u64 e; memcpy(&e, h + 24, 8); e += bias; memcpy(img + 24, &e, 8);
+  memset(img + 40, 0, 8); memset(img + 60, 0, 4);
   uart_flush();
-  int r = host_program_image((u32)(uptr)img, (u32)size); free(img); return r;
+  int r = host_program_image((u32)(uptr)img, (u32)size, (u32)(uptr)fns, n_fns); free(img); return r;
 }
 static const ProgramDef *program_at(Cpu *c, u64 pc) {
   unsigned linked = &rt_program_count ? rt_program_count : 0;

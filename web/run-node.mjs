@@ -254,7 +254,7 @@ if (isMainThread) {
     });
   }
   const missing = { fn: null };
-  if (machine) host.program_image = (addr, len) => (missing.fn ? missing.fn(addr, len) : 0);
+  if (machine) host.program_image = (addr, len, fns, n) => (missing.fn ? missing.fn(addr, len, fns, n) : 0);
   const instance = new WebAssembly.Instance(module, { env: { memory }, wasi_snapshot_preview1: wasi, wasi: { 'thread-spawn': spawn }, host });
   try {
     if (machine) {
