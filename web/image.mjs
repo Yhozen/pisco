@@ -32,6 +32,13 @@ export function checkManifest(manifest) {
   if (!module) throw new Error('image: no module (title.wasm) among its layers');
   return { layers, module, roles: layers.map((l) => l.annotations?.[ROLE] || 'layer') };
 }
+// The host interface this host gives modules (docs/spec/host.md), and the config's schema it reads
+export const ABI = 'pisco.host/0';
+export function checkConfig(config) {
+  if (config.schema !== 1) throw new Error(`image: its config is of schema ${config.schema}: this host reads schema 1 (docs/spec/image.md)`);
+  if (config.abi !== ABI) throw new Error(`image: built for the host interface ${config.abi}: this host gives ${ABI} (docs/spec/host.md)`);
+  return config;
+}
 export const blobPath = (digest) => `blobs/sha256/${digest.replace(/^sha256:/, '')}`;
 
 // What a host needs to start the title: the exe and its folder on the drive ('C:\Program Files\X\x.exe' ->
@@ -167,7 +174,7 @@ export async function openImageDir(dir, { verify = true, wasm = true } = {}) {
   const index = JSON.parse(fs.readFileSync(file('index.json'), 'utf8'));
   const desc = manifestOf(index), manifest = json(desc.digest);
   const { layers, module } = checkManifest(manifest);
-  const config = json(manifest.config.digest);
+  const config = checkConfig(json(manifest.config.digest));
   const drive = new Drive(layers.map((l) => {
     check(l.digest);
     const fd = fs.openSync(file(blobPath(l.digest)), 'r');
@@ -199,7 +206,7 @@ export async function fetchImage(url) {
   const index = JSON.parse(utf8.decode(await get('index.json')));
   const desc = manifestOf(index), manifest = JSON.parse(utf8.decode(await get(blobPath(desc.digest), desc.digest)));
   const { module } = checkManifest(manifest);
-  const config = JSON.parse(utf8.decode(await get(blobPath(manifest.config.digest), manifest.config.digest)));
+  const config = checkConfig(JSON.parse(utf8.decode(await get(blobPath(manifest.config.digest), manifest.config.digest))));
   const wasm = await get(blobPath(module.digest), module.digest);
   return { url: base, digest: desc.digest, manifest, config, settings: settings(config), wasm, drive: `${base}c/` };
 }
