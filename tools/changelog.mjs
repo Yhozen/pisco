@@ -52,7 +52,9 @@ const video = (e) => {
   if (r.isDraft && opt('--publish')) {
     const notes = path.join(fs.mkdtempSync(path.join(process.env.RUNNER_TEMP || '/tmp', 'changelog-')), 'notes.md');
     fs.writeFileSync(notes, e.body.trim() + '\n');
-    gh('release', 'edit', e.video, '-R', repo, '--draft=false', '--title', `${e.title} (video)`, '--notes-file', notes);
+    // its tag is made when it is published, from the commit it targets: the merged one on main (a draft made on a
+    // pull request's branch targets that branch, deleted by then)
+    gh('release', 'edit', e.video, '-R', repo, '--draft=false', '--target', process.env.GITHUB_SHA || 'main', '--title', `${e.title} (video)`, '--notes-file', notes);
     console.log(`published the release ${e.video}`);
   } else if (r.isDraft) console.log(`${e.video} is still a draft (--publish publishes it)`);
   const url = (n) => `https://github.com/${repo}/releases/download/${e.video}/${n}`;
