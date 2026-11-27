@@ -1,7 +1,7 @@
 # The plan (2026-11-26)
 
-PISCO (PISCO Imitates Systems, Compiles Originals) runs x86 titles in WebAssembly. It is four kinds of parts (a
-fourth runtime, Linux x64, with fastfetch as its first title, does not fit the drawing):
+PISCO (PISCO Imitates Systems, Compiles Originals) runs x86 titles in WebAssembly. It is four kinds of parts (two
+more runtimes, Linux x64 and PS5, do not fit the drawing):
 
 ```
 PISCO     recompiler (crates/lifter)  ·  packages (pisco: recipe FROM a base -> title image)  ·  hosts (browser, Node)
@@ -11,13 +11,13 @@ packages  Doom as a console title, XCL's   Stockfish, SimpleTriangleDesktop,    
 ```
 
 - **The recompiler** turns a title's x86 or x86-64 code into C, once per build (`crates/lifter`, both widths; a
-  Windows PE or a static Linux ELF).
+  Windows PE, a static Linux ELF or a native PS5 executable).
 - **Packages**: `pisco build` reads a recipe (`recipes/<title>/title.toml`) and the user's own copy of the title, and
   writes a title image (an OCI image layout, [images.md](images.md)) `FROM` one base.
 - **Runtimes** are peers. Each imitates one system and is one base (`bases/<runtime>/1/base.toml`), which lists its
   files: the core (`rt/*.c`) every Windows and console title links, plus its own folder (and `rt/gdk/`, which the two
   64-bit Windows-family runtimes share). The Linux runtime links only the core's files that imitate no system
-  (`rt/core.c`, `rt/clock.c`, `rt/builtins.c`) and its own folder. None of them is "the" runtime: what started as the goal, Minecraft on the Xbox Series runtime, is now that
+  (`rt/core.c`, `rt/clock.c`, `rt/builtins.c`) and its own folder, and so does the PS5 runtime, with the GPU ring and the mixer. None of them is "the" runtime: what started as the goal, Minecraft on the Xbox Series runtime, is now that
   runtime's goal, one among several.
 - **Hosts** run an image: the browser page (`web/browser/`, WebGPU) and Node (`web/run-node.mjs`, a null GPU).
 
@@ -29,6 +29,7 @@ packages  Doom as a console title, XCL's   Stockfish, SimpleTriangleDesktop,    
 | Windows x64 | `base/windows-x64:1` | `rt/gdk/`, `rt/windows-x64/` | Stockfish 19, Microsoft's SimpleTriangleDesktop and SimplePBR | Desire, a small D3D12 game on its own engine ([desire.md](desire.md)) | desktop D3D12 titles |
 | Windows x86 | `base/windows-x86:1` | `rt/windows-x86/` | Narbacular Drop, playable; Tag: The Power of Paint into its second level (Direct3D 9 shaders as WGSL, D3DX's effects, FMOD Ex) | Tag played by hand on a real GPU (T6's check), then its later levels | 32-bit Direct3D 9 games of the 2000s |
 | Linux x64 | `base/linux-x64:1` | `rt/linux-x64/` | fastfetch 2.71.0; neofetch 7.1.0 on bash and busybox, its processes forked and executed; cowsay on perl 5.44 ([fastfetch.md](fastfetch.md), [neofetch.md](neofetch.md), [cowsay.md](cowsay.md)) | threads, signals, a file system that can be written | statically linked command-line programs |
+| PS5 | `base/ps5:1` | `rt/ps5/` | the raymarching tech demo v1.4 (CPU-drawn, AVX2 and FMA): its three scenes, pad and music ([ps5.md](ps5.md)) | more system functions, a GPU (AGC) title, images by `pisco build` | PS5 homebrew |
 
 A new runtime is a new folder and a new base; a new title of an existing runtime is a recipe.
 

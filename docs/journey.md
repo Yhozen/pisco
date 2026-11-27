@@ -715,5 +715,5 @@ the draft release that holds the entry's video. The eleven entries written by ha
 | `fixtures/x87/` | the 32-bit x87 title and what it prints under Wine |
 | `recipes/<title>/` | per-title files: the recipe, session scripts, Wine's recorded call sequences |
 | `changelog/` | the changelog on GitHub Pages, an entry per pull request (`tools/changelog.mjs`, `.github/workflows/changelog.yml`) |
-| `docs/` | this log, status, first-run runbook, memory measurements, the Narbacular Drop census |
+| `docs/` | this log, status, [how it works](how-it-works.md) (the runtime's parts, building and running, what each test title checks), first-run runbook, memory measurements, a page per title |
 
