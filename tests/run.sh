@@ -26,6 +26,11 @@
 #   cowsay   cowsay on perl (docs/cowsay.md), when tools/build-cowsay.sh has built its root into out/cowsay: its image
 #            built by `pisco build`, run by `pisco run` in strict mode with several cows and options; each must print
 #            what the same root's perl prints here (the oracle), and the first the same in headless Chrome
+#   kernel   the Linux title's kernel (docs/linux.md), when tools/build-linux.sh has built it into out/linux: the
+#            lifter must read vmlinux as a machine's image (--machine) and say what it does not lift yet. With QEMU
+#            (tools/oracle-qemu; said in one line without it) the kernel must run /init to its end there, and its
+#            programs must print recipes/linux/traces/programs.txt (KERNEL_RECORD=1 records it again), on QEMU's
+#            machine and on one without HPET, PIT and PIC, which is what rt/microvm-x64 will have
 #   changelog  tools/changelog.mjs: every entry in changelog/ (the changelog on GitHub Pages) is well formed
 #   chrome   hello, threads and cxx again in headless Chrome (WebGPU on SwiftShader), the 32-bit titles and linux-hello
 #   nd       Narbacular Drop, when the installed game is there (ND: its folder; default: the oracle's prefix):
@@ -161,6 +166,25 @@ linux() {
   SW_STRICT=1 SW_ROOT=$p/root SW_EXE=/bin/proc timeout 120 node web/run-node.mjs $p/root/bin/proc.wasm $p/root/bin/proc /bin/script > $p/got.txt 2>&1
   cmp -s $p/got.txt $p/native.txt || { echo "linux-proc differs from its run on this machine (< ours, > native):"; diff $p/got.txt $p/native.txt | head -12; return 1; }
   echo "linux-proc: $(wc -l < $p/native.txt) lines (fork, pipes, execve, a script, wait4, longjmp) equal its run on this machine"
+}
+kernel() {
+  local d=out/linux want=recipes/linux/traces/programs.txt fns left
+  mkdir -p $d/census
+  target/release/lifter $d/vmlinux $d/census/title.c --split 16 --machine > $d/census.txt 2>&1 || { echo "the lifter does not read vmlinux:"; tail -3 $d/census.txt; return 1; }
+  fns=$(sed -n 's/^lifted \([0-9]*\) functions.*/\1/p' $d/census.txt); left=$(sed -n 's/^not lifted yet, in the other functions: \([0-9]*\) instructions.*/\1/p' $d/census.txt)
+  [ "${fns:-0}" -gt 5000 ] || { echo "the lifter found only ${fns:-0} functions in vmlinux ($d/census.txt)"; return 1; }
+  echo "vmlinux: $fns functions read as a machine's image, $left instructions not lifted yet ($d/census.txt)"
+  command -v "${QEMU:-qemu-system-x86_64}" > /dev/null || { echo "no QEMU: the kernel's boot on the oracle is not checked (tools/setup-toolchain.sh qemu)"; return 0; }
+  tools/oracle-qemu/oracle.sh run linux > $d/oracle.txt 2>&1 || { echo "on QEMU the kernel did not run /init to its end ($d/oracle.txt):"; tail -4 $d/oracle.txt; return 1; }
+  [ -z "${KERNEL_RECORD:-}" ] || tools/oracle-qemu/oracle.sh programs linux > $want
+  tools/oracle-qemu/oracle.sh programs linux > $d/programs.txt
+  cmp -s $d/programs.txt $want || { echo "on QEMU the programs print otherwise than the recorded trace (< now, > recorded):"; diff $d/programs.txt $want | head -8; return 1; }
+  # the machine rt/microvm-x64 will be: no HPET, no PIT, no 8259 (QEMU's emulated CPU has no TSC-deadline timer, so the
+  # kernel is told the TSC's rate and runs without a timer interrupt there)
+  ORACLE_RUN=$d/oracle-small ORACLE_QEMU_MACHINE=q35,hpet=off,pit=off,pic=off tools/oracle-qemu/oracle.sh run linux tsc_early_khz=2900000 > $d/oracle-small.txt 2>&1 \
+    || { echo "on QEMU without HPET, PIT and PIC the kernel did not run /init to its end ($d/oracle-small.txt):"; tail -4 $d/oracle-small.txt; return 1; }
+  ORACLE_RUN=$d/oracle-small tools/oracle-qemu/oracle.sh programs linux | cmp -s - $want || { echo "without HPET, PIT and PIC the programs print otherwise than the recorded trace"; return 1; }
+  echo "QEMU: /init ran to its end, $(wc -l < $want) lines from its programs equal the recorded trace, also without HPET, PIT and PIC"
 }
 neofetch() {
   local d=out/neofetch want=recipes/neofetch/traces/pipe.txt
@@ -299,6 +323,7 @@ for s in ${*:-build layout node bench win32 linux avx ffp glffp sm gdi changelog
   cowsay) if [ -x out/cowsay/root/usr/bin/perl ]; then step cowsay cowsay; else echo "skip  cowsay: out/cowsay/root is not built (tools/build-cowsay.sh)"; fi ;;
   neofetch) if [ -x out/neofetch/root/bin/bash ]; then step neofetch neofetch; else echo "skip  neofetch: out/neofetch/root is not built (tools/build-neofetch.sh)"; fi ;;
   fastfetch) if [ -x out/fastfetch/fastfetch ]; then step fastfetch fastfetch; else echo "skip  fastfetch: out/fastfetch/fastfetch is not built (tools/build-fastfetch.sh)"; fi ;;
+  kernel) if [ -f out/linux/vmlinux ]; then LINES_SHOWN=2 step kernel kernel; else echo "skip  kernel: out/linux is not built (tools/build-linux.sh)"; fi ;;
   chrome) LINES_SHOWN=6 step chrome chrome ;;
   nd)     if [ -f "$ND/Narbacular Drop.exe" ]; then LINES_SHOWN=3 step nd nd; else echo "skip  nd: the game is not installed (ND=$ND)"; fi ;;
   ffp)    if command -v naga > /dev/null; then step ffp tests/gfx/d3d9-ffp.sh; else echo "skip  ffp: naga is not installed (tools/setup-toolchain.sh naga)"; fi ;;

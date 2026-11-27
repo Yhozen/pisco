@@ -1,4 +1,4 @@
-# Status and next steps, by runtime (2026-11-26)
+# Status and next steps, by runtime (2026-11-27)
 
 PISCO is one recompiler, one package format and several runtimes ([plan.md](plan.md)). Each runtime has its own
 titles, its own next steps and its own goal:
@@ -10,6 +10,7 @@ titles, its own next steps and its own goal:
 | [Windows x86](#windows-x86) | Narbacular Drop, playable; Tag: The Power of Paint into its second level | Tag played by hand on a real GPU, then its later levels | 32-bit Direct3D 9 games of the 2000s |
 | [Linux x64](#linux-x64) | fastfetch 2.71.0; neofetch 7.1.0 (bash, busybox); cowsay 3.8.4 (perl) | threads, signals, writes | statically linked command-line programs |
 | [PS5](ps5.md) | the raymarching tech demo (CPU-drawn, AVX2): its three scenes, pad and music in the browser | more system functions, a GPU (AGC) title | PS5 homebrew |
+| [Microvm x64](linux.md), planned | nothing yet: Linux 6.18 is built, read by the lifter and booted on the oracle (K0) | the machine, on a test kernel of our own (K1) | Linux itself, lifted, and its programs |
 
 ## Shared: the recompiler, the core runtime, the packages
 
@@ -245,6 +246,18 @@ loads itself and Miles Sound System 6.1c beside it ([mohaa.md](mohaa.md)). What 
 5. **Input**: the page's keyboard as standard input, and answers to a terminal's queries; then an interactive shell.
 6. **Fork without copying everything**: a fork copies the whole memory (64 MiB for bash, about 20 ms).
 7. **Smaller modules for large programs**: perl's is 34 MB, some of its code decoded into more than one function.
+
+## Microvm x64 (planned)
+
+A runtime that imitates a small x86-64 machine, so that a real Linux kernel is a title ([linux.md](linux.md); the
+reasoning and the measurements: [research/kernel-as-a-title.md](research/kernel-as-a-title.md)). No file of it is
+written yet.
+
+- **K0, done**: `tools/build-linux.sh` builds Linux 6.18.65 and an initramfs of busybox; the lifter reads `vmlinux`
+  (10,853 functions; 3,958 instructions of the system not lifted yet); QEMU boots it as the oracle, and what
+  `/init`'s programs print is recorded (`tests/run.sh kernel`).
+- **Next, K1**: the machine on a test kernel of our own: a software MMU, faults and interrupts as nested calls, a
+  host stack per task, a local APIC, an IOAPIC, a serial port.
 
 ## Known limits
 

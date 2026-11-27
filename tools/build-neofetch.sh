@@ -3,7 +3,8 @@
 # build-neofetch.sh [out dir, default out/neofetch]: a small Linux for neofetch (docs/neofetch.md), in <out>/root, the
 # root of the title (recipes/neofetch):
 #   bin/bash       bash 5.2.37 (GPL-3.0-or-later), static, no readline, no job control
-#   bin/busybox    busybox 1.36.1 (GPL-2.0-only), static, its default configuration but no `tc`; every applet in bin/
+#   bin/busybox    busybox 1.36.1 (GPL-2.0-only), static, its default configuration but no `tc` (tools/build-busybox.sh);
+#                  every applet in bin/
 #                  and usr/bin/env as a script that runs it (#!/bin/busybox: busybox takes the applet from its path)
 #   bin/sh         bash again
 #   usr/bin/neofetch  neofetch 7.1.0 (MIT), as it is
@@ -20,7 +21,6 @@ fetch() { # url, sha256, file: fetched once into <out>/src
   curl -fsSL -o "$out/src/$3.part" "$1"; echo "$2  $out/src/$3.part" | sha256sum -c --quiet; mv "$out/src/$3.part" "$out/src/$3"
 }
 fetch https://ftp.gnu.org/gnu/bash/bash-5.2.37.tar.gz 9599b22ecd1d5787ad7d3b7bf0c59f312b3396d1e281175dd1f8a4014da621ff bash-5.2.37.tar.gz
-fetch https://busybox.net/downloads/busybox-1.36.1.tar.bz2 b8cc24c9574d809e7279c3be349795c5d5ceb6fdf19ca709f80cde50e47de314 busybox-1.36.1.tar.bz2
 fetch https://github.com/dylanaraps/neofetch/archive/refs/tags/7.1.0.tar.gz 58a95e6b714e41efc804eca389a223309169b2def35e57fa934482a6b47c27e7 neofetch-7.1.0.tar.gz
 export SOURCE_DATE_EPOCH=0
 CF="-O2 -fno-stack-protector -isystem $HEADERS -ffile-prefix-map=$out=."
@@ -30,13 +30,7 @@ if [ ! -x "$out/build/bash-5.2.37/bash" ]; then
      --without-bash-malloc --enable-static-link --disable-nls --without-curses --disable-readline --disable-job-control > configure.log 2>&1 \
    && make -j "$(nproc)" > make.log 2>&1) || { echo "build-neofetch.sh: bash did not build (see $out/build/bash-5.2.37)" >&2; exit 1; }
 fi
-if [ ! -x "$out/build/busybox-1.36.1/busybox_unstripped" ]; then
-  rm -rf "$out/build/busybox-1.36.1"; mkdir -p "$out/build"; tar -xjf "$out/src/busybox-1.36.1.tar.bz2" -C "$out/build"
-  (cd "$out/build/busybox-1.36.1" && make defconfig > /dev/null 2>&1 \
-   && sed -i 's/^# CONFIG_STATIC is not set/CONFIG_STATIC=y/; s/^CONFIG_TC=y/# CONFIG_TC is not set/; s/^CONFIG_FEATURE_TC_INGRESS=y/# CONFIG_FEATURE_TC_INGRESS is not set/; s/^CONFIG_PIE=y/# CONFIG_PIE is not set/' .config \
-   && make -j "$(nproc)" CC="$MUSL/bin/musl-gcc" HOSTCC=gcc CONFIG_EXTRA_CFLAGS="$CF" EXTRA_LDFLAGS="-no-pie" busybox_unstripped > make.log 2>&1) \
-   || { echo "build-neofetch.sh: busybox did not build (see $out/build/busybox-1.36.1/make.log)" >&2; exit 1; }
-fi
+"$root/tools/build-busybox.sh" "$out" > /dev/null   # busybox, into the same folders
 [ -f "$out/build/neofetch-7.1.0/neofetch" ] || tar -xzf "$out/src/neofetch-7.1.0.tar.gz" -C "$out/build"
 R=$out/root; rm -rf "$R"; mkdir -p "$R/bin" "$R/usr/bin"
 cp "$out/build/bash-5.2.37/bash" "$R/bin/bash"; cp "$R/bin/bash" "$R/bin/sh"

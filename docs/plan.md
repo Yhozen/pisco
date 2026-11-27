@@ -1,4 +1,4 @@
-# The plan (2026-11-26)
+# The plan (2026-11-27)
 
 PISCO (PISCO Imitates Systems, Compiles Originals) runs x86 titles in WebAssembly. It is four kinds of parts (two
 more runtimes, Linux x64 and PS5, do not fit the drawing):
@@ -52,7 +52,7 @@ A new runtime is a new folder and a new base; a new title of an existing runtime
    title's page, the progress map) change in the same pull request as the code, and so does its entry in the
    changelog (`changelog/README.md`): a file there, a video only as a release.
 
-## Now (2026-11-26)
+## Now (2026-11-27)
 
 | # | Milestone | State |
 |---|---|---|
@@ -78,3 +78,5 @@ A new runtime is a new folder and a new base; a new title of an existing runtime
 | M4 | MOHAA's demo playable by hand: the docs and how to play it are done; playing it by hand on a real GPU is still to do | under way ([mohaa.md](mohaa.md#play-it)) |
 | B0 | experimental, optional: development on boat.dev sandboxes (a snapshot with everything built, the tests on several sandboxes at once); cowsay ported that way | done ([dev-machines.md](dev-machines.md)) |
 | B1 | the changelog on GitHub Pages drawn from `changelog/*.md` by a workflow on `main`, video releases published by it | done ([changelog/README.md](../changelog/README.md)) |
+| K0 | Linux itself as a title, the groundwork: the kernel built from a pinned source with our configuration, read by the lifter (`--machine`), booted on QEMU as the oracle; stacks, memory and hardware measured | done ([linux.md](linux.md#progress)) |
+| K1 | a sixth runtime, a small x86-64 machine (`rt/microvm-x64`), on a test kernel of our own | next ([linux.md](linux.md#progress)) |

@@ -44,17 +44,20 @@ struct Image {
     jumps: BTreeMap<u64, u8>,
     /// a PS5 title (ps5.rs): imports from the system's libraries by NID, relocations whose values the image keeps
     ps5: bool,
+    /// --machine: the image of a machine's own software (an operating system's kernel, rt/microvm-x64): it stays at
+    /// its link addresses, which are not addresses of the module's memory (the machine has page tables)
+    machine: bool,
     /// a PS5 title: the value each relocation (`relocs`, in the same order) makes, at the image's base
     reloc_values: Vec<u64>,
 }
 
 impl Image {
-    fn load(data: &[u8]) -> Result<Image, String> {
+    fn load(data: &[u8], machine: bool) -> Result<Image, String> {
         if ps5::is_ps5(data) {
             return Image::from_ps5_elf(data);
         }
         if data.starts_with(b"\x7fELF") {
-            return Image::from_elf(data);
+            return Image::from_elf(data, machine);
         }
         match PeFile64::parse(data) {
             Ok(pe) => Image::from_pe(&pe, 64),
@@ -107,7 +110,7 @@ impl Image {
         let size = u64::from(object::read::pe::ImageOptionalHeader::size_of_image(opt));
         let characteristics = pe.nt_headers().file_header().characteristics.get(LE);
         let mut img = Image { bits, base, entry, sections, text, pdata: BTreeMap::new(), unwind: BTreeMap::new(), imports: Vec::new(), relocs, raw, orig_base: base, dirs, stack_reserve,
-            fixed: characteristics & 1 != 0, size, is_dll: characteristics & 0x2000 != 0, exports: Vec::new(), ranges: vec![(base, base + size)], elf: false, seeds: Vec::new(), jumps: BTreeMap::new(), ps5: false, reloc_values: Vec::new() };
+            fixed: characteristics & 1 != 0, size, is_dll: characteristics & 0x2000 != 0, exports: Vec::new(), ranges: vec![(base, base + size)], elf: false, seeds: Vec::new(), jumps: BTreeMap::new(), ps5: false, machine: false, reloc_values: Vec::new() };
         if let Some(Some(table)) = pe.export_table().ok() {
             if let Ok(list) = table.exports() {
                 for e in list {
@@ -153,7 +156,7 @@ impl Image {
     /// A Linux title: a statically linked x86-64 ELF that is not position-independent. Its loadable segments are the
     /// "sections"; the functions are found from its symbols and its unwind tables, then as in a PE (call targets,
     /// code addresses in data).
-    fn from_elf(data: &[u8]) -> Result<Image, String> {
+    fn from_elf(data: &[u8], machine: bool) -> Result<Image, String> {
         use object::elf;
         use object::read::elf::{ElfFile64, FileHeader, ProgramHeader};
         use object::{ObjectSymbol, SymbolKind};
@@ -172,10 +175,17 @@ impl Image {
             raw.push(off);
             if p.p_flags(en) & elf::PF_X != 0 { text.push((va, va + memsz)); }
         }
+        // an image in the upper half of the address space is a machine's own (a kernel), said so or not
+        let machine = machine || sections.iter().any(|s| s.0 >> 47 != 0);
+        if machine {
+            // a kernel's executable segment holds its read-only data too: its code is what its sections say is code
+            use object::{Object, ObjectSection, SectionFlags};
+            text = file.sections().filter(|s| matches!(s.flags(), SectionFlags::Elf { sh_flags } if sh_flags & u64::from(elf::SHF_EXECINSTR) != 0)).map(|s| (s.address(), s.address() + s.size())).collect();
+        }
         let base = sections.iter().map(|s| s.0).min().ok_or("no loadable segment")? & !0xFFF;
         let size = ((sections.iter().map(|s| s.0 + s.2).max().unwrap() + 0xFFF) & !0xFFF) - base;
         let mut img = Image { bits: 64, base, entry: h.e_entry(en), sections, text, pdata: BTreeMap::new(), unwind: BTreeMap::new(), imports: Vec::new(), relocs: Vec::new(), raw, orig_base: base,
-            dirs: Vec::new(), stack_reserve: 8 << 20, fixed: true, size, is_dll: false, exports: Vec::new(), ranges: vec![(base, base + size)], elf: true, seeds: Vec::new(), jumps: BTreeMap::new(), ps5: false, reloc_values: Vec::new() };
+            dirs: Vec::new(), stack_reserve: 8 << 20, fixed: true, size, is_dll: false, exports: Vec::new(), ranges: vec![(base, base + size)], elf: true, seeds: Vec::new(), jumps: BTreeMap::new(), ps5: false, machine, reloc_values: Vec::new() };
         // symbols: functions, and the labels of hand-written assembly (no type)
         for sym in file.symbols() {
             let a = sym.address();
@@ -1293,6 +1303,11 @@ impl Emit<'_> {
                 return s;
             }
         }
+        if !is32(i) {
+            if let Some(s) = self.foreign64(i) {
+                return s;
+            }
+        }
         if i.encoding() != iced_x86::EncodingKind::Legacy && i.encoding() != iced_x86::EncodingKind::D3NOW {
             if let Some(s) = avx::avx(i) {
                 return s;
@@ -1545,6 +1560,36 @@ impl Emit<'_> {
             M::Cmpss if i.op_count() == 3 => format!("X[{d}].d[0]=fpred({},X[{d}].ps[0],{})?~0u:0;", i.immediate(2), fsrc(1, "f32"), d = i.op0_register().number()),
             _ => self.not_lifted(i),
         }
+    }
+
+    /// 64-bit code: an instruction with an operand that is no general, vector or x87 register (the emitters below
+    /// number a register without looking at its kind: `mov cr3, rax` would write RBX). In a program, a segment
+    /// register reads as the selector the system keeps there and takes a write without effect (the bases are the
+    /// runtime's: c->fs_base, c->gs_base). Control, debug, MMX and mask registers, and every such operand in a
+    /// machine's image (rt/microvm-x64 will give them their meaning), are not lifted.
+    fn foreign64(&mut self, i: &Instruction) -> Option<String> {
+        use Mnemonic as M;
+        let odd = |r: Register| !(r.is_gpr() || r.is_xmm() || r.is_ymm() || r.is_st());
+        let regs: Vec<Register> = (0..i.op_count()).filter(|&n| i.op_kind(n) == OpKind::Register).map(|n| i.op_register(n)).filter(|r| odd(*r)).collect();
+        if regs.is_empty() {
+            return None;
+        }
+        if self.img.machine || !regs.iter().all(|r| r.is_segment_register()) {
+            return Some(self.not_lifted(i));
+        }
+        // the selectors of a 64-bit user program: Windows (FS 0x53, the others its data segment) or Linux
+        let pe = !self.img.elf && !self.img.ps5;
+        let sel = |r: Register| -> u32 {
+            match r { Register::CS => 0x33, Register::SS => 0x2B, Register::FS if pe => 0x53, _ if pe => 0x2B, _ => 0 }
+        };
+        let seg = |n: u32| i.op_kind(n) == OpKind::Register && i.op_register(n).is_segment_register();
+        Some(match i.mnemonic() {
+            M::Mov if seg(1) => wr(i, 0, &format!("0x{:x}u", sel(i.op_register(1)))),
+            M::Mov if seg(0) => format!("(void)({});", rd(i, 1)),
+            M::Push if seg(0) => format!("PUSH64(0x{:x}ull);", sel(i.op_register(0))),
+            M::Pop if seg(0) => "R[RSP]+=8;".into(),
+            _ => self.not_lifted(i),
+        })
     }
 
     /// An instruction the lifter has no code for: counted, and a stop if it is ever reached.
@@ -2185,7 +2230,7 @@ fn main() {
 fn lift() {
     let args: Vec<String> = std::env::args().collect();
     if args.len() < 3 {
-        eprintln!("usage: lifter <image.exe> <out.c> [--split N] [--base hex] [--entry hex]... [--builtin name.dll]... [--dll-dir <folder>=<guest folder>]... [--load <file>=<name>]... [--trace-pc]");
+        eprintln!("usage: lifter <image.exe> <out.c> [--split N] [--base hex] [--entry hex]... [--builtin name.dll]... [--dll-dir <folder>=<guest folder>]... [--load <file>=<name>]... [--trace-pc] [--machine]");
         std::process::exit(2);
     }
     let exe = std::path::Path::new(&args[1]);
@@ -2217,7 +2262,7 @@ fn lift() {
         if mods.iter().any(|(n, _)| n.rsplit('/').next().unwrap_or(n).eq_ignore_ascii_case(&base_name)) { continue; }
         if mods.iter().any(|(n, _)| n.eq_ignore_ascii_case(&name)) { continue; }
         let data = std::fs::read(&path).expect("read image");
-        let img = Image::load(&data).unwrap_or_else(|e| panic!("{name}: {e}"));
+        let img = Image::load(&data, args.iter().any(|a| a == "--machine")).unwrap_or_else(|e| panic!("{name}: {e}"));
         for (_, imp) in &img.imports {
             let dll = imp.split('!').next().unwrap();
             if builtin.iter().any(|b| b.eq_ignore_ascii_case(dll)) { continue; }
@@ -2234,6 +2279,10 @@ fn lift() {
         mods.push((name, img));
     }
     if eager == 0 { eager = mods.len(); }
+    // --machine, or an image in the upper half of the address space: the image is a machine's (a kernel,
+    // rt/microvm-x64), and its addresses are the machine's virtual ones
+    let machine = mods.iter().any(|(_, m)| m.machine);
+    if machine && (mods.len() != 1 || !mods[0].1.elf) { panic!("a machine's image is one ELF"); }
     let bits = mods[0].1.bits;
     if let Some((name, m)) = mods.iter().find(|(_, m)| m.bits != bits) {
         panic!("{name}: a {}-bit image in a {bits}-bit title (32- and 64-bit images cannot be lifted together)", m.bits);
@@ -2241,7 +2290,9 @@ fn lift() {
     // where each image goes in guest memory (see docs/memory.md): the exe at 0x10000000 (or --base), the DLLs after it
     let first = args.iter().position(|a| a == "--base").map(|i| u64::from_str_radix(args[i + 1].trim_start_matches("0x"), 16).expect("--base hex"));
     let after = |m: &Image| (m.base + m.size + 0x10_FFFF) & !0xF_FFFF; // a 1 MiB gap between images
-    if first.is_none() && mods.iter().any(|(_, m)| m.fixed) {
+    if machine {
+        // (nothing to place: no address of the image is an address of the module's memory)
+    } else if first.is_none() && mods.iter().any(|(_, m)| m.fixed) {
         // an image linked without relocations stays where it is; the others go after the highest of those
         let mut next = 0;
         for (k, (name, m)) in mods.iter().enumerate().filter(|(_, (_, m))| m.fixed) {
@@ -2453,14 +2504,16 @@ fn lift() {
         write(&format!("{stem}_{k}.c"), b);
     }
     // what a build needs to know about the title, for the shell: the guest's width and where its images are
-    write(&format!("{stem}.env"), &format!("GUEST_BITS={bits}\nIMAGE_LOW=0x{image_low:x}\nIMAGE_HIGH=0x{image_high:x}\nFIXED_BASE={}\nOS={}\n", u32::from(mods.iter().any(|(_, m)| m.fixed)), if img.elf { "linux" } else if img.ps5 { "ps5" } else { "windows" }));
+    write(&format!("{stem}.env"), &format!("GUEST_BITS={bits}\nIMAGE_LOW=0x{image_low:x}\nIMAGE_HIGH=0x{image_high:x}\nFIXED_BASE={}\nOS={}\n", u32::from(mods.iter().any(|(_, m)| m.fixed)), if img.machine { "microvm" } else if img.elf { "linux" } else if img.ps5 { "ps5" } else { "windows" }));
 
     if let Some(found) = &found32 {
         census32(&img, &mods, found, &funcs, &em, resolved.len());
         return;
     }
     let missing: u32 = em.unimpl.values().sum();
-    if img.elf {
+    if img.machine {
+        eprintln!("lifted {} functions ({} named by the symbols) in a machine's image, {} instructions", entries.len(), img.seeds.len(), total);
+    } else if img.elf {
         eprintln!("lifted {} functions ({} named by the symbols and the unwind tables) in a Linux program, {} instructions", entries.len(), img.seeds.len(), total);
     } else {
         eprintln!("lifted {} functions ({} from the exception tables) in {} images, {} instructions, {} imports ({} between the images)", entries.len(), img.pdata.len(), mods.len(), total, img.imports.len(), resolved.len());
