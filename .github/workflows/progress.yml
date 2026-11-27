@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
 permissions:
   contents: write
-concurrency: { group: progress, cancel-in-progress: true }
+concurrency: { group: gh-pages, cancel-in-progress: false }   # one writer of gh-pages at a time (changelog.yml too)
 jobs:
   map:
     runs-on: ubuntu-latest

@@ -48,7 +48,8 @@ A new runtime is a new folder and a new base; a new title of an existing runtime
 5. **Licences checked.** Our own code is GPL-2.0-or-later with SPDX headers; `reuse lint` passes; code from others
    keeps its licence and has a row in `THIRD_PARTY.md`.
 6. **One pull request per milestone, none straight to `main`;** the docs (this file, `status.md`, `journey.md`, the
-   title's page, the progress map) change in the same pull request as the code.
+   title's page, the progress map) change in the same pull request as the code, and so does its entry in the
+   changelog (`changelog/README.md`): a file there, a video only as a release.
 
 ## Now (2026-11-26)
 
@@ -70,3 +71,4 @@ A new runtime is a new folder and a new base; a new title of an existing runtime
 | D4 | Desire's pixels in Chrome against Wine's | done ([desire.md](desire.md#progress)) |
 | D5 | Desire playable by hand: the docs and how to play it are done; playing it by hand on a real GPU is still to do | under way |
 | B0 | experimental, optional: development on boat.dev sandboxes (a snapshot with everything built, the tests on several sandboxes at once); cowsay ported that way | done ([dev-machines.md](dev-machines.md)) |
+| B1 | the changelog on GitHub Pages drawn from `changelog/*.md` by a workflow on `main`, video releases published by it | done ([changelog/README.md](../changelog/README.md)) |
