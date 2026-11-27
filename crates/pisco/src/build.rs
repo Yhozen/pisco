@@ -129,6 +129,59 @@ fn unzip(src: &Path, root: Option<&str>, to: &Path) -> R<()> {
     if n == 0 { return Err(format!("{}: no files{}", src.display(), root.map(|r| format!(" under {r}/")).unwrap_or_default())); }
     Ok(())
 }
+/// extract = "wise": a Wise installer (or a zip around one: its one .exe), its files to the title's folder; with
+/// [source.installshield], the InstallShield setup among them is read instead and its file groups go where the
+/// recipe says
+fn unwise(r: &Recipe, src: &Path, tmp: &Path) -> R<()> {
+    let mut exe = io(std::fs::read(src), src)?;
+    if exe.starts_with(b"PK\x03\x04") {
+        let z = tmp.join("zip");
+        unzip(src, None, &z)?;
+        let (mut fs, mut ds) = (Vec::new(), Vec::new()); walk(&z, "", &mut fs, &mut ds)?;
+        let exes: Vec<_> = fs.iter().filter(|(n, _)| n.to_ascii_lowercase().ends_with(".exe")).collect();
+        if exes.len() != 1 { return Err(format!("{}: extract = \"wise\" wants a zip with one .exe in it ({} found)", src.display(), exes.len())); }
+        exe = io(std::fs::read(&exes[0].1), &exes[0].1)?;
+        io(std::fs::remove_dir_all(&z), &z)?;
+    }
+    let files = crate::installers::wise(&exe).map_err(|e| format!("{}: {e}", src.display()))?;
+    drop(exe);
+    let app = tmp.join("app");
+    let write = |rel: &str, data: &[u8]| -> R<()> {
+        let dst = app.join(rel);
+        if let Some(p) = dst.parent() { io(std::fs::create_dir_all(p), p)?; }
+        io(std::fs::write(&dst, data), &dst)
+    };
+    let Some(groups) = &r.source.installshield else {
+        for (rel, data) in &files { write(rel, data)?; }
+        return Ok(());
+    };
+    let find = |n: &str| files.iter().find(|(rel, _)| rel.eq_ignore_ascii_case(n)).map(|(_, d)| d);
+    let hdr = find("data1.hdr").ok_or(format!("{}: [source.installshield], but the installer has no data1.hdr", src.display()))?;
+    let vol = |n: u16| -> R<Vec<u8>> { find(&format!("data{n}.cab")).cloned().ok_or(format!("the installer has no data{n}.cab")) };
+    let loose = |n: &str, size: usize| -> R<Vec<u8>> {
+        // by name: the size the file table gives such a file is not always the size of the file the setup finds
+        let m: Vec<_> = files.iter().filter(|(rel, _)| rel.rsplit('/').next().unwrap().eq_ignore_ascii_case(n)).collect();
+        let exact: Vec<_> = m.iter().filter(|(_, d)| d.len() == size).collect();
+        match (m.as_slice(), exact.as_slice()) {
+            (_, [(_, d)]) | ([(_, d)], _) => Ok(d.clone()),
+            ([], _) => Err(format!("{n}: a file the setup copies from beside itself, and the installer has none of that name")),
+            _ => Err(format!("{n}: the installer has {} files of that name", m.len())),
+        }
+    };
+    let is = crate::installers::installshield(hdr, &vol, &loose, &|g| groups.get(g).map(|t| t != "-").unwrap_or(true)).map_err(|e| format!("{}: InstallShield: {e}", src.display()))?;
+    let mut unknown = std::collections::BTreeSet::new();
+    for f in &is {
+        let Some(to) = groups.get(&f.group) else { unknown.insert(f.group.clone()); continue };
+        if to == "-" { continue; }
+        let mut rel = to.replace('\\', "/");
+        for part in [f.dir.as_str(), f.name.as_str()] { if part.is_empty() { continue; } if !rel.is_empty() { rel.push('/'); } rel.push_str(part); }
+        let rel = rel.replace('\\', "/");
+        if rel.split('/').any(|p| p.is_empty() || p == ".." || p == "." || p.contains(':')) { return Err(format!("InstallShield: {}: a path that leaves the title's folder", f.name)); }
+        write(&rel, &f.data)?;
+    }
+    if !unknown.is_empty() { return Err(format!("{}: InstallShield file groups the recipe does not place: {} (say where each goes in [source.installshield] groups, \"-\" for none)", src.display(), unknown.into_iter().map(|g| format!("\"{g}\"")).collect::<Vec<_>>().join(", "))); }
+    Ok(())
+}
 /// [[source.add]]: each file from its folder (--with NAME=<folder>, or $NAME), found without regard to case;
 /// returns (where it goes on C:, its path here) and the material of the cache key (names and sha256s)
 fn added(r: &Recipe, with: &[(String, PathBuf)]) -> R<(Vec<(String, PathBuf)>, String)> {
@@ -176,7 +229,8 @@ fn extract(r: &Recipe, src: &Path, sha: &str, cache: &Path, with: &[(String, Pat
                 for (rel, p) in fs { io(std::fs::copy(&p, tmp.join("app").join(&rel)), &p)?; }
             }
             "zip" => unzip(src, r.source.root.as_deref(), &tmp.join("app"))?,
-            x => return Err(format!("[source] extract = \"{x}\": known are \"innosetup\", \"file\", \"folder\" and \"zip\"")),
+            "wise" => unwise(r, src, &tmp)?,
+            x => return Err(format!("[source] extract = \"{x}\": known are \"innosetup\", \"file\", \"folder\", \"zip\" and \"wise\"")),
         }
         for (guest, host) in &adds {
             let rel = if guest.eq_ignore_ascii_case(&app_guest) { "" } else { match guest.get(..app_guest.len() + 1) { Some(p) if p.eq_ignore_ascii_case(&format!("{app_guest}/")) => &guest[app_guest.len() + 1..], _ => return Err(format!("[[source.add]] {guest}: files are added in the title's folder ({app_guest}) or under it")) } };

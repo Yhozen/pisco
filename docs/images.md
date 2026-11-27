@@ -114,10 +114,17 @@ file = "narbacular_drop_setup.exe"        # looked for beside the recipe unless 
 sha256 = "0966948f..."                    # checked before anything else; without it the build says so and goes on
 extract = "innosetup"                     # innoextract (tools/setup-toolchain.sh innoextract); or "file": the source is the exe;
                                           # or "folder": the source is a folder (a title the user built), copied to {app};
-                                          # or "zip": the archive's files (stored or deflated) to {app} (recipes/desire)
+                                          # or "zip": the archive's files (stored or deflated) to {app} (recipes/desire);
+                                          # or "wise": a Wise installer (or a zip around one), read without running it:
+                                          # its files under %MAINDIR% to {app} (crates/pisco/src/installers.rs)
 # root = "Game-v1"                        # zip: only the files under this folder of the archive, without it
 # app = 'C:\Program Files\Narbacular Drop'  where {app} goes (default: the exe's folder)
 # map = { commonappdata = 'C:\Documents and Settings\All Users\Application Data' }  the installer's other folders
+
+[source.installshield.groups]             # "wise" only: the installer carries an InstallShield 5 / 6 setup
+"Program Executable Files" = ''           # (data1.hdr, data<N>.cab), which is read instead: each file group goes
+"Data Files Minimal" = 'main'             # to this folder under {app} ('-': not installed). Every group must be
+"<Support>English Files" = '-'            # named (recipes/mohaa); the setup's own script, which says it, is not read
 
 [[source.cab]]                            # files the installer carries in a cabinet (cabextract on the builder's
 cab = 'C:\Program Files\Tag\DirectX\AUG2007_d3dx9_35_x86.cab'   # machine: tools/setup-toolchain.sh cabextract,
