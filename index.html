@@ -14,8 +14,9 @@ Progress map: <a href="progress.html">what each runtime implements against what 
 Videos: <a href="https://github.com/Yhozen/pisco/releases">releases</a></p>
 
 <h2>Changelog</h2>
+<!-- changelog:start -->
 
-<h3>cowsay, on perl <span class="d">2026-11-27</span><span class="tag">in review: PR #37</span></h3>
+<h3>cowsay, on perl <span class="d">2026-11-27</span><span class="tag">PR #37</span></h3>
 <p>cowsay 3.8.4 on perl 5.44, built from source as a static Linux program: six runs (cowsay and cowthink, several
 cows) print what native perl prints, in Node and in Chrome. The port found two recompiler gaps that a newer compiler
 (gcc 13) exposes: a <code>switch</code> table whose bound is far from its jump, and <code>notrack</code> jumps through
@@ -23,22 +24,15 @@ tables. Without the fix, perl's parser was lifted as a recursion that overflowed
 included, as an experimental option: <code>tools/boat.sh</code> runs the test steps on several boat.dev sandboxes at
 once.</p>
 
-<h3>Desire: the first third-party Direct3D 12 game <span class="d">2026-11-27</span><span class="tag">in review: PRs #28–#34</span></h3>
+<h3>Desire: the first third-party Direct3D 12 game <span class="d">2026-11-27</span><span class="tag">PRs #28–#34</span></h3>
 <p>Desire (DESI:Re v0.1), a free maze escape on its author's own Direct3D 12 engine, on the Windows x64 runtime.
 Played by hand in Chrome on an M1 MacBook Pro: the logo, the maze, the enemy, the CRT effect, GAME OVER.</p>
 <ul>
-<li><b>Checked against Wine:</b> the calls up to the main loop are Wine's (77 steps); given the seeds a Wine run's
-<code>std::random_device</code> drew, the maze the game writes is Wine's byte for byte (3 of 3 runs); the window title at
-each checkpoint and the set of Direct3D 12 methods called (51) are Wine's. In headless Chrome the still screens are
-within 0.3 of 255 of Wine's screenshots.</li>
-<li><b><code>pisco build</code></b> reads a zip, adds your own files beside the exe (here Microsoft's C++ runtime DLLs), and
-compiles the title's HLSL into the image.</li>
-<li><b>The recompiler</b> reads MSVC's current FH4 exception tables (a missing texture is thrown, caught and shown as under
-Wine) and its two-level <code>switch</code> tables (78 recovered in Desire's images instead of 43).</li>
-<li><b>The Windows x64 runtime</b> gets a real window and message queue, the keyboard and the virtual clock (shared with the
-x86 runtime), WIC's PNG decoding (stb_image), and the D3D12 Memory Allocator's calls.</li>
-<li><b>The WebGPU back end</b> merges each buffer's uploads and reuses bind groups: a profile of the first hand play showed
-48 MB uploaded a frame; Desire went from 18–21 to about 38 frames a second.</li>
+<li><b>Checked against Wine:</b> the calls up to the main loop are Wine's (77 steps); given the seeds a Wine run's <code>std::random_device</code> drew, the maze the game writes is Wine's byte for byte (3 of 3 runs); the window title at each checkpoint and the set of Direct3D 12 methods called (51) are Wine's. In headless Chrome the still screens are within 0.3 of 255 of Wine's screenshots.</li>
+<li><b><code>pisco build</code></b> reads a zip, adds your own files beside the exe (here Microsoft's C++ runtime DLLs), and compiles the title's HLSL into the image.</li>
+<li><b>The recompiler</b> reads MSVC's current FH4 exception tables (a missing texture is thrown, caught and shown as under Wine) and its two-level <code>switch</code> tables (78 recovered in Desire's images instead of 43).</li>
+<li><b>The Windows x64 runtime</b> gets a real window and message queue, the keyboard and the virtual clock (shared with the x86 runtime), WIC's PNG decoding (stb_image), and the D3D12 Memory Allocator's calls.</li>
+<li><b>The WebGPU back end</b> merges each buffer's uploads and reuses bind groups: a profile of the first hand play showed 48 MB uploaded a frame; Desire went from 18–21 to about 38 frames a second.</li>
 </ul>
 
 <h3>neofetch: Linux processes <span class="d">2026-11-26</span><span class="tag">PR #35</span></h3>
@@ -54,11 +48,8 @@ machine it finds, a Linux x86-64 system imitated in WebAssembly, with its logo a
 
 <h3>Tag in the browser, faster <span class="d">2026-11-26</span><span class="tag">PRs #26, #27</span></h3>
 <ul>
-<li>Tag: The Power of Paint was played by hand through level 3. A Chrome profile showed its thread waiting on 21,000
-file checks to the server and its whole 384 KiB vertex buffer re-sent a dozen times a frame; file checks are now
-answered once and only the changed bytes are sent (50 GB to 1.1 GB over a session).</li>
-<li>Windows x64 titles get a window again; the docs say where every runtime stands, and what to do if the browser
-ever becomes the limit.</li>
+<li>Tag: The Power of Paint was played by hand through level 3. A Chrome profile showed its thread waiting on 21,000 file checks to the server and its whole 384 KiB vertex buffer re-sent a dozen times a frame; file checks are now answered once and only the changed bytes are sent (50 GB to 1.1 GB over a session).</li>
+<li>Windows x64 titles get a window again; the docs say where every runtime stands, and what to do if the browser ever becomes the limit.</li>
 </ul>
 
 <h3>Tag: The Power of Paint, a Direct3D 9 shader game <span class="d">2026-11-25</span><span class="tag">PRs #18–#24</span></h3>
@@ -69,8 +60,7 @@ are Wine's, and in headless Chrome its first level is within 1.4 of 255 of Wine'
 <h3>PISCO: runtimes as peers <span class="d">2026-11-25</span><span class="tag">PRs #11–#17</span></h3>
 <ul>
 <li>The project is renamed PISCO, with its logo.</li>
-<li>A folder and a base per runtime (Xbox Series, Windows x64, Windows x86), one list of each runtime's files, recipes
-for every base; the 32-bit side of the shared runtime made right.</li>
+<li>A folder and a base per runtime (Xbox Series, Windows x64, Windows x86), one list of each runtime's files, recipes for every base; the 32-bit side of the shared runtime made right.</li>
 <li>CI for the tests that need no game files, and <code>reuse lint</code>.</li>
 </ul>
 
@@ -96,6 +86,8 @@ WebAssembly, D3D12.X translated to WebGPU, XAudio2 mixed into an AudioWorklet, s
 Recorded in headless Chrome with WebGPU on SwiftShader (no GPU); every frame was read back from WebGPU. Shows: title
 and attract demo, a new game from scripted keys, the automap, a save, a page reload (a new title process), the save
 loaded back.</p>
+
+<!-- changelog:end -->
 
 <p><small>Game data: <a href="https://freedoom.github.io/">Freedoom</a> (BSD-3-Clause, © the Freedoom contributors).
 Engine: <a href="https://github.com/ozkl/doomgeneric">doomgeneric</a> (GPL-2.0; Chocolate Doom, id Software's Doom).
