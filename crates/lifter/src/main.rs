@@ -40,6 +40,12 @@ struct Image {
     elf: bool,
     /// an ELF: the function starts its symbols and its unwind tables (.eh_frame) name
     seeds: Vec<u64>,
+    /// a machine's image: the symbols its runtime and the lifter look for (common_startup_64, early_top_pgt,
+    /// __switch_to_asm), as (address, size)
+    named: BTreeMap<String, (u64, u64)>,
+    /// a machine's image: immediates the kernel patches at boot (Linux's runtime constants: the sections
+    /// runtime_ptr_* and runtime_shift_*), by the address of the immediate; they are read from memory
+    patched: BTreeSet<u64>,
     /// an ELF: the C library's setjmp (1), sigsetjmp (2) and longjmp (3), by their symbols
     jumps: BTreeMap<u64, u8>,
     /// a PS5 title (ps5.rs): imports from the system's libraries by NID, relocations whose values the image keeps
@@ -110,7 +116,7 @@ impl Image {
         let size = u64::from(object::read::pe::ImageOptionalHeader::size_of_image(opt));
         let characteristics = pe.nt_headers().file_header().characteristics.get(LE);
         let mut img = Image { bits, base, entry, sections, text, pdata: BTreeMap::new(), unwind: BTreeMap::new(), imports: Vec::new(), relocs, raw, orig_base: base, dirs, stack_reserve,
-            fixed: characteristics & 1 != 0, size, is_dll: characteristics & 0x2000 != 0, exports: Vec::new(), ranges: vec![(base, base + size)], elf: false, seeds: Vec::new(), jumps: BTreeMap::new(), ps5: false, machine: false, reloc_values: Vec::new() };
+            fixed: characteristics & 1 != 0, size, is_dll: characteristics & 0x2000 != 0, exports: Vec::new(), ranges: vec![(base, base + size)], elf: false, seeds: Vec::new(), jumps: BTreeMap::new(), ps5: false, machine: false, named: BTreeMap::new(), patched: BTreeSet::new(), reloc_values: Vec::new() };
         if let Some(Some(table)) = pe.export_table().ok() {
             if let Ok(list) = table.exports() {
                 for e in list {
@@ -185,10 +191,14 @@ impl Image {
         let base = sections.iter().map(|s| s.0).min().ok_or("no loadable segment")? & !0xFFF;
         let size = ((sections.iter().map(|s| s.0 + s.2).max().unwrap() + 0xFFF) & !0xFFF) - base;
         let mut img = Image { bits: 64, base, entry: h.e_entry(en), sections, text, pdata: BTreeMap::new(), unwind: BTreeMap::new(), imports: Vec::new(), relocs: Vec::new(), raw, orig_base: base,
-            dirs: Vec::new(), stack_reserve: 8 << 20, fixed: true, size, is_dll: false, exports: Vec::new(), ranges: vec![(base, base + size)], elf: true, seeds: Vec::new(), jumps: BTreeMap::new(), ps5: false, machine, reloc_values: Vec::new() };
+            dirs: Vec::new(), stack_reserve: 8 << 20, fixed: true, size, is_dll: false, exports: Vec::new(), ranges: vec![(base, base + size)], elf: true, seeds: Vec::new(), jumps: BTreeMap::new(), ps5: false, machine, named: BTreeMap::new(), patched: BTreeSet::new(), reloc_values: Vec::new() };
         // symbols: functions, and the labels of hand-written assembly (no type)
         for sym in file.symbols() {
             let a = sym.address();
+            if machine && (matches!(sym.name().unwrap_or(""), "common_startup_64" | "early_top_pgt" | "__switch_to_asm" | "do_task_dead" | "early_idt_handler_array" | "irq_entries_start" | "spurious_entries_start")
+                || sym.name().unwrap_or("").starts_with("__SCT__")) {
+                img.named.insert(sym.name().unwrap_or("").to_string(), (a, sym.size()));
+            }
             if !img.is_code(a) || !matches!(sym.kind(), SymbolKind::Text | SymbolKind::Unknown | SymbolKind::Label) { continue; }
             img.seeds.push(a);
             match sym.name().unwrap_or("") {
@@ -240,6 +250,36 @@ impl Image {
                 }
                 at += 4 + len;
             }
+        }
+        if machine {
+            // Linux's runtime constants: each entry the address of an immediate, relative to the entry
+            use object::{Object, ObjectSection};
+            for sec in file.sections().filter(|s| s.name().is_ok_and(|n| n.starts_with("runtime_ptr_") || n.starts_with("runtime_shift_"))) {
+                let (va, d) = (sec.address(), sec.data().map_err(|e| e.to_string())?);
+                for (k, e) in d.chunks_exact(4).enumerate() {
+                    img.patched.insert((va + 4 * k as u64).wrapping_add(i32::from_le_bytes(e.try_into().unwrap()) as i64 as u64));
+                }
+            }
+            // a kernel's exception table (Linux's __ex_table: {insn, fixup, data}, each relative to its own field): the
+            // fix-up addresses are entered by address when a fault is fixed up, so each is a function's start
+            if let Some(sec) = file.section_by_name("__ex_table") {
+                let (va, d) = (sec.address(), sec.data().map_err(|e| e.to_string())?);
+                for (k, e) in d.chunks_exact(12).enumerate() {
+                    let fixup = (va + 12 * k as u64 + 4).wrapping_add(i32::from_le_bytes(e[4..8].try_into().unwrap()) as i64 as u64);
+                    if img.is_code(fixup) { img.seeds.push(fixup); }
+                }
+            }
+        }
+        img.seeds.sort();
+        img.seeds.dedup();
+        // a label of hand-written assembly has no size: it reaches to the next function
+        let seeds = img.seeds.clone();
+        for (a, n) in img.named.values_mut() {
+            if *n == 0 { *n = seeds.iter().find(|&&s| s > *a).map(|s| s - *a).unwrap_or(4096); }
+        }
+        // Linux's arrays of interrupt entry stubs: the IDT points at each stub, which no symbol names
+        for (name, stride) in [("early_idt_handler_array", 9u64), ("irq_entries_start", 8), ("spurious_entries_start", 8)] {
+            if let Some(&(a, n)) = img.named.get(name) { for k in 0..n / stride { img.seeds.push(a + k * stride); } }
         }
         img.seeds.sort();
         img.seeds.dedup();
@@ -880,6 +920,12 @@ fn jump_tables32(img: &Image, f: &Func, pending: &[u64]) -> Vec<(u64, Vec<u64>, 
     }
     out
 }
+/// A machine's task switch: `mov rsp, [mem]` in __switch_to_asm. Each task has a host stack of its own
+/// (rt/microvm-x64/run.c): the runtime switches them there.
+fn is_switch(img: &Image, i: &Instruction) -> bool {
+    img.machine && i.mnemonic() == Mnemonic::Mov && i.op_count() == 2 && i.op_kind(0) == OpKind::Register && i.op0_register() == Register::RSP && i.op_kind(1) == OpKind::Memory
+        && img.named.get("__switch_to_asm").is_some_and(|&(a, n)| i.ip() >= a && i.ip() < a + n.max(1))
+}
 /// `jmp dword ptr [I*4+table]`: the form of a `switch` in 32-bit code.
 fn is_table_jump(i: &Instruction) -> bool {
     i.op0_kind() == OpKind::Memory && i.memory_base() == Register::None && i.memory_index() != Register::None && i.memory_index_scale() == 4 && i.segment_prefix() == Register::None
@@ -1013,7 +1059,23 @@ fn decode_func(img: &Image, entry: u64, entries: &BTreeSet<u64>) -> (Func, BTree
                         }
                         break;
                     }
+                    // (one before another function's start, as a BUG()'s ud2 or the int3s between functions, ends this one)
+                    FlowControl::Interrupt | FlowControl::Exception if img.machine && matches!(ins.mnemonic(), Mnemonic::Int3 | Mnemonic::Int | Mnemonic::Ud2 | Mnemonic::Into) => {
+                        // (and int3 followed by int3 is padding: the fill between functions and up to an alignment)
+                        if entries.contains(&next) || !img.is_code(next) || ins.mnemonic() == Mnemonic::Int3 && img.u8(next) == Some(0xCC) { break; }
+                        // a handler may also come back there by a return, or past the 5-byte call or jump an int3 stands
+                        // for (Linux emulates one at an int3 while it patches code, and so does its boot's self-test)
+                        f.leaders.insert(next); f.rets.insert(next);
+                        if ins.mnemonic() == Mnemonic::Int3 { f.leaders.insert(ip + 5); f.rets.insert(ip + 5); }
+                    }
                     _ => break, // ret, int3, ud2, ...
+                }
+                // a machine's task switch (__switch_to_asm's load of the next task's stack): a new task starts after it
+                if is_switch(img, &ins) { f.leaders.insert(next); f.rets.insert(next); }
+                // a machine's jump back: an interrupt is taken on it (rt/cpu.h POLL), and the code goes on at its target,
+                // where the kernel may also send it back later (after a signal's handler): a return address
+                if img.machine && matches!(ins.flow_control(), FlowControl::UnconditionalBranch | FlowControl::ConditionalBranch) && ins.op0_kind() == OpKind::NearBranch64 && ins.near_branch_target() <= ip {
+                    f.rets.insert(ins.near_branch_target());
                 }
                 if m32 && outside(next) {
                     break; // runs into another function: emitted as a call to it
@@ -1303,6 +1365,11 @@ impl Emit<'_> {
                 return s;
             }
         }
+        if self.img.machine {
+            if let Some(s) = self.machine_insn(i) {
+                return s;
+            }
+        }
         if !is32(i) {
             if let Some(s) = self.foreign64(i) {
                 return s;
@@ -1336,7 +1403,7 @@ impl Emit<'_> {
                 format!("M{}({})", if t == "f64" { "F64" } else { "F32" }, ea(i))
             }
         };
-        if let Some(s) = extra(i, self.img.elf) {
+        if let Some(s) = extra(i, self.img.elf, self.img.machine) {
             return s;
         }
         let simple_v: Option<(&str, &str)> = match m {
@@ -1477,6 +1544,15 @@ impl Emit<'_> {
             M::Xchg => format!("{{u{bits} t={};{}{}}}", rd(i, 0), wr(i, 0, &rd(i, 1)), wr(i, 1, "t")),
             M::Push => format!("{{u64 t={};PUSH64(t);}}", if is_imm(i.op_kind(0)) { format!("0x{:x}ull", i.immediate(0)) } else { rd(i, 0) }),
             M::Pop => format!("{{u64 t=POP64();{}}}", wr(i, 0, "t")),
+            M::Call if self.img.machine => {
+                // a machine's image: a callee that comes back on another stack, from another return address than this
+                // call's, is a task switch the runtime did not see (one that moved the stack on purpose, as Linux's
+                // error_entry, returned through this call's own address)
+                let call = if i.op_kind(0) == OpKind::NearBranch64 && entries.contains(&i.near_branch_target()) { format!("f_{:x}(c);", i.near_branch_target()) }
+                    else if i.op_kind(0) == OpKind::NearBranch64 { format!("rt_call(c,0x{:x}ull);", i.near_branch_target()) } else { "rt_call(c,t);".into() };
+                let target = if i.op_kind(0) == OpKind::NearBranch64 { String::new() } else { format!("u64 t={};", rd(i, 0)) };
+                format!("{{{target}u64 sp_=R[RSP];PUSH64(0x{:x}ull);{call}if(__builtin_expect(R[RSP]!=sp_,0))rt_check_return(c,0x{:x}ull,0x{:x}ull,sp_);}}", i.next_ip(), i.ip(), i.next_ip())
+            }
             M::Call if i.op_kind(0) == OpKind::NearBranch64 && entries.contains(&i.near_branch_target()) => format!("PUSH64(0x{:x}ull);f_{:x}(c);", i.next_ip(), i.near_branch_target()),
             M::Call if i.op_kind(0) == OpKind::NearBranch64 => format!("PUSH64(0x{:x}ull);rt_call(c,0x{:x}ull);", i.next_ip(), i.near_branch_target()),
             M::Call => format!("{{u64 t={};PUSH64(0x{:x}ull);rt_call(c,t);}}", rd(i, 0), i.next_ip()),
@@ -1589,6 +1665,77 @@ impl Emit<'_> {
             M::Push if seg(0) => format!("PUSH64(0x{:x}ull);", sel(i.op_register(0))),
             M::Pop if seg(0) => "R[RSP]+=8;".into(),
             _ => self.not_lifted(i),
+        })
+    }
+
+    /// A machine's image (rt/microvm-x64): the instructions of the system, each a call of the runtime's machine.
+    /// None: not one of them (the emitters shared with programs lift it).
+    fn machine_insn(&mut self, i: &Instruction) -> Option<String> {
+        use Mnemonic as M;
+        let (ip, next) = (i.ip(), i.next_ip());
+        let reg = |n: u32| i.op_kind(n) == OpKind::Register;
+        let ctl = |r: Register| r.is_cr() || r.is_dr();
+        let seg_index = |r: Register| match r { Register::ES => 0, Register::CS => 1, Register::SS => 2, Register::DS => 3, Register::FS => 4, _ => 5 };
+        let port = || if reg(0) && i.op0_register() == Register::DX || i.op_count() > 1 && reg(1) && i.op_register(1) == Register::DX && i.mnemonic() == M::In { "(u16)R[RDX]".to_string() }
+            else { format!("0x{:x}", if i.mnemonic() == M::In { i.immediate(1) } else { i.immediate(0) }) };
+        // an immediate the kernel patches at boot (a runtime constant): the value it holds now
+        if i.mnemonic() == M::Mov && i.op_count() == 2 && i.op_kind(1) == OpKind::Immediate64 && self.img.patched.contains(&(next - 8)) {
+            return Some(wr(i, 0, &format!("M64(0x{:x}ull)", next - 8)));
+        }
+        if matches!(i.mnemonic(), M::Shr | M::Shl | M::Sar) && i.op_count() == 2 && i.op_kind(1) == OpKind::Immediate8 && self.img.patched.contains(&(next - 1)) {
+            let bits = opsize(i, 0) * 8;
+            return Some(wr(i, 0, &format!("{}{bits}(&f,{},(u8)M8(0x{:x}ull))", format!("{:?}", i.mnemonic()).to_lowercase(), rd(i, 0), next - 1)));
+        }
+        // far jumps and calls (to real mode, to another segment): not the machine's
+        if i.is_jmp_far() || i.is_jmp_far_indirect() || i.is_call_far() || i.is_call_far_indirect() { return Some(self.not_lifted(i)); }
+        Some(match i.mnemonic() {
+            M::Cli => "mc_rflags&=~0x200ull;".into(),
+            M::Sti => "rt_sti(c);".into(),
+            M::Hlt => format!("rt_hlt(c,0x{next:x}ull);"),
+            M::Pushfq => "PUSH64(flags_get64(&f));".into(),
+            M::Popfq => "flags_set64(c,&f,POP64());".into(),
+            M::Iretq => "rt_iret(c);return;".into(),
+            M::Sysretq => "rt_sysret(c);return;".into(),
+            M::Swapgs => "rt_swapgs(c);".into(),
+            M::Wrmsr => "rt_wrmsr(c,ip_);".into(),
+            M::Rdmsr => "rt_rdmsr(c,ip_);".into(),
+            M::Syscall => format!("rt_syscall_m(c,0x{next:x}ull,&f);"),
+            M::Int3 => format!("rt_exc(c,3,0,0x{next:x}ull,0x{next:x}ull);"),
+            M::Int => format!("rt_exc(c,0x{:x},0,0x{next:x}ull,0x{next:x}ull);", i.immediate(0) & 0xFF),
+            M::Ud2 => format!("rt_exc(c,6,0,0x{ip:x}ull,0x{next:x}ull);"),
+            M::Invlpg => format!("rt_invlpg(c,{});", ea(i)),
+            M::Lgdt | M::Lidt | M::Sgdt | M::Sidt => format!("rt_{}(c,{});", format!("{:?}", i.mnemonic()).to_lowercase(), ea(i)),
+            M::Ltr => format!("rt_ltr(c,(u16){});", rd(i, 0)),
+            M::Str => wr(i, 0, "rt_str(c)"),
+            M::Lldt => String::new(),
+            M::Sldt => wr(i, 0, "0"),
+            M::In => wr(i, 0, &format!("rt_in(c,{},{})", port(), i.op_register(0).size())),
+            M::Out => format!("rt_out(c,{},{},{});", port(), i.op_register(1).size(), rreg(i.op_register(1))),
+            M::Wbinvd | M::Invd | M::Clflush | M::Clflushopt | M::Clwb | M::Clts | M::Verw | M::Monitor | M::Mwait | M::Monitorx | M::Mwaitx | M::Serialize | M::Xsetbv | M::Lfence | M::Mfence | M::Sfence => {
+                if matches!(i.mnemonic(), M::Lfence | M::Mfence | M::Sfence) { return None; }
+                String::new()
+            }
+            M::Rdpmc => "R[RAX]=0;R[RDX]=0;".into(),
+            M::Fxsave64 | M::Fxsave => format!("fxsave(c,{});", ea(i)),
+            // one CPU: compared and exchanged in two halves (no other CPU can see between them)
+            M::Cmpxchg16b => format!("{{u64 a_={};u64 lo=M64(a_),hi=M64(a_+8);f.zf=lo==R[RAX]&&hi==R[RDX];if(f.zf){{MW64(a_,R[RBX]);MW64(a_+8,R[RCX]);}}else{{R[RAX]=lo;R[RDX]=hi;}}}}", ea(i)),
+            M::Fxrstor64 | M::Fxrstor => format!("fxrstor(c,{});", ea(i)),
+            M::Rdfsbase => wr(i, 0, "c->fs_base"),
+            M::Rdgsbase => wr(i, 0, "c->gs_base"),
+            M::Wrfsbase => format!("c->fs_base={};", rd(i, 0)),
+            M::Wrgsbase => format!("c->gs_base={};", rd(i, 0)),
+            M::Mov if is_switch(self.img, i) => format!("{{u64 v_={};rt_switch(c,v_,0x{next:x}ull);}}", rd(i, 1)),
+            M::Mov if reg(0) && ctl(i.op0_register()) => {
+                let r = i.op0_register();
+                if r.is_cr() { format!("rt_wcr(c,{},{});", r.number(), rd(i, 1)) } else { String::new() }
+            }
+            M::Mov if reg(1) && ctl(i.op_register(1)) => {
+                let r = i.op_register(1);
+                wr(i, 0, &if r.is_cr() { format!("rt_rcr(c,{})", r.number()) } else { "0".into() })
+            }
+            M::Mov if reg(0) && i.op0_register().is_segment_register() => format!("rt_wseg(c,{},(u16){});", seg_index(i.op0_register()), rd(i, 1)),
+            M::Mov if reg(1) && i.op_register(1).is_segment_register() => wr(i, 0, &format!("rt_rseg(c,{})", seg_index(i.op_register(1)))),
+            _ => return None,
         })
     }
 
@@ -1840,6 +1987,14 @@ impl Emit<'_> {
             write!(w, "goto L_{entry:x};\n").unwrap();
             w
         };
+        if self.img.machine {
+            // the locals the memory macros of a machine's image use (rt/cpu.h): the address of the instruction that
+            // runs, and the TLB of the code's privilege: the kernel's above the canonical hole, the user's below it
+            let first = s.find("Flags f={0};(void)f;").expect("a function's flags");
+            s.insert_str(first + "Flags f={0};(void)f;".len(), &format!("u64 ip_=0x{entry:x}ull;(void)ip_;TlbEntry*const tlb_={};(void)tlb_;", if entry >> 47 != 0 { "mmu_k" } else { "mmu_u" }));
+            // a task that ends (Linux's do_task_dead): its host stack and C stack can go once it has switched away
+            if self.img.named.get("do_task_dead").is_some_and(|v| v.0 == entry) { s = s.replacen(&format!("goto L_{entry:x};\n"), &format!("rt_task_dying(c);goto L_{entry:x};\n"), 1); }
+        }
         let mut prev_next = 0;
         for (&ip, i) in &f.insns {
             // a gap in the decoded code: the block before it must not run into this one
@@ -1850,7 +2005,18 @@ impl Emit<'_> {
                 writeln!(s, "L_{ip:x}:;").unwrap();
                 if self.trace_pc { writeln!(s, "rt_pc(c,0x{ip:x}u);").unwrap(); }
             }
-            let body = self.insn(i, f, entries, entry);
+            let mut body = self.insn(i, f, entries, entry);
+            if self.img.machine && !body.is_empty() {
+                // the instruction's address, for the fault it may raise; its stores as calls (MW64...); an
+                // interrupt is taken at the function's start and at each jump back (rt_poll)
+                // (on a jump back, the interrupt is taken on the edge itself: at its target, which is a label)
+                let back = matches!(i.flow_control(), FlowControl::UnconditionalBranch | FlowControl::ConditionalBranch) && is_near(i) && i.near_branch_target() <= ip;
+                if back {
+                    let t = i.near_branch_target();
+                    body = body.replace(&format!("goto L_{t:x};"), &format!("{{POLL(0x{t:x}ull);goto L_{t:x};}}"));
+                }
+                body = format!("ip_=0x{ip:x}ull;{}{}", if ip == entry { format!("POLL(0x{ip:x}ull);") } else { String::new() }, machine_stores(&body));
+            }
             if !body.is_empty() {
                 writeln!(s, "{body}").unwrap();
             }
@@ -1871,6 +2037,36 @@ impl Emit<'_> {
         s.push_str("}\n");
         s
     }
+}
+
+/// A machine's image: each store of an instruction's C (`M64(a)=(v);`, reads and writes being one macro in a
+/// program) as a call (`MW64(a,(v));`), so that the MMU knows a write and a device's register sees it.
+fn machine_stores(s: &str) -> String {
+    const NAMES: [&str; 7] = ["MF32", "MF64", "M8", "M16", "M32", "M64", "MV"];
+    let b = s.as_bytes();
+    let close = |from: usize| -> usize { // the index of the ')' closing the '(' before `from`
+        let mut depth = 1; let mut k = from;
+        while k < b.len() { match b[k] { b'(' => depth += 1, b')' => { depth -= 1; if depth == 0 { return k; } } _ => {} } k += 1; }
+        panic!("unbalanced parentheses in {s}");
+    };
+    let mut out = String::new(); let mut k = 0;
+    while k < b.len() {
+        let at = NAMES.iter().find(|n| s[k..].starts_with(&format!("{n}(")) && (k == 0 || !(b[k - 1].is_ascii_alphanumeric() || b[k - 1] == b'_')));
+        let Some(name) = at else { out.push(b[k] as char); k += 1; continue };
+        let open = k + name.len() + 1; let end = close(open);
+        let inner = machine_stores(&s[open..end]);
+        if b.get(end + 1) == Some(&b'=') && b.get(end + 2) != Some(&b'=') {
+            // the value: up to the `;` (or the end of the enclosing group) at this depth
+            let mut depth = 0i32; let mut e = end + 2;
+            while e < b.len() { match b[e] { b'(' | b'{' | b'[' => depth += 1, b')' | b'}' | b']' => { if depth == 0 { break; } depth -= 1; } b';' if depth == 0 => break, _ => {} } e += 1; }
+            out.push_str(&format!("MW{}({inner},({}))", &name[1..], machine_stores(&s[end + 2..e])));
+            k = e;
+        } else {
+            out.push_str(&format!("{name}({inner})"));
+            k = end + 1;
+        }
+    }
+    out
 }
 
 /// One byte of state per byte of the executable sections: 0 nothing known, 1 the first byte of an instruction,
@@ -2230,7 +2426,7 @@ fn main() {
 fn lift() {
     let args: Vec<String> = std::env::args().collect();
     if args.len() < 3 {
-        eprintln!("usage: lifter <image.exe> <out.c> [--split N] [--base hex] [--entry hex]... [--builtin name.dll]... [--dll-dir <folder>=<guest folder>]... [--load <file>=<name>]... [--trace-pc] [--machine]");
+        eprintln!("usage: lifter <image.exe> <out.c> [--split N] [--base hex] [--entry hex]... [--builtin name.dll]... [--dll-dir <folder>=<guest folder>]... [--load <file>=<name>]... [--trace-pc] [--machine] [--program <elf>]... [--user <name>]");
         std::process::exit(2);
     }
     let exe = std::path::Path::new(&args[1]);
@@ -2255,6 +2451,12 @@ fn lift() {
     let mut mods: Vec<(String, Image)> = Vec::new();
     let mut eager = 0usize;   // the modules the exe's imports reach: mods[..eager]
     let mut queue = vec![(exe.file_name().unwrap().to_string_lossy().into_owned(), exe.to_path_buf())];
+    // --program <elf>: a machine's image (a kernel) with the programs it will run (static ELFs at their own addresses,
+    // as its initramfs has them): lifted into the same module, and found by address when the kernel runs them
+    for p in args.iter().enumerate().filter(|(_, a)| *a == "--program").filter_map(|(i, _)| args.get(i + 1)) {
+        let path = std::path::PathBuf::from(p);
+        queue.insert(0, (path.file_name().unwrap().to_string_lossy().into_owned(), path));
+    }
     let mut pending_loads = loads.clone(); pending_loads.reverse();
     loop {
         let Some((name, path)) = queue.pop().or_else(|| { if eager == 0 { eager = mods.len(); } pending_loads.pop() }) else { break };
@@ -2281,8 +2483,21 @@ fn lift() {
     if eager == 0 { eager = mods.len(); }
     // --machine, or an image in the upper half of the address space: the image is a machine's (a kernel,
     // rt/microvm-x64), and its addresses are the machine's virtual ones
+    // --user <name>: a program a machine's kernel runs, lifted on its own (its names prefixed with <name>), so that
+    // programs at the same addresses can be in one module; the machine finds which one runs by its bytes
+    let user = args.iter().position(|a| a == "--user").map(|i| args.get(i + 1).expect("--user <name>").clone());
+    if user.is_some() {
+        if mods.len() != 1 || !mods[0].1.elf { panic!("--user takes one ELF program"); }
+        mods[0].1.machine = true;
+    }
     let machine = mods.iter().any(|(_, m)| m.machine);
-    if machine && (mods.len() != 1 || !mods[0].1.elf) { panic!("a machine's image is one ELF"); }
+    if machine {
+        // the kernel first (its tables, its symbols), then its programs; none may overlap another
+        if !mods.iter().all(|(_, m)| m.elf) { panic!("a machine's image and its programs are ELFs"); }
+        let k = mods.iter().position(|(_, m)| m.machine).unwrap(); let kernel = mods.remove(k); mods.insert(0, kernel);
+        for (i, (a, ma)) in mods.iter().enumerate() { for (b, mb) in &mods[i + 1..] {
+            if ma.base < mb.base + mb.size && mb.base < ma.base + ma.size { panic!("{b} overlaps {a} (one module holds programs at their own addresses)"); } } }
+    }
     let bits = mods[0].1.bits;
     if let Some((name, m)) = mods.iter().find(|(_, m)| m.bits != bits) {
         panic!("{name}: a {}-bit image in a {bits}-bit title (32- and 64-bit images cannot be lifted together)", m.bits);
@@ -2356,7 +2571,10 @@ fn lift() {
         img.exports.extend(m.exports.iter().cloned());
         img.ranges.extend(m.ranges.iter().cloned());
         img.relocs.extend(m.relocs.iter().copied());   // (discover32 takes relocated pointers as candidates)
+        img.seeds.extend(m.seeds.iter().copied());     // (a machine's programs: where a jump table of theirs ends)
     }
+    img.seeds.sort();
+    img.seeds.dedup();
     // function entries: the entry point, the exception table, then every call target, to a fixpoint
     let mut entries: BTreeSet<u64> = img.pdata.keys().copied().collect();
     let handlers: Vec<u64> = img.pdata.keys().filter_map(|&e| unwind_handler(&img, e)).collect();
@@ -2433,9 +2651,11 @@ fn lift() {
         total += f.insns.len();
         // a Linux title's sigsetjmp is its setjmp (no signal is ever delivered, so there is no mask to keep) and its
         // longjmp is the runtime's: it resumes in the lifted function that called setjmp (rt/linux-x64/jump.c)
-        let body = match img.jumps.get(e) {
+        let body = match if img.machine { None } else { img.jumps.get(e) } {
             Some(2) if img.jumps.values().any(|k| *k == 1) => format!("void f_{e:x}(Cpu*__restrict c){{f_{:x}(c);}}\n", img.jumps.iter().find(|(_, k)| **k == 1).unwrap().0),
             Some(3) => format!("void f_{e:x}(Cpu*__restrict c){{rt_longjmp(c);}}\n"),
+            // a machine's static-call trampoline (Linux's __SCT__*): the kernel rewrites it, so it is decoded as it is now
+            _ if img.machine && img.named.iter().any(|(n, v)| n.starts_with("__SCT__") && v.0 == *e) => format!("void f_{e:x}(Cpu*__restrict c){{rt_static_call(c,0x{e:x}ull);}}\n"),
             _ => em.func(*e, f, &entries),
         };
         let k = (0..parts).min_by_key(|&k| sizes[k]).unwrap();
@@ -2459,7 +2679,43 @@ fn lift() {
         writeln!(out, "const u64 rt_resume_at[]={{{}0}};", sites.keys().map(|a| format!("0x{a:x}ull,")).collect::<String>()).unwrap();
         writeln!(out, "const unsigned rt_resume_fn[]={{{}0}};", sites.values().map(|k| format!("{k},")).collect::<String>()).unwrap();
     }
+    if let Some(p) = &user {
+        // a machine's program: its tables, under its name, and how the machine knows it is the one in memory: the
+        // FNV-1a hash of each page of its code, as the file has it (only the code's bytes: rt/microvm-x64/run.c)
+        let (lo, hi) = (img.text.iter().map(|t| t.0).min().unwrap_or(0), img.text.iter().map(|t| t.1).max().unwrap_or(0));
+        let mut hashes = Vec::new();
+        let mut page = lo & !0xFFF;
+        while page < hi {
+            let mut h: u64 = 0xcbf29ce484222325;
+            for a in page.max(lo)..(page + 4096).min(hi) { h = (h ^ u64::from(img.u8(a).unwrap_or(0))).wrapping_mul(0x100000001b3); }
+            hashes.push(format!("0x{h:x}ull")); page += 4096;
+        }
+        writeln!(out, "static const u64 page_hashes[]={{{}}};", hashes.join(",")).unwrap();
+        writeln!(out, "const ProgramDef {p}_program={{\"{p}\",0x{:x}ull,0x{lo:x}ull,0x{hi:x}ull,page_hashes,{},fn_count,fn_addrs,fn_ptrs,rt_resume_count,rt_resume_at,rt_resume_fn}};", img.entry, hashes.len()).unwrap();
+        let names = ["fn_count", "fn_addrs", "fn_ptrs", "rt_resume_count", "rt_resume_at", "rt_resume_fn"];
+        let rename = |s: &str| -> String {
+            let b = s.as_bytes(); let mut o = String::with_capacity(s.len() + s.len() / 8); let mut k = 0;
+            while k < b.len() {
+                let word = k == 0 || !(b[k - 1].is_ascii_alphanumeric() || b[k - 1] == b'_');
+                if word && b[k..].starts_with(b"f_") && b.get(k + 2).is_some_and(|c| c.is_ascii_hexdigit()) { o.push_str(&format!("f_{p}_")); k += 2; continue; }
+                if word { if let Some(n) = names.iter().find(|n| b[k..].starts_with(n.as_bytes()) && !b.get(k + n.len()).is_some_and(|c| c.is_ascii_alphanumeric() || *c == b'_')) { o.push_str(&format!("{p}_{n}")); k += n.len(); continue; } }
+                o.push(b[k] as char); k += 1;
+            }
+            o
+        };
+        out = rename(&out);
+        for b in bodies.iter_mut().skip(1) { *b = rename(b); }
+    }
     // the modules: each image's bytes stay in the user's file; the runtime copies them in and applies relocations
+    if user.is_some() {
+        // (a machine's program has none of them: its kernel loads it)
+    } else if img.machine {
+        // where the machine enters the kernel and which top page table it starts on (rt/microvm-x64/run.c)
+        let named = |n: &str| img.named.get(n).map(|v| v.0).unwrap_or(0);
+        let entry = if named("common_startup_64") != 0 { named("common_startup_64") } else { img.entry };
+        writeln!(out, "const u64 rt_machine_entry=0x{entry:x}ull;const u64 rt_machine_pgt=0x{:x}ull;", named("early_top_pgt")).unwrap();
+    }
+    if user.is_none() {
     writeln!(out, "#include \"modules.h\"").unwrap();
     let mut defs = Vec::new();
     let mut import_slots = Vec::new();
@@ -2488,6 +2744,7 @@ fn lift() {
     writeln!(out, "const u64 import_slots[]={{{}0}};", import_slots.iter().map(|(s, _, _)| format!("0x{s:x}ull,")).collect::<String>()).unwrap();
     writeln!(out, "const u64 import_targets[]={{{}0}};", import_slots.iter().map(|(_, _, t)| format!("0x{t:x}ull,")).collect::<String>()).unwrap();
     writeln!(out, "const char*const import_names[]={{{}0}};", import_slots.iter().map(|(_, n, _)| format!("\"{n}\",")).collect::<String>()).unwrap();
+    }
     // a part is rewritten only when it changed, so an unchanged part is not compiled again
     let write = |path: &str, text: &str| {
         if std::fs::read(path).map(|old| old != text.as_bytes()).unwrap_or(true) {
@@ -2609,7 +2866,7 @@ fn fmem(i: &Instruction) -> String {
     match i.memory_size() {
         S::Float32 => format!("(fpx)MF32({})", ea(i)),
         S::Float64 => format!("(fpx)MF64({})", ea(i)),
-        S::Float80 => format!("f80_load({})", ea(i)),
+        S::Float80 => format!("f80_load(c,{})", ea(i)),
         S::Int16 => format!("(fpx)(s16)M16({})", ea(i)),
         S::Int32 => format!("(fpx)(s32)M32({})", ea(i)),
         S::Int64 => format!("(fpx)(s64)M64({})", ea(i)),
@@ -2640,7 +2897,7 @@ fn farith(i: &Instruction, prec: bool) -> String {
 }
 
 /// Instructions beyond the first slice: atomics, string operations, bit operations, x87, CPUID and more SSE.
-fn extra(i: &Instruction, elf: bool) -> Option<String> {
+fn extra(i: &Instruction, elf: bool, machine: bool) -> Option<String> {
     use Mnemonic as M;
     let m = i.mnemonic();
     let mem0 = i.op_count() > 0 && i.op_kind(0) == OpKind::Memory;
@@ -2661,6 +2918,9 @@ fn extra(i: &Instruction, elf: bool) -> Option<String> {
         };
         if i.has_rep_prefix() && (kind == "stos" || kind == "movs" || kind == "lods") {
             let slow = format!("while(R[RCX]){{{one}R[RCX]--;}}");
+            if machine {
+                return slow; // element by element, through the MMU: a fault leaves exact counts
+            }
             if kind == "stos" && size == 1 {
                 return format!("if(!f.df){{__builtin_memset((void*)GP(R[RDI]),(u8)R[0],R[RCX]);R[RDI]+=R[RCX];R[RCX]=0;}}else{{{slow}}}");
             }
@@ -2800,7 +3060,7 @@ fn extra(i: &Instruction, elf: bool) -> Option<String> {
             } else {
                 match i.memory_size() {
                     S::Float32 => format!("MF32({})=(float)ST(0);", ea(i)),
-                    S::Float80 => format!("f80_store({},ST(0));", ea(i)),
+                    S::Float80 => format!("f80_store(c,{},ST(0));", ea(i)),
                     _ => format!("MF64({})=(double)ST(0);", ea(i)),
                 }
             };

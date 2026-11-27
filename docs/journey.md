@@ -625,6 +625,51 @@ so code is now what the sections say is code. And the 64-bit emitters took any r
 `mov cr3, rax` was a write to RBX. That was wrong in every 64-bit title, and is fixed for all of them.
 ([linux.md](linux.md) has the files and the ladder, K0 to K4.)
 
+### 3.31 The machine, on a kernel of our own (2026-11-27)
+
+The machine Linux needs was built against a smaller kernel first: about 300 lines of C and assembly that page,
+fault, take the timer, switch tasks and drop to ring 3, each in a line on the serial port. QEMU printed its 20
+lines on the first run; that output is the test.
+
+The design held: a fault, an interrupt or a system call is a nested run of the kernel's handler, and when it
+returns where it was raised the lifted function just goes on, its flags still in its C locals. The two bugs were
+the machine's view of the code. Decoding stopped at an `int3` the handler comes back from, so half of the kernel was
+never seen. And the task switch's hook covered one instruction of a function with no size, so a switch went
+unseen and the boot task carried on, quietly, on another task's stack. Every call in a machine's image now checks
+the stack it comes back on.
+
+The same file runs in headless Chrome; each kernel task is a wasm stack there too.
+
+### 3.32 Linux boots, lifted (2026-11-27)
+
+Linux 6.18, all 636,773 instructions of it, became one 42 MB module in under six minutes, and its first run on the
+machine printed 90 lines of its boot before it stopped. Three more stops, each a thing the kernel does to itself:
+`error_entry` returns on a stack it moved on purpose; the boot's `int3` self-test returns to the byte after a
+pretend 5-byte call; and the dentry cache's hash table is a runtime constant, an address the kernel writes into its
+own instructions at boot, where lifted code still held the placeholder `0x0123456789abcdef`. With those, the kernel
+unpacks its initramfs, finds the 16550, write-protects its own read-only data and prints `Run /init as init
+process`: 0.9 s in Node, the same 116 lines every run. What it runs next is busybox, which is not lifted yet.
+
+### 3.33 Linux runs its programs (2026-11-27)
+
+The last step was the smallest. busybox, lifted into the kernel's module at the addresses the kernel loads it at,
+ran `/init` to its end on its first run: its shells forked, executed, piped and caught signals through the lifted
+kernel, and printed the 15 lines they print on QEMU. Only one thing had to give way: the Linux runtime's hooks on a
+program's setjmp and longjmp, which a machine does not want, since there the kernel runs the program's own.
+
+From Node's start to the exit port takes 2.5 s, about what QEMU's own JIT takes for the same kernel on the same
+machine; ten programs executed take 18 ms, where on the Linux runtime one took about a hundred.
+
+### 3.34 A shell to type into (2026-11-27)
+
+The console now goes both ways: the serial port reads a ring the host writes, a terminal's keys or the page's. Two
+things turned up. Linux's serial driver reads the receiver while it probes, so a pipe written before boot lost its
+first bytes; the machine now hands a byte over only while the driver asks for it. And the shell's first child
+crashed the kernel: the signal frame for SIGCHLD is written with `fxsave` into a copy-on-write page, and the fault
+said it came from address 0, because `fxsave` is a helper of `rt/cpu.h` and saw the file's fallback instruction
+address, not the caller's. With those, `pisco build recipes/linux` makes the image, and the same shell answers in a
+terminal, through a pipe and in the page.
+
 ## 4. Roadblocks
 
 ### Resolved

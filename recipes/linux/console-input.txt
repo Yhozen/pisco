@@ -1,0 +1,5 @@
+mount -t devtmpfs dev /dev
+echo typed: $((6 * 7))
+uname -sr
+cd /tmp && echo kept > file && cat file && rm file && ls
+printf "\000" | dd of=/dev/port bs=1 seek=244 count=1 2>/dev/null

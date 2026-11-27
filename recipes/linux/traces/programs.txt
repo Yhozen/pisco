@@ -5,11 +5,32 @@ awk: 299995
 sha256: bb9f8df61474d25e of 4194304 bytes written to a file
 sort: apple fig pear 
 sed: the kernel is a program
-ls: bin dev etc init proc root sys tmp 
+ls: bin dev etc init proc root sys tmp usr 
 id: 0:0
+hello: hello: 2 arguments
+hello: numbers: -7 3000000000 beef 1234567890123  3.14 6.020000e+23 0.3
+hello: maths: sqrt 1.414214 sin 0.841471 pow 1.414 strtod 2.7183
+hello: sorted: fig date kiwi pear apple banana
+hello: switch: zero three six nine
+hello: thread-local: 42
+hello: longjmp: 42
 kill: the child ended with 143
 trap: USR1 handled
 trap: the subshell ended with 3
+async: USR2 caught while counting
+async: counted to 30000
+fastfetch: Kernel: Linux 6.18.65
+fastfetch: Locale: C
+bash: 5.2.37, 42, 6 parts of a version
+proc: lifted when it first ran, exit 5
+ _____________________________
+< Hello from the lifted Linux >
+ -----------------------------
+        \   ^__^
+         \  (oo)\_______
+            (__)\       )\/\
+                ||----w |
+                ||     ||
 spawn: 20 loops
 exec: 10 programs run
 init: done

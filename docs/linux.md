@@ -2,12 +2,17 @@
 
 The plan to run Linux itself: a real [Linux](https://kernel.org) kernel (6.18.65, GPL-2.0-only), built from its
 source with our own configuration, lifted ahead of time like any other title, on a runtime that imitates a small
-x86-64 machine (`microvm-x64`, not written yet). The Linux x64 runtime ([fastfetch.md](fastfetch.md)) imitates the
+x86-64 machine (`rt/microvm-x64`, `base/microvm-x64`). The Linux x64 runtime ([fastfetch.md](fastfetch.md)) imitates the
 kernel one system call at a time; here `fork`, signals, pipes and files are the kernel's own work. Why this route,
 what was measured before taking it and how the machine is designed: [research/kernel-as-a-title.md](research/kernel-as-a-title.md).
 
-**So far (K0) nothing of the kernel runs under PISCO.** It is built, the lifter reads it and says what it does not
-lift yet, and QEMU boots it as the reference: its programs print the 15 lines the lifted kernel will have to print.
+**So far (K4) Linux runs, lifted, with its programs, as an image, and can be typed into.** The kernel and the initramfs's busybox, lifted into one
+module, boot on the machine in Node and run `/init` to its end: pipes, a shell in a shell, awk, a 4 MiB file written
+and hashed, a child killed, a signal handled, ten programs executed. They print the 15 lines they print on QEMU,
+the same on every run, in 2.5 s from the start of Node to the exit port. `fork`, `exec`, signals, pipes and files
+are the kernel's own work. `pisco build recipes/linux` makes it an image like any other title's, and with `/bin/sh`
+as its first program its shell can be typed into, in a terminal or in the page. The machine was first checked on `fixtures/microvm-hello`, a kernel of about 300 lines
+that does what Linux asks of it, and prints what QEMU prints.
 
 ## The files
 
@@ -26,7 +31,53 @@ Nothing of the kernel or busybox is in the repository: `tools/build-linux.sh` fe
 into `out/linux`. A lifted kernel will be GPL-2.0-only code linked with the runtime, which is GPL-2.0-or-later: the
 module is then under GPL-2.0 ([LICENSING.md](../LICENSING.md)).
 
+## The machine (K1)
+
+`rt/microvm-x64` is one x86-64 CPU in long mode and what a kernel needs around it:
+
+| | |
+|---|---|
+| `mmu.c` | RAM (256 MiB, `SW_MEMORY` in MiB) and the APIC's page, reached through the kernel's page tables (4 KiB, 2 MiB and 1 GiB pages, accessed and dirty bits, user and write rights); a software TLB for kernel code and one for user code |
+| `cpu.c` | exceptions, interrupts and system calls as nested runs of lifted code, their return (`iretq`, `sysretq`), MSRs, control registers, the GDT, IDT and TSS |
+| `apic.c` | the local APIC (xAPIC): its timer (one-shot, periodic, TSC-deadline), priorities and EOI; the virtual clock; CPUID (an Intel CPU, the TSC at 1 GHz) |
+| `devices.c` | a 16550 at `0x3f8` (the console, both ways), the exit port at `0xf4` (as QEMU's `isa-debug-exit`), the CMOS clock, resets through `0x64` and `0xcf9` |
+| `virtio.c` | virtio's block device on its MMIO transport at `0xd0000000`, pin 5: a disk (`SW_DISK=<file>` beside the kernel, or `SW_DISK=<n>M` of zeros), its writes kept in memory; announced on the kernel's command line |
+| `run.c` | the loader (the ELF at its physical addresses, CR3 on `early_top_pgt`, entered at `common_startup_64`), the loops that enter lifted code by address, a host stack for each of the kernel's tasks |
+
+How it works:
+
+- **Memory.** In a machine's image the lifter makes every load a read through the TLB and every store a write
+  (`MW64(a, v)` for `M64(a) = v`), each with the instruction's address. A miss walks the page tables; a fault runs
+  the kernel's handler and the access is tried again. Device memory is never cached.
+- **A fault, an interrupt or a system call is a call.** The frame goes on the kernel's stack as the CPU puts it
+  there, the handler runs in a loop of its own, and when its `iretq` returns where it was raised, the lifted
+  function that raised it simply goes on, its registers and flags intact. When the handler returns elsewhere (a
+  fix-up, a preempted program sent to another address), what was interrupted is abandoned and the code there is
+  entered by its address.
+- **Interrupts are taken at polls**: at each function's start and each jump back. Each poll moves the virtual clock
+  by 4 ns; `hlt` moves it to the next timer. So a run is the same every time.
+- **Each kernel task has a host stack of its own** (JSPI, on by default in Node 24 and Chrome). The stack switch in
+  `__switch_to_asm` parks one and resumes or starts the other. A call that comes back on another stack than it was
+  made on is a fatal error, so a stack switch the machine missed cannot go unnoticed.
+
 ## Build it and run it
+
+The image, and a shell to type into:
+
+```sh
+tools/setup-toolchain.sh wasi musl linux-headers kernel   # (kernel says what to install; it installs nothing)
+tools/build-linux.sh                                      # out/linux: the kernel, the initramfs, out/linux/root
+target/release/pisco build recipes/linux                  # out/images/linux (the kernel and busybox lifted: minutes)
+target/release/pisco run out/images/linux                 # Node: the boot, then /init's programs
+target/release/pisco run out/images/linux --chrome        # the same in headless Chrome
+SW_CMDLINE="$(cat recipes/linux/cmdline) rdinit=/bin/sh" target/release/pisco run out/images/linux
+                                                          # a shell, in this terminal (Ctrl-] ends it)
+node tools/serve.mjs 8000 web out/images/linux            # the page, in a browser of your own:
+# http://127.0.0.1:8000/browser/index.html?image=/files/0/&SW_CMDLINE=console%3DttyS0%20rdinit%3D/bin/sh
+```
+
+In a terminal or in the page the machine's clock is the host's and it waits for keys when idle (`SW_CONSOLE=tty`,
+which both set); fed from a pipe it keeps its virtual clock. The pieces one at a time:
 
 ```sh
 tools/setup-toolchain.sh musl linux-headers kernel qemu   # the last two say what is missing; they install nothing
@@ -34,12 +85,23 @@ tools/build-linux.sh                                      # out/linux: vmlinux, 
 tools/oracle-qemu/oracle.sh run linux                     # QEMU: the boot log, then what /init's programs print
 tools/oracle-qemu/oracle.sh programs linux                # only the programs' lines of that run
 tools/census.sh out/linux/vmlinux                         # what the lifter does not lift yet (it knows a kernel)
+PROGRAMS="out/linux/root/busybox out/linux/root/hello" SPLIT=16 \
+  tools/build-title.sh out/linux/vmlinux out/linux/wasm   # Linux and its programs lifted into one module (minutes the first time)
+(cd out/linux && SW_INITRD=initramfs.cpio SW_CMDLINE="$(cat ../../recipes/linux/cmdline)" node ../../web/run-node.mjs wasm/title.wasm vmlinux)
+fixtures/microvm-hello/build.sh out/microvm-hello         # the machine's test kernel
+tools/build-title.sh out/microvm-hello/hello out/microvm-hello/wasm      # lifted (base/microvm-x64, from OS=microvm)
+node web/run-node.mjs out/microvm-hello/wasm/title.wasm out/microvm-hello/hello   # its serial port, in Node
+node tools/run-chrome.mjs out/microvm-hello/wasm/title.wasm out/microvm-hello/hello   # the same in headless Chrome
 target/release/lifter out/linux/vmlinux out/linux/census/title.c --split 16 --machine   # the same, by hand
 ```
 
-`tests/run.sh kernel` does the last four: the lifter must read `vmlinux`, and on QEMU the programs must print
-`recipes/linux/traces/programs.txt`, also on a machine without HPET, PIT and 8259 (`KERNEL_RECORD=1` records the
-file again). It is skipped until `out/linux` is built, and says so when QEMU is missing.
+`tests/run.sh kernel` checks the kernel: the lifter must read `vmlinux`; on QEMU the programs must print
+`recipes/linux/traces/programs.txt`, also on a machine without HPET, PIT and 8259; and its image, run by `pisco run`
+in Node, must boot twice the same to `/init` (`traces/boot.txt`), its programs must print what they print on QEMU,
+and a shell typed into through the console (`recipes/linux/console-input.txt`) must answer as `traces/console.txt`
+(`KERNEL_RECORD=1` records the traces again). It is skipped until `out/linux` is built, and says so when QEMU is missing. `tests/run.sh microvm` (a
+default step, in CI) builds and runs the test kernel: it must print `fixtures/microvm-hello/expected.txt`, what QEMU
+prints, and does under QEMU too when QEMU is there; `tests/run.sh chrome` runs it in the page.
 
 ## What it took (K0)
 
@@ -59,12 +121,188 @@ file again). It is skipped until `out/linux` is built, and says so when QEMU is 
 - **An oracle that prints the same every time.** The shell's own "Terminated" for a killed child came or not with
   the machine's load; `/init` now hides it, and silences the kernel's console before its checks.
 
+## What it took (K1)
+
+- **The test kernel first** (`fixtures/microvm-hello`): built with gcc as Linux is, linked at `0xffffffff81000000`,
+  with a 32-bit start for QEMU (a PVH note) that PISCO skips. Its 20 lines check paging and `invlpg`, a page fault
+  returned from, one fixed up, `int3`, `ud2` as a warning, the timer while halted, two tasks switching stacks, and a
+  ring-3 task that makes system calls and is preempted. QEMU printed them on the first run; in Node it took two
+  fixes, and Chrome printed them as Node did.
+- **The lifter's machine mode**: the system's instructions as calls of the machine (`cli`, `sti`, `hlt`, `pushfq`,
+  `iretq`, `sysretq`, `syscall`, `swapgs`, MSRs, control and segment registers, the descriptor tables, `in` and
+  `out`, `invlpg`); stores as writes; interrupt polls; decoding that goes on past an `int3`, `int n` or `ud2` (a
+  handler comes back after it), but not into padding: a 2 MiB alignment of `int3`s once made a function of two million
+  of them.
+- **A stack switch the machine does not see is caught.** `__switch_to_asm`, written in assembly, has no symbol
+  size, so the machine's hook covered only its first instruction: the plain `mov rsp` "returned" onto the other
+  task's stack, and the boot task went on there with nothing noticed. Labels now reach to the next function, and a
+  call in a machine's image checks that it comes back with the stack it was made with.
+- **Shared code made safe for it**: `rt/cpu.h`'s helpers store through `MW` forms, and `f80_load` and `f80_store`
+  take the CPU state, for every title; `rt_cpuid` and `rt_rdtsc` in `rt/core.c` are weak, so a machine has its own.
+- **Linux's census with the machine mode**: 602,001 instructions, 56 not lifted (`xsave` and `fxsave` forms,
+  `cmpxchg16b`, `lkgs`, a few AVX-512 and AMX ones, string I/O).
+
+## What it took (K2)
+
+The lifted kernel (11,612 functions, 636,773 instructions; a 42 MB module, compiled in under six minutes on four
+cores) printed most of its boot on the first run. What it needed after that:
+
+| Stop | What the kernel did | What changed |
+|---|---|---|
+| `error_entry` came back on another stack | it saves the registers above its own return address, on purpose | a call may come back on a moved stack through its own return address; only another address is a missed switch |
+| the CPU went on at `int3_selftest_asm`+5 | the boot's `int3` self-test emulates a 5-byte call at the `int3` | a label after each `int3`, and 5 bytes on |
+| an address `0x0123456789abcdef`-based | the dentry hash's address and shift and `USER_PTR_MAX` are runtime constants, patched into the code at boot | the lifter reads `runtime_ptr_*` and `runtime_shift_*`; those immediates are read from memory |
+
+Done before the first run, from the kernel's source: the static-call trampolines (`__SCT__*`) decode the jump the
+kernel has written into them; the exception table's fix-ups and the entry stubs at computed addresses
+(`early_idt_handler_array`, `irq_entries_start`) are functions; CPUID reports SERIALIZE, so `sync_core()` needs
+no `iretq` to itself; `fxsave`, `fxrstor` and `cmpxchg16b`; the boot protocol (the zero page with its memory map,
+the command line, the initramfs at the top of RAM), an MP table with the IOAPIC, the IOAPIC, the 16550's
+interrupt, a CMOS clock on the virtual clock's date, and the microcode revision MSR (high, so the TSC-deadline
+timer is not turned off for an erratum). The alternatives were left as the file has them: the code before patching
+is correct on any CPU, and the boot showed nothing that needed more.
+
+`recipes/linux/traces/boot.txt` is the boot up to `/init`. It differs from QEMU's where the machines differ: the
+CPU's name and features, the TSC at 1 GHz, the MSRs the machine leaves at 0 (it says which, on its standard error).
+
+## What it took (K3)
+
+- **The programs in the kernel's module**: `lifter --program <elf>` (`PROGRAMS` for `tools/build-title.sh`) lifts
+  static programs with a machine's image, at their own addresses, which are where the kernel loads them. One
+  module, 15,310 functions; the kernel finds a program's code by address when it returns to user mode.
+- **A program's own `longjmp`**: no hook of setjmp and longjmp in a machine (the Linux runtime's are for programs
+  without a kernel); an indirect jump to a return address abandons what was running and enters there.
+- That was all: busybox's `fork`, `exec`, pipes, signals and page faults went through the kernel, on the nested
+  runs and task stacks K1 built, and printed QEMU's lines on the first run.
+
+Timed from the host, each line of the console stamped as it arrives (Node 24 on the 4-core test machine; QEMU
+11.0 with its CPU emulated in software on the same machine, the same kernel and initramfs):
+
+| | lifted, in Node | QEMU |
+|---|---|---|
+| from the start to `Run /init` | 0.83 s | 1.15 s |
+| `awk`: 100,000 iterations | 0.86 s | 0.78 s |
+| 4 MiB written to a file and hashed | 0.44 s | 0.71 s |
+| ten programs executed (`/bin/true`) | 18 ms | 16 ms |
+
+The same awk on the Linux runtime took 0.48 s, and twenty processes started there 2.1 s
+([research/wamr-unkernel-tabc.md](research/wamr-unkernel-tabc.md)): memory through the MMU costs here, and a
+process costs about a hundredth of what it costs there.
+
+## What it took (K4)
+
+- **The serial port's input**: a ring in the module's memory, written by the host (Node's standard input, raw in a
+  terminal; the page's keys as a terminal sends them, Enter as CR, arrows as escape sequences, Ctrl-C as 0x03) and
+  read by the 16550, with its receive interrupt. A byte is there only while the driver has that interrupt on: Linux's
+  8250 reads the receiver while it probes, and took the first three bytes of a pipe.
+- **Idle that waits**: with someone typing, `hlt` waits on the ring (`memory.atomic.wait32`) until a key or the next
+  timer, on the host's clock.
+- **A bug the shell found**: a signal's frame is written to the user's stack with `fxsave`, and its copy-on-write
+  fault reported `rip 0`, so the kernel found no fix-up and oopsed. The helpers of `rt/cpu.h` that reach memory
+  (`fxsave`, the x87's) saw the file's fallback `ip_` and `tlb_`, not the instruction's; they take them now.
+- **The image**: `pisco build` knows a machine's base: `[lifter] programs` are lifted with the kernel, `[run]
+  initrd` and `cmdline` reach the runtime (`SW_INITRD`, `SW_CMDLINE`) through the image's config. Two builds with
+  empty caches give the same manifest (`sha256:72e36c24…`); a build takes eight minutes on four cores.
+- **`tools/run-chrome.mjs` types**: `TYPE=<text>` sends key presses to the page, which is how typing into the page
+  was checked.
+
+## What it took (K5)
+
+- **A disk**: virtio's block device (virtio 1.2, MMIO transport, one queue of 256, reads, writes, flush, its id), in
+  `rt/microvm-x64/virtio.c`; the kernel gains `CONFIG_VIRTIO_MMIO`, `VIRTIO_BLK` and ext2. With `SW_DISK` the runtime
+  adds `virtio_mmio.device=4K@0xd0000000:5` to the command line. It worked on its first run: `/init` formats it with
+  busybox's `mke2fs`, writes 1,000 lines, mounts it again and reads them back (`tests/run.sh kernel`). QEMU's machine
+  here has no virtio-mmio bus, so that check has no oracle; without a disk `/init` prints what it prints on QEMU.
+
+## What it took (K6): programs at the same addresses
+
+Static programs are linked at the same addresses (busybox and `fixtures/linux-hello` both from `0x400000`), so a
+module cannot tell them apart by address. Each is now lifted on its own (`lifter --user <name>`: its functions and
+tables under its name), and the machine finds which one runs by its bytes: the lifter records the hash of each page
+of a program's code, and when the CPU enters user code after a change of CR3 the machine hashes the page there and
+takes the program whose page matches. Lifted code never fetches its own instructions, so a code page the kernel
+has not mapped yet is read first, as a fetch would: the kernel's page fault handler maps it.
+
+- `/init` runs busybox and linux-hello, interleaved; its 22 lines are QEMU's (`traces/programs.txt`).
+- A machine's code is built with the x87 at its full precision (`-DGUEST_LINUX` too): musl's `printf` of a
+  `double` works in `long double`, and printed `6.019999e+23` for `6.020000e+23` without it.
+- `pisco build` records the flags each lift's objects were compiled with and compiles them again when they change:
+  they are not in the lift's key, and cached objects of the old flags beside a runtime of the new ones hung the
+  kernel at boot.
+- bash is GPL-3.0-or-later and cannot be linked into one module with the GPL-2.0-only kernel
+  ([LICENSING.md](../LICENSING.md)); that needs a module per program, next.
+
+## What it took (K7): signals anywhere, and many processes
+
+- **A signal on the way back from a fault**: a shell's copy-on-write fault came back with SIGCHLD pending, so the
+  kernel went to the handler, and after `sigreturn` back to the faulting instruction, which no label marks. Now when
+  the kernel sends a program elsewhere while code of its waits below (on a fault, an interrupt or a system call), the
+  code there runs on top, and the waiting code goes on when the kernel comes back to it: the access is done again. A
+  fix-up in the kernel still abandons what faulted.
+- **Interrupts in loops are taken on the jump back**, at its target, which is a label: an interrupted loop the
+  kernel resumes later (after a handler) goes on at its next iteration with its flags as they are.
+- **Tasks that end**: `do_task_dead` marks the task; when it switches away, its C stack is freed, its slot used again
+  and its wasm stack dropped by the host. A task that ended was found again by a new task whose kernel stack had its
+  stack pointer, and went on as the process that had exited.
+- Checked: `/init` catches a signal sent into a busy loop, as on QEMU; a shell runs 500 programs one after another
+  (`tests/run.sh kernel`). 4,000 programs took 5.2 s, the host's memory 635 MB at the end against 595 MB after 2,000.
+
+## What it took (K8): real programs
+
+The initramfs has four programs now, all static, all at `0x400000`, each lifted on its own into the kernel's module:
+busybox, `fixtures/linux-hello`, fastfetch 2.71.0 (MIT) and perl 5.44.0 with cowsay 3.8.4 (perl's licence is
+GPL-1.0-or-later or Artistic, so it can be linked with the GPL-2.0 kernel). `/init` runs fastfetch and cowsay, and
+their lines are QEMU's. `tools/build-linux.sh` builds them (`tools/build-fastfetch.sh`, `tools/build-cowsay.sh`) and
+copies only the perl modules cowsay loads: perl itself names them.
+
+fastfetch reads the kernel's own `/proc` and `/sys` now, not the Linux runtime's imitation of them:
+
+```
+Kernel: Linux 6.18.65
+CPU: pisco microvm-x64 (lifted) @ 1.00 GHz
+Memory: 17.16 MiB / 244.25 MiB (7%)
+Disk (/): 3.57 MiB / 118.45 MiB (3%) - rootfs
+```
+
+## What it took (K9): a program in a module of its own
+
+bash is GPL-3.0-or-later and cannot be linked into the GPL-2.0-only kernel's module, so it is a module of its own:
+
+- **A wasm side module**: the lifted program compiled position-independent (`-fPIC`) and linked by `wasm-ld -shared`
+  (the `dylink.0` convention). It imports the title's memory, its function table, its C stack pointer, the machine's
+  functions (`mmu_read`, `rt_poll`, `rt_syscall_m`...) and compiler-rt's, and two of its data's addresses; it exports
+  its `ProgramDef`.
+- **Loaded by the host** (`web/side.mjs`, in Node and the page's worker), as a dynamic linker loads a library: its
+  memory taken from the machine (`rt_side_alloc`), its functions added to the table, its relocations applied, then
+  registered with the machine (`rt_program_register`); from there it is found by its code pages like any program.
+- **`pisco build`**: `[lifter] modules = ["/bash"]` makes it a layer of the image, named in the config's `side`; the
+  title's module exports what the side modules import (`pisco` reads their import sections).
+- `/init` runs bash as it runs on QEMU, in Node and in headless Chrome.
+
+## What it took (K10): programs lifted when they first run
+
+A program no build lifted can run now, in Node. When the machine meets user code that no program it has holds, it
+hands the page there to the host (`program_missing`). `web/lift.mjs` finds the program of the initramfs whose code
+page at that address is the same, byte for byte. It lifts it into a module of its own (`tools/build-side.sh`: the
+lifter, wasi-sdk, `wasm-ld -shared`), caches it by the file's sha256 in `out/lift-cache`, and loads it, and the
+machine goes on. A machine's title therefore exports whatever a lifted program may import
+(`rt/microvm-x64/side-exports.txt`), not only what the programs of its build import.
+
+`/init` runs `/bin/proc` (`fixtures/linux-proc`), which is in the initramfs but in no recipe list: it is lifted in
+2.7 s the first time and taken from the cache after, and prints what it prints on QEMU. The page cannot lift (it
+has no lifter): there such a program stops the machine.
+
 ## Limits
 
-- The kernel does not run under PISCO yet: K1 builds the machine on a test kernel of our own, K2 boots this one.
+- In the page only programs lifted when the image is built run; in Node a program of the initramfs is lifted when it
+  first runs. Programs on the disk, or written while the machine runs, are not found yet.
+- Model-specific registers the machine does not know read as 0 where a CPU raises #GP, which some of the kernel's
+  `rdmsr_safe` callers would want.
+- A store that faults between its read and its write (an add to memory whose page must be copied) reads again after
+  the fault; with one CPU and no other task in between, the same.
 - On QEMU without the PIT the kernel has no timer interrupt (its emulated CPU has no TSC-deadline timer): `/init`
   ends all the same, but that boot says nothing of the timer the machine will have.
-- One CPU, no network, no disk: the initramfs is the whole file system.
+- One CPU and no network. The disk's writes stay in memory: the file it was read from does not change.
 - Only what was lifted before the kernel starts can run: here the kernel and busybox.
 
 ## Progress
@@ -72,7 +310,14 @@ file again). It is skipped until `out/linux` is built, and says so when QEMU is 
 | # | Milestone | State |
 |---|---|---|
 | K0 | the kernel built from a pinned source with our configuration; the lifter reads it and counts what it does not lift; QEMU as the oracle, `/init`'s programs recorded; stacks, memory and hardware measured | done |
-| K1 | the machine (`rt/microvm-x64`) on a test kernel of our own: paging, a fault fixed up, the timer, two tasks, a ring-3 task, the serial port, equal under QEMU and PISCO | next |
-| K2 | this kernel lifted: its boot log up to `Run /init as init process` | |
-| K3 | busybox lifted: `/init`'s programs print `recipes/linux/traces/programs.txt` | |
-| K4 | a console typed into, in Node and in the page; `pisco build recipes/linux` | |
+| K1 | the machine (`rt/microvm-x64`) on a test kernel of our own: paging, a fault fixed up, the timer, two tasks, a ring-3 task, the serial port, equal under QEMU and PISCO, in Node and Chrome | done |
+| K2 | this kernel lifted: its boot log up to `Run /init as init process`, in Node, the same on every run | done |
+| K3 | busybox lifted with the kernel: `/init`'s programs print `recipes/linux/traces/programs.txt`, what they print on QEMU | done |
+| K4 | a console typed into, in Node and in the page; `pisco build recipes/linux`, two builds the same | done |
+| K5 | a virtio disk: formatted, written and read again by `/init` | done |
+| K6 | programs at the same addresses, found by the hash of their code pages: busybox and linux-hello | done |
+| K7 | signals delivered anywhere (on the way back from a fault or an interrupt); tasks' stacks freed when they end | done |
+| K8 | real programs on it: fastfetch, and cowsay on perl, as on QEMU | done |
+| K9 | a program in a module of its own: bash (GPL-3.0) beside the kernel, as on QEMU | done |
+| K10 | programs lifted when they first run (Node: from the initramfs, cached by sha256) | done |
+| K11 | a network, programs from the disk, snapshots | next |

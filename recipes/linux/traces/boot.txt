@@ -1,0 +1,107 @@
+Linux version 6.18.65 (pisco@pisco)
+Command line: console=ttyS0,115200 earlyprintk=serial,ttyS0,115200 panic=-1 no_timer_check vdso=0 tsc=reliable 8250.nr_uarts=1
+KERNEL supported cpus:
+  Intel GenuineIntel
+Disabled fast string operations
+x86/CPU: Running old microcode
+BIOS-provided physical RAM map:
+BIOS-e820: [mem 0x0000000000000000-0x000000000009fbff] usable
+BIOS-e820: [mem 0x000000000009fc00-0x00000000000fffff] reserved
+BIOS-e820: [mem 0x0000000000100000-0x000000000fffffff] usable
+printk: legacy bootconsole [earlyser0] enabled
+NX (Execute Disable) protection: active
+APIC: Static calls initialized
+tsc: Detected 1000.000 MHz processor
+last_pfn = 0x10000 max_arch_pfn = 0x400000000
+x86/PAT: PAT support disabled because CONFIG_X86_PAT is disabled in the kernel.
+x86/PAT: Configuration [0-7]: WB  WT  UC- UC  WB  WT  UC- UC  
+found SMP MP-table at [mem 0x0009fc00-0x0009fc0f]
+RAMDISK: [mem 0x0f600000-0x0ffc4fff]
+Intel MultiProcessor Specification v1.4
+MPTABLE: OEM ID: PISCO   
+MPTABLE: Product ID: microvm-x64 
+MPTABLE: APIC at: 0xFEE00000
+Zone ranges:
+  DMA32    [mem 0x0000000000001000-0x000000000fffffff]
+  Normal   empty
+Movable zone start for each node
+Early memory node ranges
+  node   0: [mem 0x0000000000001000-0x000000000009efff]
+  node   0: [mem 0x0000000000100000-0x000000000fffffff]
+Initmem setup node 0 [mem 0x0000000000001000-0x000000000fffffff]
+On node 0, zone DMA32: 1 pages in unavailable ranges
+On node 0, zone DMA32: 97 pages in unavailable ranges
+Intel MultiProcessor Specification v1.4
+MPTABLE: OEM ID: PISCO   
+MPTABLE: Product ID: microvm-x64 
+MPTABLE: APIC at: 0xFEE00000
+Processor #0 (Bootup-CPU)
+IOAPIC[0]: apic_id 1, version 17, address 0xfec00000, GSI 0-23
+Processors: 1
+TSC deadline timer available
+CPU topo: Max. logical packages:   1
+CPU topo: Max. logical dies:       1
+CPU topo: Max. dies per package:   1
+CPU topo: Max. threads per core:   1
+CPU topo: Num. cores per package:     1
+CPU topo: Num. threads per package:   1
+CPU topo: Allowing 1 present CPUs plus 0 hotplug CPUs
+[mem 0x10000000-0xffffffff] available for PCI devices
+clocksource: refined-jiffies: mask: 0xffffffff max_cycles: 0xffffffff, max_idle_ns: 7645519600211568 ns
+Kernel command line: console=ttyS0,115200 earlyprintk=serial,ttyS0,115200 panic=-1 no_timer_check vdso=0 tsc=reliable 8250.nr_uarts=1
+printk: log buffer data + meta data: 131072 + 458752 = 589824 bytes
+Dentry cache hash table entries: 32768 (order: 6, 262144 bytes, linear)
+Inode-cache hash table entries: 16384 (order: 5, 131072 bytes, linear)
+Built 1 zonelists, mobility grouping on.  Total pages: 65438
+mem auto-init: stack:off, heap alloc:off, heap free:off
+SLUB: HWalign=64, Order=0-1, MinObjects=0, CPUs=1, Nodes=1
+Using NULL legacy PIC
+NR_IRQS: 4352, nr_irqs: 48, preallocated irqs: 0
+clocksource: jiffies: mask: 0xffffffff max_cycles: 0xffffffff, max_idle_ns: 7645041785100000 ns
+printk: legacy console [ttyS0] enabled
+printk: legacy console [ttyS0] enabled
+printk: legacy bootconsole [earlyser0] disabled
+printk: legacy bootconsole [earlyser0] disabled
+APIC: Switch to symmetric I/O mode setup
+clocksource: tsc-early: mask: 0xffffffffffffffff max_cycles: 0x1cd42e4dffb, max_idle_ns: 881590591483 ns
+Calibrating delay loop (skipped), value calculated using timer frequency.. 2000.00 BogoMIPS (lpj=4000000)
+Disabled fast string operations
+Last level iTLB entries: 4KB 0, 2MB 0, 4MB 0
+Last level dTLB entries: 4KB 0, 2MB 0, 4MB 0, 1GB 0
+CPU: Intel pisco microvm-x64 (lifted) (family: 0x6, model: 0x9e, stepping: 0xa)
+mitigations: Enabled attack vectors: SMT mitigations: off
+Speculative Store Bypass: Vulnerable
+Spectre V2 : Vulnerable
+RETBleed: Vulnerable
+MDS: Vulnerable
+MMIO Stale Data: Vulnerable
+VMSCAPE: Vulnerable
+Spectre V1 : Vulnerable: __user pointer sanitization and usercopy barriers only; no swapgs barriers
+x86/fpu: x87 FPU will use FXSAVE
+pid_max: default: 32768 minimum: 301
+Mount-cache hash table entries: 512 (order: 0, 4096 bytes, linear)
+Mountpoint-cache hash table entries: 512 (order: 0, 4096 bytes, linear)
+Performance Events: unsupported CPU family 6 model 158 no PMU driver, software events only.
+signal: max sigframe size: 1040
+Memory: (sizes)
+devtmpfs: initialized
+posixtimers hash table entries: 512 (order: 0, 4096 bytes, linear)
+futex hash table entries: 256 (6144 bytes on 1 NUMA nodes, total 6 KiB, linear).
+clocksource: Switched to clocksource tsc-early
+clocksource: tsc: mask: 0xffffffffffffffff max_cycles: 0x1cd42e4dffb, max_idle_ns: 881590591483 ns
+clocksource: Switched to clocksource tsc
+platform rtc_cmos: registered platform RTC device (no PNP device found)
+Unpacking initramfs...
+workingset: timestamp_bits=62 max_order=16 bucket_order=0
+io scheduler mq-deadline registered
+io scheduler kyber registered
+Serial: 8250/16550 driver, 1 ports, IRQ sharing disabled
+serial8250: ttyS0 at I/O 0x3f8 (irq = 4, base_baud = 115200) is a 16550A
+microcode: Current revision: 0xffffffff
+sched_clock: Marking stable (40002188, 269340)->(43592380, -3320852)
+Freeing initrd memory: 10004K
+Freeing unused kernel image (initmem) memory: 580K
+Write protecting the kernel read-only data: 8192k
+Freeing unused kernel image (text/rodata gap) memory: 1764K
+Freeing unused kernel image (rodata/data gap) memory: 1476K
+Run /init as init process

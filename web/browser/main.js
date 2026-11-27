@@ -196,6 +196,20 @@ function startInput(addr) {
   }, ms); };
   if (scripted) playKeys(scripted);
 }
+// ---- a machine's console (rt/microvm-x64/devices.c): the keys typed, as a terminal sends them, into its ring ----
+function startConsole(addr) {
+  const u32 = new Uint32Array(memory.buffer, addr, 4), i32 = new Int32Array(memory.buffer, addr, 4), data = new Uint8Array(memory.buffer, addr + 16, u32[2]);
+  const put = (s) => { for (const b of new TextEncoder().encode(s)) { if (u32[0] - Atomics.load(u32, 1) >= u32[2]) break; data[u32[0] % u32[2]] = b; Atomics.store(u32, 0, u32[0] + 1); } Atomics.notify(i32, 0); };
+  const seq = { Enter: '\r', Backspace: '\x7f', Tab: '\t', Escape: '\x1b', ArrowUp: '\x1b[A', ArrowDown: '\x1b[B', ArrowRight: '\x1b[C', ArrowLeft: '\x1b[D',
+    Home: '\x1b[H', End: '\x1b[F', Delete: '\x1b[3~', PageUp: '\x1b[5~', PageDown: '\x1b[6~' };
+  addEventListener('keydown', (e) => {
+    let s = seq[e.key];
+    if (!s && e.ctrlKey && e.key.length === 1 && /[a-z@\[\\\]^_]/i.test(e.key)) s = String.fromCharCode(e.key.toUpperCase().charCodeAt(0) & 31);   // Ctrl-C: 0x03
+    else if (!s && !e.ctrlKey && !e.metaKey && e.key.length === 1) s = e.key;
+    if (s) { put(s); e.preventDefault(); }
+  });
+  addEventListener('paste', (e) => { put(e.clipboardData.getData('text').replace(/\r?\n/g, '\r')); e.preventDefault(); });
+}
 // ---- input for a Windows desktop title (rt/windows-x86/input.c): the keyboard as DirectInput scan codes, the mouse as
 // relative motion under Pointer Lock (a click on the canvas takes the pointer; Escape gives it back, as browsers
 // do, and is passed on to the title as its Escape key) ----
@@ -270,6 +284,7 @@ bus.onmessage = (e) => {
   if (m.save !== undefined || m.remove !== undefined) persist(m);
   if (m.input !== undefined) startInput(m.input);
   if (m.win32input !== undefined) startWin32Input(m.win32input);
+  if (m.console !== undefined) startConsole(m.console);
   if (m.exit !== undefined) {
     status.textContent = `exit ${m.exit}`; document.title = `exit ${m.exit}`;
     if (line) console.log(line);
@@ -312,11 +327,14 @@ else {
     const [cols, rows] = env.SW_TTY.split('x').map(Number); if (cols && rows) { term.cols = cols; term.rows = rows; }
   }
   if (q.get('pace') === 'off') env.SW_PACE = 'off';
+  if (env.SW_CONSOLE === undefined) env.SW_CONSOLE = 'tty';   // a machine's console: someone may type (rt/microvm-x64)
   let store = [];
   try { store = await openStore(image ? `image:${image.settings.title}` : new URL(q.get('exe'), location.href).pathname); if (store.length) console.log(`storage: ${store.length} file(s) from earlier sessions`); } catch (e) { log(`storage: ${e.message} (saves will not survive a reload)`); }
   // a Linux title: its processes (web/kernel.mjs), each a worker this page starts (the first, a fork's, an execve's)
   const kernel = WebAssembly.Module.exports(module).some((e) => e.name === 'rt_fork_resume') ? createKernel() : null, programs = image?.config.programs || null;
-  boot = { module, memory, dir, drive, folder, tids, args, env, store, t0: performance.timeOrigin, kernel, programs };
+  // a machine's programs in modules of their own (rt/microvm-x64): fetched here, loaded by the worker (web/side.mjs)
+  const side = image?.config.side ? await Promise.all(Object.entries(image.config.side).map(async ([n, d]) => [n, await (await fetch(image.url + blobPath(d))).arrayBuffer()])) : [];
+  boot = { module, memory, dir, drive, folder, tids, args, env, store, t0: performance.timeOrigin, kernel, programs, side };
   for (let i = 0; i < POOL; i++) startPooled(i);
   const compiled = new Map();
   const moduleOf = (digest) => { if (!compiled.has(digest)) compiled.set(digest, fetch(image.url + blobPath(digest)).then((r) => r.arrayBuffer()).then((b) => WebAssembly.compile(b))); return compiled.get(digest); };

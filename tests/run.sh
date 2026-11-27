@@ -26,11 +26,24 @@
 #   cowsay   cowsay on perl (docs/cowsay.md), when tools/build-cowsay.sh has built its root into out/cowsay: its image
 #            built by `pisco build`, run by `pisco run` in strict mode with several cows and options; each must print
 #            what the same root's perl prints here (the oracle), and the first the same in headless Chrome
+#   microvm  fixtures/microvm-hello, a small x86-64 kernel of our own (built with the machine's gcc), lifted as a
+#            machine's image and run on rt/microvm-x64 in Node: paging, a page fault returned from and one fixed up,
+#            int3, ud2, the APIC's timer while halted, two tasks on their own stacks, a ring-3 task with system calls
+#            preempted by the timer. What it prints on the serial port must be fixtures/microvm-hello/expected.txt,
+#            which is what QEMU prints booting it (checked again when QEMU is there: tools/setup-toolchain.sh qemu)
 #   kernel   the Linux title's kernel (docs/linux.md), when tools/build-linux.sh has built it into out/linux: the
 #            lifter must read vmlinux as a machine's image (--machine) and say what it does not lift yet. With QEMU
 #            (tools/oracle-qemu; said in one line without it) the kernel must run /init to its end there, and its
-#            programs must print recipes/linux/traces/programs.txt (KERNEL_RECORD=1 records it again), on QEMU's
-#            machine and on one without HPET, PIT and PIC, which is what rt/microvm-x64 will have
+#            programs must print recipes/linux/traces/programs.txt (KERNEL_RECORD=1 records it again) on QEMU's
+#            machine, and a machine without HPET, PIT and PIC (rt/microvm-x64's) must boot it to /init. Then the title's
+#            image (`pisco build recipes/linux`: the kernel and the initramfs's busybox lifted into one module, minutes
+#            the first time) booted by `pisco run` in Node: its console must be the same twice, its boot up to "Run
+#            /init as init process" recipes/linux/traces/boot.txt (the compiler's name and the kernel's sizes left
+#            out), and its programs what they print on QEMU (programs.txt): /bin/proc among them, which no build lifts
+#            (the host lifts it when it first runs, web/lift.mjs; out/lift-cache keeps it). Then the kernel with /bin/sh as its first
+#            program, typed into through the console (recipes/linux/console-input.txt): what it prints from there must
+#            be traces/console.txt. Then with a disk (SW_DISK=16M: virtio's block device): /init formats it, writes it
+#            and reads it again. KERNEL_RECORD=1 records the traces again
 #   changelog  tools/changelog.mjs: every entry in changelog/ (the changelog on GitHub Pages) is well formed
 #   chrome   hello, threads and cxx again in headless Chrome (WebGPU on SwiftShader), the 32-bit titles and linux-hello
 #   nd       Narbacular Drop, when the installed game is there (ND: its folder; default: the oracle's prefix):
@@ -86,7 +99,7 @@
 #            screens close to the oracle's screenshots (needs out/img-desire: the desireplay step; half an hour)
 #   xcl      tests/gfx/xcl.sh: XCL's console test title in Chrome, when it has been built into out/xcltitle-game
 #   audio    tests/audio/run.sh: the XMA2 / Opus decoders (builds FFmpeg's the first time)
-# Default: build layout node bench win32 linux avx ffp sm gdi changelog. Needs tools/setup-toolchain.sh to have run. Exit status 1 if a step fails.
+# Default: build layout node bench win32 linux microvm avx ffp glffp sm gdi changelog. Needs tools/setup-toolchain.sh to have run. Exit status 1 if a step fails.
 set -uo pipefail
 root=$(cd "$(dirname "$0")/.." && pwd); cd "$root"; mkdir -p out
 MINGW=${MINGW:-$HOME/tools/llvm-mingw-20261117-ucrt-ubuntu-22.04-x86_64}; CXX=$MINGW/bin/x86_64-w64-mingw32-clang++
@@ -167,6 +180,22 @@ linux() {
   cmp -s $p/got.txt $p/native.txt || { echo "linux-proc differs from its run on this machine (< ours, > native):"; diff $p/got.txt $p/native.txt | head -12; return 1; }
   echo "linux-proc: $(wc -l < $p/native.txt) lines (fork, pipes, execve, a script, wait4, longjmp) equal its run on this machine"
 }
+microvm() {
+  local d=out/microvm-hello want=fixtures/microvm-hello/expected.txt
+  fixtures/microvm-hello/build.sh $d > /dev/null || { echo "microvm-hello: does not build"; return 1; }
+  tools/build-title.sh $d/hello $d/wasm > out/microvm-hello.build.log 2>&1 || { echo "microvm-hello: build failed (out/microvm-hello.build.log)"; return 1; }
+  timeout 120 node web/run-node.mjs $d/wasm/title.wasm $d/hello 2>&1 | tr -d '\r' > $d/got.txt
+  cmp -s $d/got.txt $want || { echo "microvm-hello differs from expected.txt (< ours, > expected):"; diff $d/got.txt $want | head -12; return 1; }
+  local q="lifted, in Node"
+  if command -v "${QEMU:-qemu-system-x86_64}" > /dev/null; then
+    . tools/oracle-qemu/env.sh
+    timeout 120 "$QEMU" -M "$ORACLE_QEMU_MACHINE,accel=tcg" -cpu "$ORACLE_QEMU_CPU" -m 256 -smp 1 -display none -no-reboot -nodefaults -no-user-config -serial stdio \
+      -device isa-debug-exit,iobase=0xf4,iosize=0x04 -kernel $d/hello < /dev/null 2> $d/qemu.log | tr -d '\r' > $d/qemu.txt
+    cmp -s $d/qemu.txt $want || { echo "microvm-hello under QEMU differs from expected.txt (< QEMU, > expected):"; diff $d/qemu.txt $want | head -12; return 1; }
+    q="$q and under QEMU"
+  fi
+  echo "microvm-hello: $(wc -l < $want) lines equal expected.txt, $q"
+}
 kernel() {
   local d=out/linux want=recipes/linux/traces/programs.txt fns left
   mkdir -p $d/census
@@ -181,10 +210,37 @@ kernel() {
   cmp -s $d/programs.txt $want || { echo "on QEMU the programs print otherwise than the recorded trace (< now, > recorded):"; diff $d/programs.txt $want | head -8; return 1; }
   # the machine rt/microvm-x64 will be: no HPET, no PIT, no 8259 (QEMU's emulated CPU has no TSC-deadline timer, so the
   # kernel is told the TSC's rate and runs without a timer interrupt there)
-  ORACLE_RUN=$d/oracle-small ORACLE_QEMU_MACHINE=q35,hpet=off,pit=off,pic=off tools/oracle-qemu/oracle.sh run linux tsc_early_khz=2900000 > $d/oracle-small.txt 2>&1 \
-    || { echo "on QEMU without HPET, PIT and PIC the kernel did not run /init to its end ($d/oracle-small.txt):"; tail -4 $d/oracle-small.txt; return 1; }
-  ORACLE_RUN=$d/oracle-small tools/oracle-qemu/oracle.sh programs linux | cmp -s - $want || { echo "without HPET, PIT and PIC the programs print otherwise than the recorded trace"; return 1; }
-  echo "QEMU: /init ran to its end, $(wc -l < $want) lines from its programs equal the recorded trace, also without HPET, PIT and PIC"
+  # (there QEMU's CPU has no TSC-deadline timer, so the kernel has no timer interrupt: /init's programs that sleep
+  # wait for ever. The check is that this hardware boots the kernel to its first program)
+  ORACLE_RUN=$d/oracle-small ORACLE_QEMU_MACHINE=q35,hpet=off,pit=off,pic=off ORACLE_TIMEOUT=60 tools/oracle-qemu/oracle.sh run linux tsc_early_khz=2900000 > $d/oracle-small.txt 2>&1
+  grep -q '^init: Linux' $d/oracle-small.txt || { echo "on QEMU without HPET, PIT and PIC the kernel did not reach /init ($d/oracle-small.txt):"; tail -4 $d/oracle-small.txt; return 1; }
+  echo "QEMU: /init ran to its end, $(wc -l < $want) lines from its programs equal the recorded trace; without HPET, PIT and PIC it boots to /init"
+  # lifted, on the machine: the title's image, its boot up to the first program, then the programs
+  target/release/pisco build recipes/linux --out out/images/linux > $d/image.log 2>&1 || { echo "pisco build recipes/linux failed ($d/image.log)"; tail -3 $d/image.log; return 1; }
+  local boot=recipes/linux/traces/boot.txt k
+  for k in 1 2; do timeout 600 target/release/pisco run out/images/linux < /dev/null 2>&1 | tr -d '\r' > $d/boot$k.txt; done
+  grep -q '^Run /init as init process' $d/boot1.txt || { echo "the lifted kernel did not reach /init ($d/boot1.txt):"; tail -4 $d/boot1.txt; return 1; }
+  # (the machine's and the host's own notes left out: the first run may lift a program, web/lift.mjs)
+  cmp -s <(grep -v '^pisco: ' $d/boot1.txt) <(grep -v '^pisco: ' $d/boot2.txt) || { echo "two boots of the lifted kernel differ ($d/boot1.txt, $d/boot2.txt)"; return 1; }
+  # the boot up to /init, without the machine's own notes and what depends on the compiler that built the kernel
+  norm() { sed -n '1,/^Run \/init as init process/p' "$1" | grep -v '^pisco: ' | sed -E 's/^(Linux version [^ ]+ \(pisco@pisco\)).*/\1/; s/^Memory: .*/Memory: (sizes)/'; }
+  [ -z "${KERNEL_RECORD:-}" ] || norm $d/boot1.txt > $boot
+  norm $d/boot1.txt | cmp -s - $boot || { echo "the lifted kernel's boot differs from $boot (< now, > recorded):"; diff <(norm $d/boot1.txt) $boot | head -8; return 1; }
+  sed -n '/^Run \/init as init process/,$p' $d/boot1.txt | sed 1d | grep -v '^pisco: ' > $d/lifted-programs.txt
+  cmp -s $d/lifted-programs.txt $want || { echo "lifted, the programs print otherwise than on QEMU (< lifted, > QEMU):"; diff $d/lifted-programs.txt $want | head -8; return 1; }
+  # typed into: the shell as the first program, its input from the console
+  local con=recipes/linux/traces/console.txt
+  SW_CMDLINE="$(cat recipes/linux/cmdline) rdinit=/bin/sh" timeout 600 target/release/pisco run out/images/linux < recipes/linux/console-input.txt 2>&1 | tr -d '\r' | sed -n '/^Run \/bin\/sh as init process/,$p' | grep -v '^pisco: ' > $d/console.txt
+  [ -z "${KERNEL_RECORD:-}" ] || cp $d/console.txt $con
+  cmp -s $d/console.txt $con || { echo "typed into, the shell answers otherwise than $con (< now, > recorded):"; diff $d/console.txt $con | head -8; return 1; }
+  # many processes: 500 programs run one after another by a shell (each task's stacks freed when it ends)
+  printf 'mount -t devtmpfs dev /dev\ni=0; while [ $i -lt 500 ]; do /bin/true; i=$((i+1)); done; echo ran $i programs\nprintf "\\000" | dd of=/dev/port bs=1 seek=244 count=1 2>/dev/null\n' \
+    | SW_CMDLINE="$(cat recipes/linux/cmdline) rdinit=/bin/sh" timeout 600 target/release/pisco run out/images/linux 2>&1 | tr -d '\r' > $d/many.txt
+  grep -qx 'ran 500 programs' $d/many.txt || { echo "a shell did not run 500 programs ($d/many.txt):"; tail -3 $d/many.txt; return 1; }
+  # a disk: virtio's block device, formatted, written, mounted again and read by /init
+  SW_DISK=16M timeout 600 target/release/pisco run out/images/linux < /dev/null 2>&1 | tr -d '\r' > $d/disk.txt
+  grep -qx 'disk: on the disk, 1000 lines, 16777216 bytes' $d/disk.txt || { echo "with a disk, /init did not read back what it wrote ($d/disk.txt):"; grep -E 'vda|disk|virtio' $d/disk.txt | tail -4; return 1; }
+  echo "lifted (pisco run): $(wc -l < $boot) lines of boot to /init, twice the same, equal to $boot; /init's programs print what they print on QEMU; a shell typed into answers as $con; 500 programs in a row; a virtio disk formatted, written and read again"
 }
 neofetch() {
   local d=out/neofetch want=recipes/neofetch/traces/pipe.txt
@@ -262,6 +318,11 @@ chrome() {
     SW_STRICT=1 SW_CLOCK=16667 TIMEOUT=300 node tools/run-chrome.mjs out/linux-hello/wasm/title.wasm out/linux-hello/hello 2>&1 | grep -v -e '^$' -e '^gpu: ' > out/linux-hello/got-chrome.txt
     if cmp -s out/linux-hello/got-chrome.txt fixtures/linux-hello/expected.txt; then echo "linux-hello: equal to expected.txt"; else echo "linux-hello: differs from expected.txt"; ok=1; fi
   fi
+  # the machine, when the microvm step has built it: each of its tasks on a stack of its own in the page too
+  if [ -f out/microvm-hello/wasm/title.wasm ]; then
+    TIMEOUT=300 node tools/run-chrome.mjs out/microvm-hello/wasm/title.wasm out/microvm-hello/hello 2>&1 | tr -d '\r' | grep -v -e '^$' -e '^gpu: ' > out/microvm-hello/got-chrome.txt
+    if cmp -s out/microvm-hello/got-chrome.txt fixtures/microvm-hello/expected.txt; then echo "microvm-hello: equal to what QEMU prints"; else echo "microvm-hello: differs from what QEMU prints"; ok=1; fi
+  fi
   if [ -f out/x87/wasm/title.wasm ]; then
     TIMEOUT=300 node tools/run-chrome.mjs out/x87/wasm/title.wasm out/x87/x87.exe 2>&1 | grep -v -e '^$' -e '^gpu: ' > out/x87/got-chrome.txt   # the page's own first line names the GPU
     if cmp -s out/x87/got-chrome.txt fixtures/x87/expected.txt; then echo "x87: equal to what it prints under Wine"; else echo "x87: differs from what it prints under Wine"; ok=1; fi
@@ -312,7 +373,7 @@ ND=${ND:-$HOME/.pisco/oracle/prefix-narbacular-drop/drive_c/Program Files (x86)/
 D3DX_DLL=${D3DX_DLL:-$HOME/untrusted/tag/cab/d3dx9_35.dll}
 REDIST=${REDIST:-$HOME/untrusted/vcredist/x/Contents/VC/Redist/MSVC/14.44.35112/x64/Microsoft.VC143.CRT}; export REDIST
 WINSDK=${WINSDK:-$HOME/winsdk}
-for s in ${*:-build layout node bench win32 linux avx ffp glffp sm gdi changelog}; do case $s in
+for s in ${*:-build layout node bench win32 linux microvm avx ffp glffp sm gdi changelog}; do case $s in
   build)  step build build ;;
   layout) step layout tests/layout.sh ;;
   node)   LINES_SHOWN=8 step node tests/regress.sh ;;
@@ -323,6 +384,7 @@ for s in ${*:-build layout node bench win32 linux avx ffp glffp sm gdi changelog
   cowsay) if [ -x out/cowsay/root/usr/bin/perl ]; then step cowsay cowsay; else echo "skip  cowsay: out/cowsay/root is not built (tools/build-cowsay.sh)"; fi ;;
   neofetch) if [ -x out/neofetch/root/bin/bash ]; then step neofetch neofetch; else echo "skip  neofetch: out/neofetch/root is not built (tools/build-neofetch.sh)"; fi ;;
   fastfetch) if [ -x out/fastfetch/fastfetch ]; then step fastfetch fastfetch; else echo "skip  fastfetch: out/fastfetch/fastfetch is not built (tools/build-fastfetch.sh)"; fi ;;
+  microvm) if command -v gcc > /dev/null && [ "$(uname -m)" = x86_64 ]; then step microvm microvm; else echo "skip  microvm: it needs gcc for x86-64 (fixtures/microvm-hello/build.sh)"; fi ;;
   kernel) if [ -f out/linux/vmlinux ]; then LINES_SHOWN=2 step kernel kernel; else echo "skip  kernel: out/linux is not built (tools/build-linux.sh)"; fi ;;
   chrome) LINES_SHOWN=6 step chrome chrome ;;
   nd)     if [ -f "$ND/Narbacular Drop.exe" ]; then LINES_SHOWN=3 step nd nd; else echo "skip  nd: the game is not installed (ND=$ND)"; fi ;;

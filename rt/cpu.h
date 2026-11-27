@@ -74,6 +74,14 @@ typedef __UINTPTR_TYPE__ uptr;
 #define MF32(a) (*(f32a *)GP(a))
 #define MF64(a) (*(f64a *)GP(a))
 #define MV(a)  (*(Va *)GP(a))
+// stores as calls: the same as an assignment here; a machine's image needs to know a write (below)
+#define MW8(a, v)   (M8(a) = (v))
+#define MW16(a, v)  (M16(a) = (v))
+#define MW32(a, v)  (M32(a) = (v))
+#define MW64(a, v)  (M64(a) = (v))
+#define MWF32(a, v) (MF32(a) = (v))
+#define MWF64(a, v) (MF64(a) = (v))
+#define MWV(a, v)   (MV(a) = (v))
 
 void rt_trap(u64 addr) __attribute__((noreturn));
 void rt_unimpl(u64 addr) __attribute__((noreturn));
@@ -91,6 +99,101 @@ u64 rt_rdtsc(void);
 #define POP32() (R[RSP] = (u32)(R[RSP] + 4), M32(R[RSP] - 4))
 #define PUSH16(v) do { u16 push_v_ = (v); R[RSP] = (u32)(R[RSP] - 2); M16(R[RSP]) = push_v_; } while (0)
 #define POP16() (R[RSP] = (u32)(R[RSP] + 2), M16(R[RSP] - 2))
+
+#ifdef GUEST_MACHINE
+// ---- a machine's image (rt/microvm-x64): guest addresses are virtual, translated by the machine's page tables ----
+// Each access goes through a software TLB, one for the kernel's code and one for user code (a lifted function
+// knows which it is: its locals tlb_ and ip_, the address of the instruction that runs). A hit is a load or a store
+// at a host address; a miss is the MMU's slow path, which may run the kernel's page fault handler and come back.
+// Outside lifted functions the runtime's code sees the fallbacks below (the kernel's TLB, no instruction).
+typedef struct { u64 rtag, wtag; u32 add, pad; } TlbEntry;   // tags: the page number + 1 (0: empty)
+extern TlbEntry mmu_k[4096], mmu_u[4096];
+static const u64 ip_ = 0;
+static TlbEntry *const tlb_ = mmu_k;
+void mmu_read(struct Cpu *c, TlbEntry *t, u64 a, unsigned n, u64 ip, void *out);
+void mmu_write(struct Cpu *c, TlbEntry *t, u64 a, unsigned n, u64 ip, const void *in);
+uptr mmu_ptr(struct Cpu *c, TlbEntry *t, u64 a, unsigned n, u64 ip);   // a host pointer for n bytes to write (atomics)
+// n bytes at a: a hit when the entry holds the page of the access's last byte (one that crosses pages misses)
+#define MR(T, n, a) ({ u64 a_ = (u64)(a); TlbEntry *e_ = &tlb_[(a_ >> 12) & 4095]; T v_; \
+  if (__builtin_expect(e_->rtag == ((a_ + (n) - 1) >> 12) + 1, 1)) v_ = *(T *)(uptr)((u32)a_ + e_->add); else mmu_read(c, tlb_, a_, (n), ip_, &v_); v_; })
+#define MWR(T, n, a, v) ({ u64 a_ = (u64)(a); T w_ = (v); TlbEntry *e_ = &tlb_[(a_ >> 12) & 4095]; \
+  if (__builtin_expect(e_->wtag == ((a_ + (n) - 1) >> 12) + 1, 1)) *(T *)(uptr)((u32)a_ + e_->add) = w_; else mmu_write(c, tlb_, a_, (n), ip_, &w_); (void)0; })
+#undef GP
+#undef M8
+#undef M16
+#undef M32
+#undef M64
+#undef MF32
+#undef MF64
+#undef MV
+#undef MW8
+#undef MW16
+#undef MW32
+#undef MW64
+#undef MWF32
+#undef MWF64
+#undef MWV
+#define GP(a) mmu_ptr(c, tlb_, (a), 1, ip_)
+#define M8(a) MR(u8a, 1, a)
+#define M16(a) MR(u16a, 2, a)
+#define M32(a) MR(u32a, 4, a)
+#define M64(a) MR(u64a, 8, a)
+#define MF32(a) MR(f32a, 4, a)
+#define MF64(a) MR(f64a, 8, a)
+#define MV(a) MR(Va, 16, a)
+#define MW8(a, v) MWR(u8a, 1, a, v)
+#define MW16(a, v) MWR(u16a, 2, a, v)
+#define MW32(a, v) MWR(u32a, 4, a, v)
+#define MW64(a, v) MWR(u64a, 8, a, v)
+#define MWF32(a, v) MWR(f32a, 4, a, v)
+#define MWF64(a, v) MWR(f64a, 8, a, v)
+#define MWV(a, v) MWR(Va, 16, a, v)
+#undef PUSH64
+#undef POP64
+#define PUSH64(v) do { u64 pv_ = (v); R[RSP] -= 8; MW64(R[RSP], pv_); } while (0)
+#define POP64() ({ u64 pv_ = M64(R[RSP]); R[RSP] += 8; pv_; })   // (read first: a fault leaves RSP as it was)
+#define ATOM8(a) ((u8 *)mmu_ptr(c, tlb_, (a), 1, ip_))
+#define ATOM16(a) ((u16 *)mmu_ptr(c, tlb_, (a), 2, ip_))
+#define ATOM32(a) ((u32 *)mmu_ptr(c, tlb_, (a), 4, ip_))
+#define ATOM64(a) ((u64 *)mmu_ptr(c, tlb_, (a), 8, ip_))
+// the instructions of the system (rt/microvm-x64): the CPU's state that lifted code does not hold
+extern u64 mc_rflags;   // RFLAGS but its arithmetic bits (a function keeps those in its Flags): IF, IOPL, AC, ID
+extern int mc_budget;   // polls left before the machine looks at its clock and its interrupts
+void rt_poll(struct Cpu *c, u64 ip);
+#define POLL(ip) do { if (__builtin_expect(--mc_budget < 0, 0)) rt_poll(c, (ip)); } while (0)
+static inline u64 flags_get64(const Flags *f) {
+  return (u64)f->cf | 2u | (u64)f->pf << 2 | (u64)f->af << 4 | (u64)f->zf << 6 | (u64)f->sf << 7 | (u64)f->df << 10 | (u64)f->of << 11 | (mc_rflags & ~0xDD7ull);
+}
+void flags_set64(struct Cpu *c, Flags *f, u64 v);
+void rt_sti(struct Cpu *c);
+void rt_hlt(struct Cpu *c, u64 next);
+void rt_iret(struct Cpu *c) __attribute__((noreturn));
+void rt_sysret(struct Cpu *c) __attribute__((noreturn));
+void rt_syscall_m(struct Cpu *c, u64 next, Flags *f);
+void rt_exc(struct Cpu *c, u32 vector, u32 err, u64 rip, u64 next);
+void rt_swapgs(struct Cpu *c);
+void rt_wrmsr(struct Cpu *c, u64 ip);
+void rt_rdmsr(struct Cpu *c, u64 ip);
+void rt_wcr(struct Cpu *c, unsigned n, u64 v);
+u64 rt_rcr(struct Cpu *c, unsigned n);
+void rt_lgdt(struct Cpu *c, u64 a); void rt_lidt(struct Cpu *c, u64 a); void rt_sgdt(struct Cpu *c, u64 a); void rt_sidt(struct Cpu *c, u64 a);
+void rt_ltr(struct Cpu *c, u16 sel); u16 rt_str(struct Cpu *c);
+void rt_wseg(struct Cpu *c, unsigned seg, u16 sel); u16 rt_rseg(struct Cpu *c, unsigned seg);
+void rt_invlpg(struct Cpu *c, u64 a);
+u32 rt_in(struct Cpu *c, u16 port, unsigned size);
+void rt_out(struct Cpu *c, u16 port, unsigned size, u32 v);
+void rt_switch(struct Cpu *c, u64 rsp, u64 next);
+void rt_check_return(struct Cpu *c, u64 call, u64 next, u64 sp);
+void rt_static_call(struct Cpu *c, u64 tramp);
+void rt_task_dying(struct Cpu *c);   // the running task ends: once it switches away, its stacks go
+// a program a machine's kernel runs, lifted on its own (lifter --user): its functions, its return addresses, and
+// how the machine knows it is the one in memory (the hash of each page of its code, the code's bytes only)
+typedef struct ProgramDef {
+  const char *name; u64 entry, lo, hi; const u64 *page_hashes; unsigned pages;
+  unsigned fn_count; const u64 *fn_addrs; void (*const *fn_ptrs)(struct Cpu *);
+  unsigned resume_count; const u64 *resume_at; const unsigned *resume_fn;
+} ProgramDef;
+#endif
 
 static inline u8 parity(u64 v) { return !__builtin_parity((u8)v); }
 
@@ -170,10 +273,12 @@ static inline u8 fpred(u8 p, double a, double b) { switch (p & 7) { case 0: retu
   case 3: return a != a || b != b; case 4: return !(a == b); case 5: return !(a < b); case 6: return !(a <= b); default: return a == a && b == b; } }
 
 // ---- atomics (lock prefix, xchg with memory) ----
+#ifndef GUEST_MACHINE
 #define ATOM8(a) ((u8 *)GP(a))
 #define ATOM16(a) ((u16 *)GP(a))
 #define ATOM32(a) ((u32 *)GP(a))
 #define ATOM64(a) ((u64 *)GP(a))
+#endif
 u64 rt_random64(void);
 
 // ---- bit scans: the virtual CPU has no BMI1 / LZCNT, so tzcnt runs as bsf and lzcnt as bsr, as on such CPUs ----
@@ -226,42 +331,62 @@ double log2(double); double exp2(double); double log1p(double); double expm1(dou
 #define ST(i) (c->st[(c->ftop + (i)) & 7])
 static inline void fpush(Cpu *c, fpx v) { c->ftop = (c->ftop - 1) & 7; c->st[c->ftop] = v; }
 static inline void fpop(Cpu *c) { c->ftop = (c->ftop + 1) & 7; }
+// The helpers that reach guest memory take the address of the instruction that runs (a machine's image raises a
+// fault there: MR / MWR use ip_, and tlb_). Called by their names, they get the caller's ip_: in a lifted function
+// of a machine's image its own, elsewhere the fallback.
+#ifdef GUEST_MACHINE
+#define MCTX_P , u64 ip_, TlbEntry *tlb_   // and the TLB of the code's privilege
+#define MCTX_A , ip_, tlb_
+#else
+static const u64 ip_ = 0;
+#define MCTX_P , u64 ip_
+#define MCTX_A , ip_
+#endif
+#define f80_load(c, a) f80_load_((c), (a) MCTX_A)
+#define f80_store(c, a, v) f80_store_((c), (a), (v) MCTX_A)
+#define fstenv(c, a) fstenv_((c), (a) MCTX_A)
+#define fldenv(c, a) fldenv_((c), (a) MCTX_A)
+#define fsave(c, a) fsave_((c), (a) MCTX_A)
+#define frstor(c, a) frstor_((c), (a) MCTX_A)
+#define fxsave(c, a) fxsave_((c), (a) MCTX_A)
+#define fxrstor(c, a) fxrstor_((c), (a) MCTX_A)
+
 #ifdef GUEST_LINUX
 // the 80-bit format and binary128 have the same exponent: the mantissa's bits move (its integer bit is explicit in 80 bits)
-static inline fpx f80_load(u64 a) {
+static inline fpx f80_load_(Cpu *c, u64 a MCTX_P) {
   unsigned long long m = M64(a); u16 se = M16(a + 8); unsigned e = se & 0x7FFF; fpx v;
   if (e == 0) { v = scalbnl((fpx)m, -16382 - 63); return (se >> 15) ? -v : v; }   // zero, or a denormal
   unsigned __int128 b = ((unsigned __int128)(((unsigned long long)se << 48) | ((m << 1) >> 16)) << 64) | (unsigned long long)((m << 1) << 48);
   __builtin_memcpy(&v, &b, 16);
   return v;
 }
-static inline void f80_store(u64 a, fpx v) {
+static inline void f80_store_(Cpu *c, u64 a, fpx v MCTX_P) {
   v = fx64(v);
   unsigned __int128 b; __builtin_memcpy(&b, &v, 16);
   unsigned long long hi = (unsigned long long)(b >> 64), lo = (unsigned long long)b; unsigned e = (hi >> 48) & 0x7FFF;
   unsigned long long m = ((hi & 0xFFFFFFFFFFFFull) << 15) | (lo >> 49);
   if (e) m |= 1ull << 63;   // (binary128's denormals are below the 80-bit format's: they become zero)
   else m = 0;
-  M64(a) = m; M16(a + 8) = (u16)(hi >> 48);
+  MW64(a, m); MW16(a + 8, (u16)(hi >> 48));
 }
 // precision control: a result rounded to 24, 53 or 64 bits
 static inline fpx fxr(struct Cpu *c, fpx v);
 #else
-static inline double f80_load(u64 a) {
+static inline double f80_load_(Cpu *c, u64 a MCTX_P) {
   u64 m = M64(a); u16 se = M16(a + 8); int e = se & 0x7FFF; int neg = se >> 15; double v;
   if (e == 0 && m == 0) v = 0.0;
   else if (e == 0x7FFF) v = (m << 1) ? __builtin_nan("") : __builtin_inf();
   else v = ldexp((double)m, e - 16383 - 63);
   return neg ? -v : v;
 }
-static inline void f80_store(u64 a, double v) {
+static inline void f80_store_(Cpu *c, u64 a, double v MCTX_P) {
   u64 bits; __builtin_memcpy(&bits, &v, 8);
   int neg = bits >> 63; int e = (bits >> 52) & 0x7FF; u64 frac = bits & ((1ull << 52) - 1); u64 m; int ee;
   if (e == 0 && frac == 0) { m = 0; ee = 0; }
   else if (e == 0x7FF) { m = (1ull << 63) | (frac << 11); ee = 0x7FFF; }
   else if (e == 0) { int sh = __builtin_clzll(frac) - 11; m = frac << (11 + sh); ee = 1 - 1023 + 16383 - sh; }
   else { m = (1ull << 63) | (frac << 11); ee = e - 1023 + 16383; }
-  M64(a) = m; M16(a + 8) = (u16)(ee | (neg << 15));
+  MW64(a, m); MW16(a + 8, (u16)(ee | (neg << 15)));
 }
 #endif
 static inline void fcom_sw(Cpu *c, fpx a, fpx b) {
@@ -301,14 +426,14 @@ static inline void rep_movs(Cpu *c, u8 df, u32 size) {
   u32 n = (u32)R[RCX], di = (u32)R[RDI], si = (u32)R[RSI], bytes = n * size;
   if (!df) {
     if (di - si >= bytes) __builtin_memmove((void *)GP(di), (void *)GP(si), bytes); // what is read is not written first
-    else if (size == 1) for (u32 k = 0; k < n; k++) M8(di + k) = M8(si + k);
-    else if (size == 2) for (u32 k = 0; k < n; k++) M16(di + 2 * k) = M16(si + 2 * k);
-    else for (u32 k = 0; k < n; k++) M32(di + 4 * k) = M32(si + 4 * k);
+    else if (size == 1) for (u32 k = 0; k < n; k++) MW8(di + k, M8(si + k));
+    else if (size == 2) for (u32 k = 0; k < n; k++) MW16(di + 2 * k, M16(si + 2 * k));
+    else for (u32 k = 0; k < n; k++) MW32(di + 4 * k, M32(si + 4 * k));
     di += bytes; si += bytes;
   } else {
-    if (size == 1) for (u32 k = 0; k < n; k++) M8(di - k) = M8(si - k);
-    else if (size == 2) for (u32 k = 0; k < n; k++) M16(di - 2 * k) = M16(si - 2 * k);
-    else for (u32 k = 0; k < n; k++) M32(di - 4 * k) = M32(si - 4 * k);
+    if (size == 1) for (u32 k = 0; k < n; k++) MW8(di - k, M8(si - k));
+    else if (size == 2) for (u32 k = 0; k < n; k++) MW16(di - 2 * k, M16(si - 2 * k));
+    else for (u32 k = 0; k < n; k++) MW32(di - 4 * k, M32(si - 4 * k));
     di -= bytes; si -= bytes;
   }
   R[RCX] = 0; R[RDI] = di; R[RSI] = si;
@@ -317,13 +442,13 @@ static inline void rep_stos(Cpu *c, u8 df, u32 size) {
   u32 n = (u32)R[RCX], di = (u32)R[RDI], bytes = n * size;
   if (!df) {
     if (size == 1) __builtin_memset((void *)GP(di), (u8)R[0], n);
-    else if (size == 2) for (u32 k = 0; k < n; k++) M16(di + 2 * k) = (u16)R[0];
-    else for (u32 k = 0; k < n; k++) M32(di + 4 * k) = (u32)R[0];
+    else if (size == 2) for (u32 k = 0; k < n; k++) MW16(di + 2 * k, (u16)R[0]);
+    else for (u32 k = 0; k < n; k++) MW32(di + 4 * k, (u32)R[0]);
     di += bytes;
   } else {
-    if (size == 1) for (u32 k = 0; k < n; k++) M8(di - k) = (u8)R[0];
-    else if (size == 2) for (u32 k = 0; k < n; k++) M16(di - 2 * k) = (u16)R[0];
-    else for (u32 k = 0; k < n; k++) M32(di - 4 * k) = (u32)R[0];
+    if (size == 1) for (u32 k = 0; k < n; k++) MW8(di - k, (u8)R[0]);
+    else if (size == 2) for (u32 k = 0; k < n; k++) MW16(di - 2 * k, (u16)R[0]);
+    else for (u32 k = 0; k < n; k++) MW32(di - 4 * k, (u32)R[0]);
     di -= bytes;
   }
   R[RCX] = 0; R[RDI] = di;
@@ -348,13 +473,25 @@ static inline void fxtract(Cpu *c) {
 }
 // the 28-byte environment and the 108-byte state of 32-bit protected mode. Which registers are empty is not
 // tracked: the tag word says none is. Instruction and operand pointers are zero.
-static inline void fstenv(Cpu *c, u64 a) {
-  M32(a) = 0xFFFF0000u | c->fcw; M32(a + 4) = 0xFFFF0000u | fstsw(c); M32(a + 8) = 0xFFFF0000u;
-  M32(a + 12) = 0; M32(a + 16) = 0; M32(a + 20) = 0; M32(a + 24) = 0xFFFF0000u;
+static inline void fstenv_(Cpu *c, u64 a MCTX_P) {
+  MW32(a, 0xFFFF0000u | c->fcw); MW32(a + 4, 0xFFFF0000u | fstsw(c)); MW32(a + 8, 0xFFFF0000u);
+  MW32(a + 12, 0); MW32(a + 16, 0); MW32(a + 20, 0); MW32(a + 24, 0xFFFF0000u);
 }
-static inline void fldenv(Cpu *c, u64 a) { u16 sw = M16(a + 4); c->fcw = M16(a); c->fsw = sw & ~0x3800; c->ftop = (sw >> 11) & 7; }
-static inline void fsave(Cpu *c, u64 a) { fstenv(c, a); for (int i = 0; i < 8; i++) f80_store(a + 28 + 10 * i, ST(i)); c->ftop = 0; c->fcw = 0x37F; c->fsw = 0; }
-static inline void frstor(Cpu *c, u64 a) { fldenv(c, a); for (int i = 0; i < 8; i++) ST(i) = f80_load(a + 28 + 10 * i); }
+static inline void fldenv_(Cpu *c, u64 a MCTX_P) { u16 sw = M16(a + 4); c->fcw = M16(a); c->fsw = sw & ~0x3800; c->ftop = (sw >> 11) & 7; }
+static inline void fsave_(Cpu *c, u64 a MCTX_P) { fstenv(c, a); for (int i = 0; i < 8; i++) f80_store(c, a + 28 + 10 * i, ST(i)); c->ftop = 0; c->fcw = 0x37F; c->fsw = 0; }
+static inline void frstor_(Cpu *c, u64 a MCTX_P) { fldenv(c, a); for (int i = 0; i < 8; i++) ST(i) = f80_load(c, a + 28 + 10 * i); }
+// fxsave / fxrstor (64-bit layout): the x87 and SSE state in 512 bytes (the tag word abridged: all registers valid)
+static inline void fxsave_(Cpu *c, u64 a MCTX_P) {
+  MW16(a, c->fcw); MW16(a + 2, fstsw(c)); MW16(a + 4, 0xFF); MW16(a + 6, 0); MW64(a + 8, 0); MW64(a + 16, 0);
+  MW32(a + 24, c->mxcsr); MW32(a + 28, 0xFFFF);
+  for (int i = 0; i < 8; i++) { f80_store(c, a + 32 + 16 * i, ST(i)); MW16(a + 42 + 16 * i, 0); MW32(a + 44 + 16 * i, 0); }
+  for (int i = 0; i < 16; i++) MWV(a + 160 + 16 * i, c->x[i]);
+}
+static inline void fxrstor_(Cpu *c, u64 a MCTX_P) {
+  c->fcw = M16(a); u16 sw = M16(a + 2); c->fsw = sw & ~0x3800; c->ftop = (sw >> 11) & 7; c->mxcsr = M32(a + 24);
+  for (int i = 0; i < 8; i++) ST(i) = f80_load(c, a + 32 + 16 * i);
+  for (int i = 0; i < 16; i++) c->x[i] = MV(a + 160 + 16 * i);
+}
 
 // ---- more SSE, on WebAssembly SIMD where it has the same operation ----
 #include <wasm_simd128.h>

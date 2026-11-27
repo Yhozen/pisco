@@ -10,7 +10,7 @@ titles, its own next steps and its own goal:
 | [Windows x86](#windows-x86) | Narbacular Drop, playable; Tag: The Power of Paint into its second level | Tag played by hand on a real GPU, then its later levels | 32-bit Direct3D 9 games of the 2000s |
 | [Linux x64](#linux-x64) | fastfetch 2.71.0; neofetch 7.1.0 (bash, busybox); cowsay 3.8.4 (perl) | threads, signals, writes | statically linked command-line programs |
 | [PS5](ps5.md) | the raymarching tech demo (CPU-drawn, AVX2): its three scenes, pad and music in the browser | more system functions, a GPU (AGC) title | PS5 homebrew |
-| [Microvm x64](linux.md), planned | nothing yet: Linux 6.18 is built, read by the lifter and booted on the oracle (K0) | the machine, on a test kernel of our own (K1) | Linux itself, lifted, and its programs |
+| [Microvm x64](#microvm-x64) | Linux 6.18 and busybox lifted, as an image: `/init`'s programs print what they print on QEMU; a shell typed into in a terminal or the page; a virtio disk | a network; programs found by content | Linux itself, lifted, and its programs |
 
 ## Shared: the recompiler, the core runtime, the packages
 
@@ -247,17 +247,41 @@ loads itself and Miles Sound System 6.1c beside it ([mohaa.md](mohaa.md)). What 
 6. **Fork without copying everything**: a fork copies the whole memory (64 MiB for bash, about 20 ms).
 7. **Smaller modules for large programs**: perl's is 34 MB, some of its code decoded into more than one function.
 
-## Microvm x64 (planned)
+## Microvm x64
 
 A runtime that imitates a small x86-64 machine, so that a real Linux kernel is a title ([linux.md](linux.md); the
-reasoning and the measurements: [research/kernel-as-a-title.md](research/kernel-as-a-title.md)). No file of it is
-written yet.
+reasoning and the measurements: [research/kernel-as-a-title.md](research/kernel-as-a-title.md)).
 
 - **K0, done**: `tools/build-linux.sh` builds Linux 6.18.65 and an initramfs of busybox; the lifter reads `vmlinux`
   (10,853 functions; 3,958 instructions of the system not lifted yet); QEMU boots it as the oracle, and what
   `/init`'s programs print is recorded (`tests/run.sh kernel`).
-- **Next, K1**: the machine on a test kernel of our own: a software MMU, faults and interrupts as nested calls, a
-  host stack per task, a local APIC, an IOAPIC, a serial port.
+- **K1, done**: the machine (`rt/microvm-x64`): a software MMU over the kernel's page tables, exceptions,
+  interrupts and system calls as nested runs of lifted code, the local APIC's timer on a virtual clock, a 16550,
+  and a host stack per kernel task (JSPI). `fixtures/microvm-hello`, our own test kernel, prints what QEMU prints,
+  in Node and headless Chrome (`tests/run.sh microvm`, a default step). With the machine mode the lifter leaves 56
+  of Linux's 602,001 instructions.
+- **K2, done**: Linux 6.18 lifted (a 42 MB module) boots on the machine in Node to `Run /init as init process`, in
+  0.9 s, the same on every run (`tests/run.sh kernel`, `recipes/linux/traces/boot.txt`). It took the kernel's
+  runtime constants read from memory, its static-call trampolines decoded as it rewrites them, labels where its
+  `int3` self-test returns, the boot protocol, an MP table, the IOAPIC and a CMOS clock.
+- **K3, done**: busybox lifted into the kernel's module (`lifter --program`): `/init`'s programs (pipes, `fork`,
+  `exec`, a file written and hashed, signals) print what they print on QEMU, in 2.5 s from Node's start; ten
+  programs executed in 18 ms (`tests/run.sh kernel`).
+- **K4, done**: the serial port's input (a terminal's keys, the page's, a pipe), idle that waits for keys, and
+  `pisco build recipes/linux` (two builds with empty caches, the same manifest). A shell typed into answers as
+  `recipes/linux/traces/console.txt`.
+- **K5, done**: virtio's block device (`rt/microvm-x64/virtio.c`, `SW_DISK`): `/init` formats the disk, writes it
+  and reads it again.
+- **K6, done**: programs at the same addresses, each lifted on its own (`lifter --user`) and found by the hash of
+  the code page that runs: busybox and linux-hello in one `/init`, as on QEMU.
+- **K7, done**: a signal delivered on the way back from a fault or an interrupt (the handler runs on top, the
+  interrupted code goes on after `sigreturn`); a task's stacks freed when it ends: 4,000 programs in a row.
+- **K8, done**: fastfetch and cowsay on perl run on the lifted Linux beside busybox, as on QEMU; fastfetch reads the
+  kernel's own `/proc`.
+- **K9, done**: bash (GPL-3.0) in a wasm module of its own, loaded by the host beside the kernel's
+  (`web/side.mjs`, `[lifter] modules`), runs as on QEMU.
+- **K10, done**: in Node, a program no build lifted is lifted when it first runs (`web/lift.mjs`, `out/lift-cache`).
+- **Next**: a network, programs from the disk, snapshots.
 
 ## Known limits
 

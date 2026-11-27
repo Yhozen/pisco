@@ -18,12 +18,31 @@ echo "sort: $(printf 'pear\napple\nfig\n' | sort | tr '\n' ' ')"
 echo "sed: $(echo 'the kernel is a title' | sed 's/title/program/')"
 echo "ls: $(ls / | tr '\n' ' ')"
 echo "id: $(id -u):$(id -g)"
+# a second program at busybox's addresses (fixtures/linux-hello, at 0x400000 too): what its C library prints
+/bin/hello --pure one 2>/dev/null | sed -n '1,7p' | sed 's/^/hello: /'
 
 # signals: a child killed, and a handler run. (The shell's own "Terminated" depends on when it looks: not shown.)
 ( sleep 1000 & p=$!; kill -TERM $p; wait $p; echo "kill: the child ended with $?" ) 2>/dev/null
 ( trap 'echo "trap: USR1 handled"; exit 3' USR1; sh -c 'kill -USR1 $PPID'; sleep 1000 ); echo "trap: the subshell ended with $?"
+# a signal into a program that computes (no system call to wait in): its handler runs, then the loop goes on
+sh -c 'trap "echo async: USR2 caught while counting" USR2; (sleep 0.05; kill -USR2 $$) & i=0; while [ $i -lt 30000 ]; do i=$((i + 1)); done; wait; echo "async: counted to $i"'
+# fastfetch (static, at the addresses of busybox and hello too): what it finds of this kernel
+fastfetch --pipe -l none -s Kernel:Locale 2>/dev/null | sed 's/^/fastfetch: /'
+# bash, a program in a module of its own (its licence, GPL-3.0, is not linked with the kernel's)
+bash -c 'echo "bash: ${BASH_VERSION%%(*}, $(( 6 * 7 )), ${#BASH_VERSINFO[@]} parts of a version"'
+# a program no build lifted (fixtures/linux-proc): the host lifts it when it first runs (web/lift.mjs)
+out=$(/bin/proc --echo lifted when it first ran); r=$?; echo "proc: $out, exit $r"
+# cowsay on perl (static, at those addresses too)
+cowsay "Hello from the lifted Linux"
 n=0; for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do true && n=$((n + 1)); done; echo "spawn: $n loops"
 for i in 1 2 3 4 5 6 7 8 9 10; do /bin/true; done; echo "exec: 10 programs run"
+
+# a disk, when the machine has one (rt/microvm-x64 with SW_DISK: virtio's block device): formatted, written, read again
+if [ -b /dev/vda ]; then
+  mke2fs -q /dev/vda > /dev/null 2>&1; mkdir -p /mnt
+  mount -t ext2 /dev/vda /mnt && seq 1000 > /mnt/numbers && echo "on the disk" > /mnt/note && sync && umount /mnt
+  mount -t ext2 /dev/vda /mnt && echo "disk: $(cat /mnt/note), $(wc -l < /mnt/numbers) lines, $(blockdev --getsize64 /dev/vda) bytes" && umount /mnt
+fi
 
 echo "init: done"
 # the end: the exit port (QEMU's isa-debug-exit at 0xf4; rt/microvm-x64 has the same)

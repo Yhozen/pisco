@@ -79,7 +79,7 @@ impl Image {
         let sy = file_of(symtab).ok_or("the symbol table is outside the image")?;
         let mut img = Image { bits: 64, base, entry, sections, text, pdata: BTreeMap::new(), unwind: BTreeMap::new(), imports: Vec::new(), relocs: Vec::new(), raw, orig_base: base,
             dirs: Vec::new(), stack_reserve: 1 << 20, fixed: false, size, is_dll: false, exports: Vec::new(), ranges: vec![(base, base + size)], elf: false, seeds: Vec::new(), jumps: BTreeMap::new(),
-            ps5: true, machine: false, reloc_values: Vec::new() };
+            ps5: true, machine: false, named: BTreeMap::new(), patched: BTreeSet::new(), reloc_values: Vec::new() };
         let mut tables = vec![(rela, relasz)];
         if jmprel != rela && pltrelsz != 0 { tables.push((jmprel, pltrelsz)); }
         for (at, n) in tables {

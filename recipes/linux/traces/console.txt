@@ -1,0 +1,10 @@
+Run /bin/sh as init process
+/bin/sh: can't access tty; job control turned off
+~ # mount -t devtmpfs dev /dev
+~ # echo typed: $((6 * 7))
+typed: 42
+~ # uname -sr
+Linux 6.18.65
+~ # cd /tmp && echo kept > file && cat file && rm file && ls
+kept
+/tmp # printf "\000" | dd of=/dev/port bs=1 seek=244 count=1 2>/dev/null

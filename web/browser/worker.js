@@ -2,6 +2,7 @@
 // One guest thread. Output and exit go through a BroadcastChannel: the page reads it, whichever worker writes.
 // The title's files come from its folder's URL (`dir`), or for a title image from its drive (`drive`: the file layers,
 // served by tools/serve.mjs) where its folder is `folder` (web/image.mjs).
+import { loadSide } from '../side.mjs';
 import { driveName } from '../image.mjs';
 import { processImports } from '../kernel.mjs';
 const bus = new BroadcastChannel('pisco');
@@ -19,7 +20,7 @@ onmessage = (e) => {
   } else run(e.data);
 };
 function run(d) {
-  const { module, memory, dir, drive = null, folder = null, tids, tid, args, env, start, pool, store = [], t0 = 0, kernel = null, programs = null, pid = 1, mode = 'start' } = d;
+  const { module, memory, dir, drive = null, folder = null, tids, tid, args, env, start, pool, store = [], t0 = 0, kernel = null, programs = null, side = [], pid = 1, mode = 'start' } = d;
   // one monotonic clock for every thread: each worker's performance.now() counts from its own start
   const clock = () => performance.timeOrigin + performance.now() - t0;
   const u8 = () => new Uint8Array(memory.buffer), dv = () => new DataView(memory.buffer);
@@ -97,6 +98,7 @@ function run(d) {
     frame_dump: () => {}, // SW_DUMP_RAW is Node's: an offline render writes presented frames (run-node.mjs)
     input_open: (block) => bus.postMessage({ input: block >>> 0 }), // and writes the keyboard and gamepad here
     win32_input_open: (ring) => bus.postMessage({ win32input: ring >>> 0 }), // a desktop title's keyboard and mouse events (rt/windows-x86/input.c)
+    console_open: (ring) => bus.postMessage({ console: ring >>> 0 }), // a machine's console (rt/microvm-x64): the page's keys go there
     exit: (code) => exit(code),
   };
   // a Linux title's process (web/kernel.mjs): the page starts the workers of a fork and of an execve
@@ -115,7 +117,26 @@ function run(d) {
     }
     return -6; // EAGAIN: no idle worker
   };
+  // a machine (rt/microvm-x64): each of its kernel's tasks on a wasm stack of its own (JSPI), as in web/run-node.mjs
+  const machine = WebAssembly.Module.exports(module).some((e) => e.name === 'rt_co_entry');
+  let coEntry = null;
+  if (machine) {
+    host.program_missing = () => 0;   // (programs lifted when they first run need the lifter: Node only, web/lift.mjs)
+    const parked = new Map();
+    host.co_switch = new WebAssembly.Suspending((from, to, begin, dead) => {
+      const mine = new Promise((resolve) => { if (!dead) parked.set(from, resolve); });   // (a task that died is never resumed: its stack is dropped)
+      if (begin) coEntry(to).catch((err) => { bus.postMessage({ out: `pisco: ${err && err.stack || err}\n` }); exit(123); });
+      else { const go = parked.get(to); if (!go) throw new Error(`machine: task ${to} is not waiting`); parked.delete(to); go(); }
+      return mine;
+    });
+  }
   const instance = new WebAssembly.Instance(module, { env: { memory }, wasi_snapshot_preview1: wasi, wasi: { 'thread-spawn': spawn }, host });
+  if (machine) {
+    coEntry = WebAssembly.promising(instance.exports.rt_co_entry);
+    for (const [n, bytes] of side) loadSide(bytes, instance, memory, n);   // its programs in modules of their own
+    WebAssembly.promising(instance.exports._start)().then(() => exit(0), (err) => { bus.postMessage({ out: `pisco: ${err && err.stack || err}\n` }); exit(123); });
+    return;
+  }
   try {
     if (tid === 0 && mode === 'fork') { instance.exports.rt_fork_resume(); exit(0); }
     else if (tid === 0) { instance.exports._start(); exit(0); }
