@@ -174,6 +174,67 @@ The probe runs a freestanding function. A title host would additionally need an 
 and devices. KVM here requires an x86-64 host CPU. An Apple Silicon Mac can run x86 code through PISCO's lift.
 [Probe source](../tests/kvm/)
 
+### libkrun, weighed and measured on an M1 (2026-11-27)
+
+[libkrun](https://github.com/libkrun/libkrun) (Apache-2.0; read at 1.19.8 on `stable-1.19.x` and at 2.0 on `main`)
+is a VMM in a library: it boots a Linux kernel (libkrunfw) and runs one process in it, with virtio devices (files,
+disks, network, vsock, a GPU through Venus or native context). It cannot replace the probe's import:
+
+- **No vCPU in its API.** 1.19's `krun_start_enter` takes over the process and calls `exit()` with the workload's
+  code when the VM stops; 2.0 has a builder and `krun_vmm_run` with pause, resume and shutdown. Neither sets
+  registers, maps the caller's memory as guest RAM or returns VM exits to the caller.
+- **Its guest CPU is the host's.** On macOS its only back end is aarch64 on Hypervisor.framework; x86_64 is for Linux
+  (KVM) and Windows (WHP, in progress) hosts. On Apple Silicon, x86-64 code in a libkrun guest goes through a
+  translator inside the arm64 guest. libkrun dropped Rosetta in 2024 ("broken for a while", commit `0b6a735`), and
+  PISCO does not use Rosetta either.
+
+Measured on an M1 MacBook Pro (macOS 26.6.2, on battery in Low Power Mode, load average about 3). The workload is
+`fixtures/bench`, in ms, best of 3 interleaved rounds. Every run gave the native checksums. The guest was podman
+6.2.1's libkrun machine (krunkit 1.3.2, libkrun 1.19.8, libkrunfw 5.6.4) running Fedora CoreOS 45 (Linux 7.2.11
+aarch64, 4 KiB pages, 4 vCPUs, 4 GiB). qemu-user was the guest's own `qemu-user-static-x86` 11.1.2, through binfmt.
+FEX was Fedora 43's `fex-emu` 2603, run in a container. The guest ran `fixtures/bench-native` built for
+`aarch64-unknown-linux-musl` and `x86_64-unknown-linux-musl`. The lifted column is `out/bench/title.wasm`, built on
+the x86-64 test VM and copied to the Mac.
+
+| workload | macOS, arm64 | lifted, Node 26 on macOS | guest, arm64 | guest, x86-64 on qemu-user | guest, x86-64 on FEX |
+|---|---|---|---|---|---|
+| calls (fib 32) | 10 | 22 | 10 | 66 | 14 |
+| bytes (FNV, 64 MB) | 145 | 220 | 156 | 189 | 156 |
+| sort (heapsort, 2M u32) | 244 | 671 | 336 | 745 | 479 |
+| float (4x4 transform) | 16 | 76 | 19 | 1,477 | 25 |
+| memory (20M random loads) | 141 | 184 | 153 | 184 | 171 |
+
+- The VM itself costs little. arm64 code in the guest was within 10 % of macOS on calls, bytes and memory, 19 %
+  slower on float and 38 % slower on sort.
+- FEX ran the x86-64 build 1.1 to 3 times faster than the lift in Node on every workload. qemu-user was slower than
+  the lift on calls, sort and float (92 times native on float), faster on bytes and equal on memory. The lift ran on
+  V8 here. On the x86-64 test VM, Wasmtime 51 took 0.7 to 1 times V8's time (the table above). Scaled by those
+  ratios, the lift would draw level with FEX on sort and memory and stay behind on calls, bytes and float. The lift's
+  own next steps are listed under Speed in [status.md](status.md#xbox-series).
+- So on an Apple Silicon Mac, libkrun with FEX is the faster CPU path for x86-64 *Linux* programs today. That is step
+  0 of "Could PISCO run any Docker image?" in [the research note](research/wamr-unkernel-tabc.md), with FEX in place
+  of qemu-user. It is not a PISCO host: it has no browser, needs a Linux guest of about 1 GB, and Windows and console
+  titles would need Wine and their own system libraries running on FEX instead of PISCO's runtimes.
+
+To repeat it on an Apple Silicon Mac, from `fixtures/bench-native`, with Homebrew and rustup:
+
+```sh
+brew install podman   # brings krunkit, libkrun and libkrunfw
+rustup target add aarch64-unknown-linux-musl x86_64-unknown-linux-musl
+CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=rust-lld cargo build --release --target aarch64-unknown-linux-musl
+CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=rust-lld cargo build --release --target x86_64-unknown-linux-musl
+export CONTAINERS_MACHINE_PROVIDER=libkrun
+podman machine init --cpus 4 --memory 4096 -v "$PWD/target:/work:ro" krun && podman machine start krun
+podman machine ssh krun /work/aarch64-unknown-linux-musl/release/bench-native
+podman machine ssh krun /work/x86_64-unknown-linux-musl/release/bench-native   # qemu-user, through binfmt
+podman run --rm -v /work:/work:ro registry.fedoraproject.org/fedora:43 \
+  sh -c 'dnf install -y -q fex-emu && FEXInterpreter /work/x86_64-unknown-linux-musl/release/bench-native'
+podman machine rm -f krun
+```
+
+The lifted column is `node web/run-node.mjs out/bench/title.wasm fixtures/bench/target/x86_64-pc-windows-msvc/release/bench.exe`,
+run on the Mac with the two files that `tests/run.sh bench` built on Linux.
+
 ## Sources
 
 - Tauri and WebGPU: [tauri#6381](https://github.com/tauri-apps/tauri/issues/6381);
@@ -187,3 +248,8 @@ and devices. KVM here requires an x86-64 host CPU. An Apple Silicon Mac can run 
   [no legacy exceptions](https://bytecodealliance.github.io/zulip-archive/stream/217126-wasmtime/topic/Exception.20Standard.html)
 - wgpu native-only features: [FeaturesWGPU](https://docs.rs/wgpu-types/29.0.4/wgpu_types/struct.FeaturesWGPU.html)
 - Deno: [WebGPU on the desktop](https://docs.deno.com/runtime/desktop/webgpu/)
+- libkrun: [repository](https://github.com/libkrun/libkrun),
+  [`include/libkrun.h` on 1.19](https://github.com/libkrun/libkrun/blob/stable-1.19.x/include/libkrun.h),
+  [macOS build notes (Apple Silicon only)](https://github.com/libkrun/libkrun/blob/main/docs/building.md),
+  [macos: drop Rosetta support](https://github.com/libkrun/libkrun/commit/0b6a73562);
+  Rosetta 2 on macOS: [Apple's notice](https://developer.apple.com/news/?id=w5ngl9k2)
