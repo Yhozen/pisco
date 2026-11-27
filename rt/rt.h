@@ -36,6 +36,9 @@ extern const char *const import_names[];
 const ModuleDef *rt_module_of(u64 addr);                   // the lifted image holding addr, or 0
 const ModuleDef *rt_module_named(const char *name);       // by file name, case-insensitive, with or without ".dll"
 u64 rt_module_export(const ModuleDef *m, const char *name); // from its export directory in guest memory
+int rt_module_loaded(const ModuleDef *m);                  // an on-demand DLL counts once LoadLibrary has loaded it
+u64 rt_module_load(Cpu *c, const ModuleDef *m);           // LoadLibrary of a lifted image: its base (an on-demand DLL: attached)
+int rt_module_free(Cpu *c, const ModuleDef *m);           // FreeLibrary: an on-demand DLL's last reference detaches it
 
 // ---- guest calls ----
 // The runtime is built for one guest width (GUEST_BITS, from the title: cpu.h defaults it to 64).

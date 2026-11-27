@@ -8,6 +8,7 @@
 // The repository is found from this program's own place (target/release/pisco), or SW_ROOT.
 mod build;
 mod census;
+mod installers;
 mod oci;
 mod recipe;
 

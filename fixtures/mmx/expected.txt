@@ -1,0 +1,63 @@
+paddb ff007e81ff000000
+paddw 00007e8100000100
+paddd 00017e8100010100
+paddsb ff007e81ff008000
+paddsw 00007e8100008000
+paddusb ffffff81ffffffff
+paddusw ffffffffffffffff
+psubb 01fe808101fc0002
+psubw 01fe7f8101fcff02
+psubd 01fd7f8101fbff02
+psubsb 80fe7f7f01fc0002
+psubsw 80007f8101fcff02
+psubusb 01fe000000fc0000
+psubusw 01fe000000000000
+pmullw a1dd5e6797aa4def
+pmulhw ff6f226eff8a1908
+pmaddwd 21de00441892e599
+pand 0023450100aa8001
+pandn 0100006689014dee
+por 81ff7f6789ffcdef
+pxor 81dc3a6689554dee
+pcmpeqb ffffffffffffffff
+pcmpeqw 0000000000000000
+pcmpeqd ffffffffffffffff
+pcmpgtb 0000ffffff0000ff
+pcmpgtw 0000ffffffff0000
+pcmpgtd 00000000ffffffff
+packsswb 7f7f8080807f7f80
+packssdw 7fff800080007fff
+packuswb ffff000000fffe00
+punpcklbw 8900abfecd80ef01
+punpcklwd 89ab00fecdef8001
+punpckldq 89abcdef00fe8001
+punpckhbw 018023ff457f6701
+punpckhwd 012380ff45677f01
+punpckhdq 0123456780ff7f01
+psllw 3 07f8f80807f00008
+pslld 9 fefe0200fd000200
+psllq 20 f0100fe800100000
+psrlw 3 101f0fe0001f1000
+psrld 9 00407fbf00007f40
+psrlq 20 0000080ff7f0100f
+psraw 3 f01f0fe0001ff000
+psrad 9 ffc07fbf00007f40
+psllw 16 0000000000000000
+psraw 16 ffff00000000ffff
+psllw mm 123056709ab0def0
+psrlq mm 00123456789abcde
+psrad mm f80ff7f0000fe800
+paddw mem 8222c4688aa94df0
+psubusb mem 01fe000000fc0000
+movd out 0000000089abcdef
+movd in 0000000089abcdef
+pshufw cdef89ab45670123
+pinsrw 0123beef89abcdef
+pextrw 0000000000000123
+pmovmskb 00000000000000c6
+pavgb 8080bf4180808080
+pminub 7f017f0100028001
+pmaxsw 7f017f0100fe80ff
+psadbw 00000000000004f7
+pmulhuw 0092226e008866f8
+x87 after emms 400c000000000000

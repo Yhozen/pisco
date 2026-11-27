@@ -14,3 +14,14 @@ kernel32.dll!InterlockedDecrement 4
 # DirectDraw's exports (rt/windows-x86/ddraw.c), looked up with GetProcAddress
 ddraw.dll!DirectDrawCreate 12
 ddraw.dll!DirectDrawCreateEx 16
+# OpenGL's extension functions, which a title gets from wglGetProcAddress (opengl32.dll's import library has none)
+opengl32.dll!glActiveTextureARB 4
+opengl32.dll!glClientActiveTextureARB 4
+opengl32.dll!glMultiTexCoord2fARB 12
+opengl32.dll!glMultiTexCoord2fvARB 8
+opengl32.dll!glLockArraysEXT 8
+opengl32.dll!glUnlockArraysEXT 0
+opengl32.dll!wglSwapIntervalEXT 4
+opengl32.dll!wglGetSwapIntervalEXT 0
+opengl32.dll!wglGetExtensionsStringARB 4
+opengl32.dll!wglGetExtensionsStringEXT 0

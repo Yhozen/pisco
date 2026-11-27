@@ -48,7 +48,7 @@ for (const rt of Object.keys(RUNTIMES)) {
 const impls = new Map([...implsOf['windows-x64'], ...implsOf['xbox-series']]); // D3D12's methods: both 64-bit runtimes
 // the runtime each title is built for (its recipe's base)
 const TITLE_RUNTIME = { 'Doom (our console title)': 'xbox-series', "XCL's console test title": 'xbox-series', 'Stockfish 19 (official build)': 'windows-x64',
-  'SimpleTriangleDesktop (clang-cl)': 'windows-x64', 'SimpleTriangleDesktop (MSVC)': 'windows-x64', 'SimplePBR (clang-cl)': 'windows-x64', 'Narbacular Drop': 'windows-x86', 'Tag: The Power of Paint': 'windows-x86', 'fastfetch 2.71.0': 'linux-x64', 'neofetch 7.1.0 (bash, busybox)': 'linux-x64', 'Desire (DESI:Re v0.1)': 'windows-x64' };
+  'SimpleTriangleDesktop (clang-cl)': 'windows-x64', 'SimpleTriangleDesktop (MSVC)': 'windows-x64', 'SimplePBR (clang-cl)': 'windows-x64', 'Narbacular Drop': 'windows-x86', 'Tag: The Power of Paint': 'windows-x86', 'fastfetch 2.71.0': 'linux-x64', 'neofetch 7.1.0 (bash, busybox)': 'linux-x64', 'Desire (DESI:Re v0.1)': 'windows-x64', "Medal of Honor: Allied Assault's demo": 'windows-x86' };
 const dataImports = new Set(['msvcrt.dll!__initenv', 'msvcrt.dll!_commode', 'msvcrt.dll!_fmode']);
 // rt/process.c's find_import, in JavaScript, against one runtime's functions
 function resolves(full, rt) {
@@ -93,6 +93,7 @@ if (argv.includes('--refresh')) {
     'Narbacular Drop': 'out/nd/title.c',                          // tests/run.sh nd
     'Tag: The Power of Paint': 'out/pc-tag/lift/*/title.c',       // tests/run.sh tag (pisco build's cache: the newest lift)
     'Desire (DESI:Re v0.1)': 'out/pc-desire/lift/*/title.c',      // tests/run.sh desireplay
+    "Medal of Honor: Allied Assault's demo": 'out/pc-mohaa/lift/*/title.c',   // tests/run.sh mohaa (its static imports; OpenGL and DirectSound are found by name)
   };
   const old = fs.existsSync(dataPath) ? JSON.parse(fs.readFileSync(dataPath, 'utf8')) : {};
   const data = { updated: new Date().toISOString().slice(0, 10), titles: old.titles || {}, xcl: old.xcl || [], ladder: old.ladder, facts: old.facts };

@@ -57,7 +57,40 @@ IMP(ws2_32, inet_ntoa) { // (in_addr by value): a buffer of the thread's, as Win
   static __thread u64 g; if (!g) g = (uptr)calloc(1, 16);
   strcpy(GSTR(g), buf); RET(g);
 }
-// ws2_32's ordinals (as its import library numbers them); wsock32's are the same functions
+IMP(ws2_32, connect) { u32 i = sock_of(ARG(0)); wsa_error(c, i == ~0u ? WSAENOTSOCK : 10061); RET(0xFFFFFFFFu); }   // WSAECONNREFUSED: no one is there
+IMP(ws2_32, getsockname) { // (socket, sockaddr *, &length): 127.0.0.1 and the port it was bound to
+  u32 i = sock_of(ARG(0)); if (i == ~0u) { wsa_error(c, WSAENOTSOCK); RET(0xFFFFFFFFu); return; }
+  u64 a = ARG(1); if (!a || !ARG(2) || M32(ARG(2)) < 16) { wsa_error(c, 10014); RET(0xFFFFFFFFu); return; }
+  memset((void *)GP(a), 0, 16); M16(a) = 2; M16(a + 2) = sockets[i].port; M8(a + 4) = 127; M8(a + 7) = 1; M32(ARG(2)) = 16; RET(0);
+}
+IMP(ws2_32, inet_addr) { // "a.b.c.d" -> the address in network order; INADDR_NONE for anything else
+  unsigned a, b, d, e; char x;
+  if (sscanf(GSTR(ARG(0)), "%u.%u.%u.%u%c", &a, &b, &d, &e, &x) != 4 || a > 255 || b > 255 || d > 255 || e > 255) { RET(0xFFFFFFFFu); return; }
+  RET(a | b << 8 | d << 16 | e << 24);
+}
+IMP(ws2_32, send) { u32 i = sock_of(ARG(0)); if (i == ~0u) { wsa_error(c, WSAENOTSOCK); RET(0xFFFFFFFFu); return; } RET((u32)ARG(2)); }
+IMP(ws2_32, recv) {
+  u32 i = sock_of(ARG(0)); if (i == ~0u) { wsa_error(c, WSAENOTSOCK); RET(0xFFFFFFFFu); return; }
+  if (!sockets[i].nonblocking) rt_fatal("ws2_32: recv on a blocking socket would wait for ever: there is no network");
+  wsa_error(c, WSAEWOULDBLOCK); RET(0xFFFFFFFFu);
+}
+// select(n, read fd_set *, write, except, timeval *): nothing is ever readable; every socket can be written to. With
+// nothing to report, it waits for its time-out (a virtual clock moves on by it). fd_set: count, then the sockets.
+IMP(ws2_32, select) {
+  u64 rd = ARG(1), wr = ARG(2), ex = ARG(3), tv = ARG(4); u32 ready = 0;
+  if (rd) M32(rd) = 0;
+  if (ex) M32(ex) = 0;
+  if (wr) ready += M32(wr);
+  if (!ready && tv) { u64 us = (u64)M32(tv) * 1000000 + M32(tv + 4); if (rt_clock_virtual()) rt_clock_advance(us); }
+  RET(ready);
+}
+IMP(ws2_32, __WSAFDIsSet) { u64 set = ARG(1); u32 n = M32(set); for (u32 k = 0; k < n && k < 64; k++) if (M32(set + 4 + 4 * k) == (u32)ARG(0)) { RET(1); return; } RET(0); }
+IMP(ws2_32, getsockopt) { // (socket, level, name, value *, &length): every option is 0
+  if (sock_of(ARG(0)) == ~0u) { wsa_error(c, WSAENOTSOCK); RET(0xFFFFFFFFu); return; }
+  if (ARG(3) && ARG(4) && M32(ARG(4)) >= 4) { M32(ARG(3)) = 0; M32(ARG(4)) = 4; }
+  RET(0);
+}
+// ws2_32's ordinals (as its import library numbers them); wsock32's are the same functions but for three (rt/process.c)
 ALIAS(ws2_32, "#2", bind, 12);
 ALIAS(ws2_32, "#3", closesocket, 4);
 ALIAS(ws2_32, "#8", htonl, 4);
@@ -70,6 +103,14 @@ ALIAS(ws2_32, "#17", recvfrom, 24);
 ALIAS(ws2_32, "#20", sendto, 24);
 ALIAS(ws2_32, "#21", setsockopt, 20);
 ALIAS(ws2_32, "#23", socket, 12);
+ALIAS(ws2_32, "#4", connect, 12);
+ALIAS(ws2_32, "#6", getsockname, 12);
+ALIAS(ws2_32, "#7", getsockopt, 20);
+ALIAS(ws2_32, "#11", inet_addr, 4);
+ALIAS(ws2_32, "#16", recv, 16);
+ALIAS(ws2_32, "#18", select, 20);
+ALIAS(ws2_32, "#19", send, 16);
+ALIAS(ws2_32, "#151", __WSAFDIsSet, 8);
 ALIAS(ws2_32, "#52", gethostbyname, 4);
 ALIAS(ws2_32, "#57", gethostname, 8);
 ALIAS(ws2_32, "#111", WSAGetLastError, 0);
