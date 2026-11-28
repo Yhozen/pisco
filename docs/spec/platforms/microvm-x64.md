@@ -22,6 +22,6 @@ sees the initramfs, and a disk if the host gives it one. Programs the kernel run
 
 ## Not in the specification
 
-What `pisco` does for this base is its own: `[hints.pisco] programs` and `modules` (programs compiled ahead of time
-into the kernel's module, or into modules of their own), lifting a program when it first runs, the disk
+What `pisco` does for this base is its own: `[hints.pisco] programs`, `modules` and `lifted` (programs compiled ahead
+of time into the kernel's module, or into modules of their own), lifting a program when it first runs, the disk
 (`SW_DISK`), the network (`SW_NET`). [docs/linux.md](../../linux.md) describes them.

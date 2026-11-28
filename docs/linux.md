@@ -327,6 +327,13 @@ module of its own, and print what they print on QEMU.
 
 The loader (669 KB) lifts in about a minute and busybox (803 KB) in two, on four cores; from the cache, nothing.
 
+**In the page too, lifted ahead.** `[hints.pisco] lifted = "<folder>"` in a recipe makes each `<sha256>-<tools>.wasm` there (the
+lift cache, `PISCO_LIFT_CACHE` for `web/lift.mjs`) a layer of the image, named in its config's `lifted` by that
+sha256. The page compiles them beside the title's module, and when the machine meets a program no module holds, the
+worker hashes the image it took (`crypto.subtle`, the machine's stack waiting on it through JSPI) and loads the one of
+that hash. So a run in Node lifts a dynamically linked program once, and the page runs it from the image: the Alpine
+container of [research/tabc-poc.md](research/tabc-poc.md) runs Alpine's busybox and musl's loader that way.
+
 ## What it took (K13): libraries
 
 `/init` runs `/bin/dyn` (`fixtures/linux-dyn`, linked against Alpine's musl), which has libraries of its own:
@@ -374,8 +381,9 @@ terminates the frames there (unkernel's own does it through a Wisp server over a
 
 ## Limits
 
-- In the page only programs lifted when the image is built run; in Node any program or library is lifted when its
-  code is first met, static or dynamically linked.
+- In the page only programs lifted before it starts run: those of the build, and those an image carries already
+  lifted (`[hints.pisco] lifted`, below); in Node any program or library is lifted when its code is first met, static or
+  dynamically linked.
 - A library's image is taken when its code is first met, with its data as it is then: a library whose data the
   program has written before calling it (no constructor) has another image, and another lift, when that data
   differs.

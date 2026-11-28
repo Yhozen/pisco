@@ -315,6 +315,10 @@ reasoning and the measurements: [research/kernel-as-a-title.md](research/kernel-
   first met (`fixtures/linux-dyn`), as on QEMU.
 - **K14, done**: a network in Node (`SW_NET=1`): virtio's network device and unkernel's network stack; a DHCP
   lease, a name looked up and a page fetched from the host.
+- **Research, the tabc PoC**: Docker Hub's `alpine:3.24.4` (amd64) as a container on the lifted Linux, in a tab,
+  its programs lifted ahead and carried by the image (`recipes/alpine`, `[lifter] lifted`), measured against tabc
+  on the same machine and browser ([research/tabc-poc.md](research/tabc-poc.md)): level with tabc's own arm64 on
+  compute, 6 to 50 times faster than tabc running the amd64 image, slower on processes, cold start and memory.
 - **Next**: the network in the page.
 
 ## Known limits

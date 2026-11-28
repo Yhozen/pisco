@@ -1,0 +1,17 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-or-later
+# /init of the Alpine container (docs/research/tabc-poc.md): what the kernel starts first, in Alpine 3.24.4's own
+# root. Runs the command the kernel's command line has after " -- " (as `tabc run alpine sh -c ...` runs one), with
+# the shell of the image; without one, a shell to type into. Then prints its exit status and ends the machine
+# through the exit port. The command is read from /proc/cmdline: the kernel splits it into words for /init too, and
+# panics past 32 of them, so a command stays under about 30 words.
+export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin HOME=/root
+mount -t proc proc /proc; mount -t sysfs sys /sys; mount -t devtmpfs dev /dev; mount -t tmpfs tmp /tmp
+echo 1 > /proc/sys/kernel/printk
+cmd=$(cat /proc/cmdline)
+case "$cmd" in
+  *" -- "*) cmd=${cmd#* -- }; echo "container: up"; sh -c "$cmd"; r=$?; echo "container: exit $r" ;;
+  *) sh; r=$? ;;
+esac
+printf '\000' | dd of=/dev/port bs=1 seek=244 count=1 2>/dev/null
+poweroff -f

@@ -309,7 +309,11 @@ else {
   // a title image: its module, its drive (the file layers, served below <image>/c/) and its settings (exe, registry)
   const image = q.get('image') ? await fetchImage(new URL(q.get('image'), location.href).href).catch((e) => { log(`image: ${e.message}`); return null; }) : null;
   if (q.get('image') && !image) { console.log('pisco exit 125'); throw new Error('no image'); }
+  // a machine's programs lifted ahead of time (the config's `lifted`, by the sha256 of their image): fetched and compiled
+  // beside the title's module, loaded by the worker when the machine first meets one (worker.js host.program_image)
+  const liftedP = Promise.all(Object.entries(image?.config.lifted || {}).map(async ([sha, d]) => [sha, await WebAssembly.compile(await (await fetch(image.url + blobPath(d))).arrayBuffer())]));
   const module = await WebAssembly.compile(image ? image.wasm : await (await fetch(q.get('wasm'))).arrayBuffer());
+  const lifted = new Map(await liftedP);
   if (image) { drive = image.drive; folder = image.settings.folder; dir = drive + folder.split('/').map(encodeURIComponent).join('/') + '/'; console.log(`image: ${image.settings.name} (manifest ${image.digest})`); }
   else dir = new URL(q.get('exe'), location.href).href.replace(/[^/]*$/, ''); // the title's folder
   memory = new WebAssembly.Memory({ initial: 1024, maximum: 65536, shared: true });
@@ -334,7 +338,7 @@ else {
   const kernel = WebAssembly.Module.exports(module).some((e) => e.name === 'rt_fork_resume') ? createKernel() : null, programs = image?.config.programs || null;
   // a machine's programs in modules of their own (rt/microvm-x64): fetched here, loaded by the worker (web/side.mjs)
   const side = image?.config.side ? await Promise.all(Object.entries(image.config.side).map(async ([n, d]) => [n, await (await fetch(image.url + blobPath(d))).arrayBuffer()])) : [];
-  boot = { module, memory, dir, drive, folder, tids, args, env, store, t0: performance.timeOrigin, kernel, programs, side };
+  boot = { module, memory, dir, drive, folder, tids, args, env, store, t0: performance.timeOrigin, kernel, programs, side, lifted };
   for (let i = 0; i < POOL; i++) startPooled(i);
   const compiled = new Map();
   const moduleOf = (digest) => { if (!compiled.has(digest)) compiled.set(digest, fetch(image.url + blobPath(digest)).then((r) => r.arrayBuffer()).then((b) => WebAssembly.compile(b))); return compiled.get(digest); };

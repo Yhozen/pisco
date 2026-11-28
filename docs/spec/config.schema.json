@@ -71,6 +71,7 @@
     "imports": { "type": "array", "items": { "type": "string" } },
     "programs": { "type": ["object", "null"], "additionalProperties": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" } },
     "side": { "type": ["object", "null"], "additionalProperties": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" } },
+    "lifted": { "type": ["object", "null"], "additionalProperties": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" } },
     "build": { "type": "object" }
   }
 }

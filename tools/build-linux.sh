@@ -14,7 +14,8 @@
 # The source is fetched once and checked by sha256. The build names no user, host or time, so two builds on one
 # machine give the same files.
 # Needs gcc, make, flex, bison, bc and libelf's headers (tools/setup-toolchain.sh kernel says which are missing),
-# and musl for busybox. Environment: JOBS (default: every CPU), LINUX_VERSION and LINUX_SHA256 (another release).
+# and musl for busybox. Environment: JOBS (default: every CPU), LINUX_VERSION and LINUX_SHA256 (another release),
+# KERNEL_ONLY=1 (stop after the kernel).
 set -euo pipefail
 root=$(cd "$(dirname "$0")/.." && pwd); out=$(mkdir -p "${1:-$root/out/linux}" && cd "${1:-$root/out/linux}" && pwd)
 V=${LINUX_VERSION:-6.18.65}; SHA=${LINUX_SHA256:-c92606f956f09dc50b5a0e2af9e86763fce27ada1647de97f8d1ac8cfc95801d}
@@ -45,6 +46,8 @@ done < "$want"
 [ $bad = 0 ] || exit 1
 mk -j "$JOBS" KCFLAGS=-fno-jump-tables vmlinux bzImage > "$out/make.log" 2>&1 || { echo "build-linux.sh: the kernel did not build (see $out/make.log)" >&2; tail -5 "$out/make.log" >&2; exit 1; }
 cp "$obj/vmlinux" "$out/vmlinux"; cp "$obj/arch/x86/boot/bzImage" "$out/bzImage"; cp "$obj/.config" "$out/config"
+# KERNEL_ONLY=1: the kernel alone (and gen_init_cpio, $obj/usr), no programs (tools/tabc-poc builds its own initramfs)
+[ "${KERNEL_ONLY:-}" != 1 ] || { echo "$out: vmlinux ($(stat -c %s "$out/vmlinux") bytes), bzImage"; exit 0; }
 
 # the initramfs: a list for gen_init_cpio (every file owned by root, at time 0)
 bb=$("$root/tools/build-busybox.sh" "$out")

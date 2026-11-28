@@ -1,0 +1,19 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-or-later
+# workload <name>...: the workloads of docs/research/tabc-poc.md, as one container runs them, in Alpine's busybox sh,
+# the same on every side (PISCO's image has it in /usr/local/bin, tabc's container gets it from a volume). Each
+# prints "w <name> <seconds>" from busybox's `time` (10 ms steps), after what the program printed; `all` is each once.
+t() { n=$1; shift; s=$( { /usr/bin/time -f %e "$@" > /tmp/w.out; } 2>&1 | tail -1 ); cat /tmp/w.out; echo "w $n $s"; }
+for w in "$@"; do
+  [ "$w" = all ] && set -- echo awk sha256 gzip bench fork exec
+done
+for w in "$@"; do case $w in
+  echo) echo hi ;;
+  awk) t awk awk 'BEGIN { for (i = 0; i < 100000; i++) s += i % 7; print s }' ;;
+  sha256) head -c 4194304 /dev/zero > /tmp/z; t sha256 sha256sum /tmp/z ;;
+  gzip) seq 1 500000 > /tmp/s; t gzip gzip -f -6 /tmp/s; echo "$(wc -c < /tmp/s.gz) bytes"; rm -f /tmp/s.gz ;;
+  bench) t bench bench ;;
+  fork) t fork sh -c 'for i in $(seq 50); do (:); done' ;;
+  exec) t exec sh -c 'for i in $(seq 50); do /bin/true; done' ;;
+  *) echo "workload: no $w" >&2; exit 2 ;;
+esac; done

@@ -1,0 +1,36 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# An experiment of docs/research/tabc-poc.md: recipes/alpine, with the compiled benchmark (static, not position-
+# independent) also lifted with the kernel into its module ([hints.pisco] programs), where its side module (the image's
+# `lifted`) is compiled position-independent. The machine takes the one in the kernel's module: what the side
+# module's code costs. tools/tabc-poc/build.sh makes it with INKERNEL=1.
+schema = 1
+name = "alpine-k"
+from = "base/microvm-x64:1"
+
+[about]
+display_name = "Alpine 3.24.4, the benchmark in the kernel's module"
+version = "3.24.4"
+revision = 1
+
+[[input]]
+id = "root"
+kind = "folder"
+file = "../../out/tabc-poc/root-k"
+built_by = "tools/tabc-poc/build.sh"
+
+[[extract]]
+kind = "folder"
+input = "root"
+app = "/"
+
+[run]
+kernel = "/vmlinux"
+initrd = "/initramfs.cpio"
+# as recipes/linux's, quiet: the boot's own lines are not the container's output
+cmdline = "console=ttyS0,115200 panic=-1 no_timer_check vdso=0 tsc=reliable 8250.nr_uarts=1 norandmaps quiet"
+
+[hints.pisco]
+split = 16
+# the programs lifted when they first ran (tools/tabc-poc/build.sh: a run of the image in Node)
+lifted = "../../out/tabc-poc/lifted"
+programs = ["/bench"]
