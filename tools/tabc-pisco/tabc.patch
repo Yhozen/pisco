@@ -1,20 +1,25 @@
 SPDX-License-Identifier: MIT
 tabc-pisco: tabc 1.0.0 (https://github.com/fzakaria/tabc, 8b7e7920606d5fc20197c19da92a1f308504dbe2, MIT) with PISCO
-in it (docs/research/tabc-pisco.md). Applied by tools/tabc-pisco/setup.sh; tabc's licence, and these changes under it.
+in it (docs/research/tabc-pisco.md), and a display (docs/research/linux-gui.md). Applied by tools/tabc-pisco/setup.sh; tabc's licence, and these changes under it.
 
 diff --git a/cmd/tabc-init/main.go b/cmd/tabc-init/main.go
-index 39a2fd8..fd30e15 100644
+index 39a2fd8..9b33284 100644
 --- a/cmd/tabc-init/main.go
 +++ b/cmd/tabc-init/main.go
-@@ -283,6 +283,7 @@ func enter(root string, spec guest.Spec) error {
+@@ -283,6 +283,12 @@ func enter(root string, spec guest.Spec) error {
  		}
  	}
  
 +	registerX86()
++	// PISCO's first tier: qemu-user, beside x86load, where the runtime finds it from inside the root
++	if _, err := os.Stat("/tabc/bin/qemu-x86_64"); err == nil {
++		os.MkdirAll(root+"/.pisco", 0o755)
++		syscall.Mount("/tabc/bin", root+"/.pisco", "", syscall.MS_BIND, "")
++	}
  	if err := syscall.Chroot(root); err != nil {
  		return fmt.Errorf("entering the root: %w", err)
  	}
-@@ -392,3 +393,31 @@ func executable(path string) bool {
+@@ -392,3 +398,31 @@ func executable(path string) bool {
  	}
  	return info.Mode().IsRegular() && info.Mode()&executableBits != 0
  }
@@ -75,10 +80,10 @@ index 40994df..2a32836 100644
  // under its root, a layer's file name, and the name a layer has while
 diff --git a/internal/supervisor/pisco.go b/internal/supervisor/pisco.go
 new file mode 100644
-index 0000000..0475f9e
+index 0000000..fd0f7f9
 --- /dev/null
 +++ b/internal/supervisor/pisco.go
-@@ -0,0 +1,236 @@
+@@ -0,0 +1,289 @@
 +package supervisor
 +
 +// PISCO: an amd64 image's programs run as lifted wasm, ahead-of-time
@@ -112,6 +117,7 @@ index 0000000..0475f9e
 +	"os"
 +	"os/exec"
 +	"strconv"
++	"syscall"
 +
 +	"path/filepath"
 +	"regexp"
@@ -268,7 +274,7 @@ index 0000000..0475f9e
 +	}
 +	out := p.module(sha)
 +	if _, err := os.Stat(out); err != nil {
-+		if err := p.liftOne(sha, image, fns, out); err != nil {
++		if err := p.liftOne(sha, image, fns, out, r.URL.Query().Get("urgent") == "1"); err != nil {
 +			p.logf("pisco: %v", err)
 +			http.Error(w, err.Error(), http.StatusUnprocessableEntity)
 +			return
@@ -279,33 +285,85 @@ index 0000000..0475f9e
 +	http.ServeFile(w, r, out)
 +}
 +
-+var liftLock sync.Mutex
++// one lift at a time; one a task waits for (urgent) starts before those lifted for a later run (PISCO's first tier)
++var lifts = struct {
++	sync.Mutex
++	cond          *sync.Cond
++	busy          bool
++	urgentWaiting int
++}{}
 +
-+func (p *piscoServer) liftOne(sha string, image []byte, fns []string, out string) error {
++func liftAcquire(urgent bool) {
++	lifts.Lock()
++	if lifts.cond == nil {
++		lifts.cond = sync.NewCond(&lifts.Mutex)
++	}
++	if urgent {
++		lifts.urgentWaiting++
++	}
++	for lifts.busy || (!urgent && lifts.urgentWaiting > 0) {
++		lifts.cond.Wait()
++	}
++	if urgent {
++		lifts.urgentWaiting--
++	}
++	lifts.busy = true
++	lifts.Unlock()
++}
++
++func liftRelease() {
++	lifts.Lock()
++	lifts.busy = false
++	lifts.cond.Broadcast()
++	lifts.Unlock()
++}
++
++// liftOne lifts a program on the host, in a session of its own: a lift outlives the container that asked for it
++// (PISCO's first tier runs the program on qemu-user meanwhile, and the next container finds it lifted). One lift at
++// a time per supervisor; a lock file beside the module keeps two supervisors from lifting the same program.
++func (p *piscoServer) liftOne(sha string, image []byte, fns []string, out string, urgent bool) error {
 +	if p.lift == "" {
 +		return fmt.Errorf("a program no one has lifted (sha256 %s), and no TABC_PISCO_LIFT to lift it", sha[:16])
 +	}
-+	liftLock.Lock()
-+	defer liftLock.Unlock()
++	liftAcquire(urgent)
++	defer liftRelease()
 +	if _, err := os.Stat(out); err == nil {
 +		return nil
 +	}
 +	os.MkdirAll(filepath.Dir(out), 0o755)
-+	elf := filepath.Join(filepath.Dir(out), sha+".elf")
-+	if err := os.WriteFile(elf, image, 0o644); err != nil {
-+		return err
++	lock := out + ".lifting"
++	if f, err := os.OpenFile(lock, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644); err == nil {
++		f.Close()
++		elf := filepath.Join(filepath.Dir(out), sha+".elf")
++		if err := os.WriteFile(elf, image, 0o644); err != nil {
++			os.Remove(lock)
++			return err
++		}
++		args := []string{"-c", `"$0" "$@" > "$1.log" 2>&1 && mv "$3.tmp" "$3"; rm -f "$1" "$3.lifting"`, p.lift, elf, "p_" + sha[:16], out + ".tmp"}
++		args = append(args, fns...)
++		// ($3 above is the module without .tmp: the script is given out.tmp, and the lock is out.lifting)
++		args[1] = `"$0" "$@" > "$1.log" 2>&1 && mv "$3" "${3%.tmp}"; rm -f "$1" "${3%.tmp}.lifting"`
++		p.logf("pisco: lifting a program met for the first time (%d bytes, sha256 %s)", len(image), sha[:16])
++		cmd := exec.Command("/bin/sh", args...)
++		cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
++		if err := cmd.Start(); err != nil {
++			os.Remove(lock)
++			return err
++		}
++		go cmd.Wait()
 +	}
-+	defer os.Remove(elf)
-+	args := []string{elf, "p_" + sha[:16], out}
-+	args = append(args, fns...)
-+	p.logf("pisco: lifting a program met for the first time (%d bytes, sha256 %s)", len(image), sha[:16])
 +	start := time.Now()
-+	cmd := exec.Command(p.lift, args...)
-+	if output, err := cmd.CombinedOutput(); err != nil {
-+		return fmt.Errorf("lifting %s: %v: %s", sha[:16], err, lastLines(string(output), 5))
++	for {
++		if _, err := os.Stat(out); err == nil {
++			p.logf("pisco: lifted %s in %.1f s", sha[:16], time.Since(start).Seconds())
++			return nil
++		}
++		if _, err := os.Stat(lock); err != nil {
++			log, _ := os.ReadFile(filepath.Join(filepath.Dir(out), sha+".elf.log"))
++			return fmt.Errorf("lifting %s failed: %s", sha[:16], lastLines(string(log), 5))
++		}
++		time.Sleep(200 * time.Millisecond)
 +	}
-+	p.logf("pisco: lifted %s in %.1f s", sha[:16], time.Since(start).Seconds())
-+	return nil
 +}
 +
 +func lastLines(s string, n int) string {
@@ -316,10 +374,25 @@ index 0000000..0475f9e
 +	return strings.Join(lines, "\n")
 +}
 diff --git a/internal/supervisor/server.go b/internal/supervisor/server.go
-index d7dc3f7..30638a4 100644
+index d7dc3f7..34ef8c9 100644
 --- a/internal/supervisor/server.go
 +++ b/internal/supervisor/server.go
-@@ -99,6 +99,9 @@ type server struct {
+@@ -63,6 +63,14 @@ type pageConfig struct {
+ 	// Volumes are where in the guest the page mounts each volume, and
+ 	// whether read-only.
+ 	Volumes []pageVolume `json:"volumes"`
++	// Display, when TABC_DISPLAY is set (WIDTHxHEIGHT): the guest gets a framebuffer (/dev/fb0) and an evdev
++	// keyboard and mouse, and the page shows the picture and sends the keys and the pointer (PISCO's experiments)
++	Display *pageDisplay `json:"display,omitempty"`
++}
++
++type pageDisplay struct {
++	Width  int `json:"width"`
++	Height int `json:"height"`
+ }
+ 
+ // pageVolume is one volume as the page mounts it.
+@@ -99,6 +107,9 @@ type server struct {
  	// container's neighbours are looked for (internal/netreg).
  	root     string
  	networks []string
@@ -329,7 +402,7 @@ index d7dc3f7..30638a4 100644
  }
  
  // newToken returns a fresh secret.
-@@ -160,6 +163,8 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+@@ -160,6 +171,8 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
  			return
  		}
  		s.volumes[index].Serve(w, r, op)
@@ -339,7 +412,7 @@ index d7dc3f7..30638a4 100644
  		s.serveShared(w, r, assets.Unkernel, remainder)
  	case routeXterm:
 diff --git a/internal/supervisor/supervisor.go b/internal/supervisor/supervisor.go
-index 7f52857..6770d7f 100644
+index 7f52857..e968301 100644
 --- a/internal/supervisor/supervisor.go
 +++ b/internal/supervisor/supervisor.go
 @@ -147,7 +147,11 @@ func Run(options Options) int {
@@ -355,7 +428,15 @@ index 7f52857..6770d7f 100644
  
  	status, err := run(options, dir, logger, logFile)
  	if err != nil {
-@@ -283,6 +287,9 @@ func run(options Options, dir string, logger *log.Logger, logFile *os.File) (int
+@@ -272,6 +276,7 @@ func run(options Options, dir string, logger *log.Logger, logFile *os.File) (int
+ 			Network:     true,
+ 			MirrorPorts: options.MirrorPorts,
+ 			Volumes:     mounted,
++			Display:     displayFromEnv(),
+ 		},
+ 		spec:     guestSpec,
+ 		volumes:  volumes,
+@@ -283,6 +288,9 @@ func run(options Options, dir string, logger *log.Logger, logFile *os.File) (int
  		root:     options.Root,
  		networks: networkNames(planned.Networks),
  	}
@@ -365,28 +446,56 @@ index 7f52857..6770d7f 100644
  	listener, err := net.Listen("tcp4", loopbackAddress)
  	if err != nil {
  		return 0, err
+@@ -687,3 +695,14 @@ func guestCPUs(asked, threads int) int {
+ func MostCPUs() int {
+ 	return guestCPUs(maxCPUs, runtime.NumCPU())
+ }
++
++// displayFromEnv: TABC_DISPLAY=WIDTHxHEIGHT gives the guest a display (pageConfig.Display), or nil
++func displayFromEnv() *pageDisplay {
++	var d pageDisplay
++	if v := os.Getenv("TABC_DISPLAY"); v != "" {
++		if _, err := fmt.Sscanf(v, "%dx%d", &d.Width, &d.Height); err == nil && d.Width > 0 && d.Height > 0 {
++			return &d
++		}
++	}
++	return nil
++}
 diff --git a/page/guest.js b/page/guest.js
-index 4f2793f..6f15d45 100644
+index 4f2793f..533b84f 100644
 --- a/page/guest.js
 +++ b/page/guest.js
-@@ -16,6 +16,7 @@
+@@ -16,7 +16,8 @@
  // but then the guest's network has to be one the SDK builds there, and
  // this guest's network is the supervisor (supervisorNet).
  
+-import { checkSupport, createKernel, FsError, MemoryFs } from "./unkernel/web.mjs";
 +import * as pisco from "./pisco.js";
- import { checkSupport, createKernel, FsError, MemoryFs } from "./unkernel/web.mjs";
++import { checkSupport, createKernel, DisplayHost, domButtonToLinux, domCodeToLinux, FsError, MemoryFs } from "./unkernel/web.mjs";
  import { State, ToGuest, ToPage } from "./messages.js";
  
-@@ -839,6 +840,8 @@ async function main() {
+ // What the supervisor serves next to this page.
+@@ -831,6 +832,8 @@ async function main() {
+   addEventListener("message", ({ data }) => {
+     if (data.t === ToGuest.TYPED) {
+       incoming.onInput?.(data.bytes);
++    } else if (guest?.evdev) {
++      onDisplayInput(guest.evdev, data);
+     }
+   });
+   openTerminal(config);
+@@ -839,6 +842,10 @@ async function main() {
    const bin = new MemoryFs();
    bin.writeFile(`/${INIT_NAME}`, new Uint8Array(init), { mode: EXECUTABLE });
    bin.writeFile(`/${SPEC_NAME}`, spec);
 +  // PISCO: the interpreter of x86-64 files, beside init
 +  if (pisco.enabled) bin.writeFile("/x86load", (await pisco.ready).loader, { mode: EXECUTABLE });
++  // and qemu-user, which runs a program PISCO has not lifted yet while it is lifted (the first tier)
++  if (pisco.enabled && (await pisco.ready).qemu) bin.writeFile("/qemu-x86_64", (await pisco.ready).qemu, { mode: EXECUTABLE });
  
    // A browser that cannot run the kernel is told so in its own words,
    // before the kernel fails in the kernel's. This is what a person who
-@@ -855,7 +858,8 @@ async function main() {
+@@ -855,7 +862,8 @@ async function main() {
    // all on one shared memory. A page that is not cross-origin isolated
    // has no shared memory, and its guest gets one CPU.
    const shared = globalThis.crossOriginIsolated === true && typeof SharedArrayBuffer === "function";
@@ -396,7 +505,15 @@ index 4f2793f..6f15d45 100644
  
    // The log's timestamps are how a start-up's time is accounted for.
    tell(ToSupervisor.LOG, { message: `booting the kernel, ${cpus} CPUs` });
-@@ -886,6 +890,11 @@ async function main() {
+@@ -864,6 +872,7 @@ async function main() {
+     cmdline: KERNEL_CMDLINE,
+     memoryMiB: config.memoryMiB,
+     cpus,
++    ...(config.display ? { display: { width: config.display.width, height: config.display.height, dpi: 96 } } : {}),
+     ...(config.network ? { net: supervisorNet() } : {}),
+     mounts: {
+       [BIN_DIR]: { fs: bin, readOnly: true },
+@@ -886,8 +895,14 @@ async function main() {
      tell(ToSupervisor.LOG, { message: `the guest has ${booted} CPUs, not ${cpus}` });
    }
  
@@ -407,13 +524,151 @@ index 4f2793f..6f15d45 100644
 +
    // The guest is up and the image is mounted: the container is created.
    guest = vm;
++  if (config.display) showDisplay(vm);
    setStatus(State.WAITING, "created");
+   tell(ToSupervisor.READY);
+   await start;
+@@ -917,4 +932,57 @@ async function main() {
+   tell(ToSupervisor.EXIT, { status });
+ }
+ 
++// ---- a display (TABC_DISPLAY): the guest's framebuffer to the page, the page's keys and pointer to evdev ----
++
++// how often the worker looks for a new picture: the kernel runs on this thread, so a frame is sent between its slices
++const FRAME_MS = 33;
++
++// The SDK's frame() copies the whole picture as RGBA on this thread, the kernel's, every time. The display's own
++// pixels() is the framebuffer in place (XRGB8888, no copy): found by wrapping DisplayHost's methods (the first
++// frame() call meets it). Only the rows that changed since the last frame are copied and sent, as they are; the
++// page turns them into RGBA on its own thread.
++let displayHost = null;
++for (const name of ["pixels", "frame"]) {
++  const orig = DisplayHost.prototype[name];
++  if (typeof orig === "function") DisplayHost.prototype[name] = function (...args) { displayHost = this; return orig.apply(this, args); };
++}
++
++function showDisplay(vm) {
++  let last = null, lastW = 0, lastH = 0;
++  const send = () => {
++    try {
++      if (!displayHost) vm.frame();
++      const mode = displayHost?.mode, px = mode ? displayHost.pixels() : null;
++      if (px && mode) {
++        const { width, height, stride } = mode, words = stride >> 2;
++        const cur = new Uint32Array(px.buffer, px.byteOffset, (words * (height - 1)) + width);
++        if (!last || lastW !== width || lastH !== height) { last = new Uint32Array(words * height); lastW = width; lastH = height; last.fill(1); }
++        // the band of rows that changed
++        let y0 = -1, y1 = -1;
++        for (let y = 0; y < height; y++) {
++          const o = y * words;
++          for (let x = 0; x < width; x++) if (cur[o + x] !== last[o + x]) { if (y0 < 0) y0 = y; y1 = y; break; }
++        }
++        if (y0 >= 0) {
++          const from = y0 * words, to = Math.min(y1 * words + width, cur.length);
++          last.set(cur.subarray(from, to), from);
++          const band = cur.slice(from, to);
++          postMessage({ t: ToPage.FRAME, width, height, stride: words, y0, rows: y1 - y0 + 1, xrgb: band }, [band.buffer]);
++        }
++      }
++    } catch (error) { tell(ToSupervisor.LOG, { message: `display: ${error}` }); }
++    setTimeout(send, FRAME_MS);
++  };
++  send();
++}
++
++function onDisplayInput(evdev, data) {
++  switch (data.t) {
++    case ToGuest.KEY: { const k = domCodeToLinux(data.code); if (k) evdev.key(k, data.down); break; }
++    case ToGuest.POINTER: evdev.moveTo(data.x, data.y); break;
++    case ToGuest.BUTTON: { const b = domButtonToLinux(data.button); if (b) evdev.button(b, data.down); break; }
++    case ToGuest.WHEEL: evdev.wheel(data.clicks); break;
++  }
++}
++
+ main().catch(fatal);
+diff --git a/page/main.js b/page/main.js
+index 23e25b5..a7d51ce 100644
+--- a/page/main.js
++++ b/page/main.js
+@@ -109,6 +109,9 @@ guest.onmessage = ({ data }) => {
+     case ToPage.RESIZE:
+       terminal?.resize(data.cols, data.rows);
+       break;
++    case ToPage.FRAME:
++      showFrame(data);
++      break;
+   }
+ };
+ 
+@@ -119,3 +122,39 @@ guest.onerror = (event) => {
+   setStatus(State.FAILED, "failed");
+   show(`\r\n${RED}${event.message ?? "the container's worker failed to start"}${PLAIN}\r\n`);
+ };
++
++// A display (TABC_DISPLAY): the guest's picture on a canvas above the terminal, and the keys and the pointer over
++// it sent to the guest's evdev keyboard and mouse (the terminal keeps the keys while it has the focus)
++let screen = null;
++let screenImage = null;
++function showFrame({ width, height, stride, y0, rows, xrgb }) {
++  if (screen === null) {
++    screen = document.createElement("canvas");
++    screen.id = "screen";
++    screen.tabIndex = 0;
++    screen.style.cssText = "display:block;margin:0 auto;outline:none;cursor:default;max-width:100%;image-rendering:pixelated";
++    document.body.insertBefore(screen, terminalElement);
++    terminalElement.style.flex = "0 0 9rem";
++    const send = (m) => guest.postMessage(m);
++    const at = (e) => { const r = screen.getBoundingClientRect(); return { x: (e.clientX - r.left) / r.width, y: (e.clientY - r.top) / r.height }; };
++    screen.addEventListener("pointermove", (e) => send({ t: ToGuest.POINTER, ...at(e) }));
++    screen.addEventListener("pointerdown", (e) => { screen.focus(); send({ t: ToGuest.POINTER, ...at(e) }); send({ t: ToGuest.BUTTON, button: e.button, down: true }); e.preventDefault(); });
++    screen.addEventListener("pointerup", (e) => send({ t: ToGuest.BUTTON, button: e.button, down: false }));
++    screen.addEventListener("contextmenu", (e) => e.preventDefault());
++    screen.addEventListener("wheel", (e) => { send({ t: ToGuest.WHEEL, clicks: e.deltaY > 0 ? -1 : 1 }); e.preventDefault(); }, { passive: false });
++    screen.addEventListener("keydown", (e) => { send({ t: ToGuest.KEY, code: e.code, down: true }); e.preventDefault(); });
++    screen.addEventListener("keyup", (e) => { send({ t: ToGuest.KEY, code: e.code, down: false }); e.preventDefault(); });
++    screen.focus();
++  }
++  if (screen.width !== width || screen.height !== height) { screen.width = width; screen.height = height; }
++  // the rows that changed, XRGB8888 (a little-endian word: 0x00RRGGBB) to RGBA, here and not on the kernel's thread
++  if (!screenImage || screenImage.width !== width || screenImage.height !== rows) screenImage = new ImageData(width, rows);
++  const out = new Uint32Array(screenImage.data.buffer);
++  for (let y = 0; y < rows; y++) {
++    const s = y * stride, d = y * width;
++    for (let x = 0; x < width; x++) { const v = xrgb[s + x]; out[d + x] = 0xff000000 | (v & 0xff) << 16 | (v & 0xff00) | (v >>> 16 & 0xff); }
++  }
++  screen.getContext("2d").putImageData(screenImage, 0, y0);
++}
++// (for a test driving the page: keys and the pointer as a person would send them)
++globalThis.tabcInput = (m) => guest.postMessage(m);
+diff --git a/page/messages.js b/page/messages.js
+index 43e2039..1b94adc 100644
+--- a/page/messages.js
++++ b/page/messages.js
+@@ -11,11 +11,18 @@ export const ToPage = Object.freeze({
+   OPEN: "open",
+   SHOW: "show",
+   RESIZE: "resize",
++  // a display's picture (TABC_DISPLAY): {width, height, data}, RGBA
++  FRAME: "frame",
+ });
+ 
+ // From the page: what was typed into the terminal, as bytes.
+ export const ToGuest = Object.freeze({
+   TYPED: "typed",
++  // on a display: a key ({code: a DOM KeyboardEvent.code, down}), the pointer ({x, y}: 0..1), a button ({button, down}), the wheel ({clicks})
++  KEY: "key",
++  POINTER: "pointer",
++  BUTTON: "button",
++  WHEEL: "wheel",
+ });
+ 
+ // How a container is doing. The states are the status dot's colours
 diff --git a/page/pisco.js b/page/pisco.js
 new file mode 100644
-index 0000000..5fd01d9
+index 0000000..24a79e1
 --- /dev/null
 +++ b/page/pisco.js
-@@ -0,0 +1,162 @@
+@@ -0,0 +1,183 @@
 +// PISCO in tabc's guest: an amd64 image's programs run as lifted wasm (PISCO's lifter: x86-64 to C to wasm, ahead
 +// of time), as ordinary tasks of the same unkernel kernel, instead of under an emulator.
 +//
@@ -430,8 +685,8 @@ index 0000000..5fd01d9
 +// host (internal/supervisor/pisco.go), once; it is kept for every image after that.
 +
 +const BASE = new URL("pisco/", location.href);
-+const TOP = 0x50000000;           // the memory may grow to 1.25 GiB: the kernel's RAM, then PISCO's (from 1 GiB)
-+const RUNTIME_AT = 0x41000000;    // what the runtime's module needs (its data and heap above 1 GiB)
++const TOP = 0x90000000;           // the memory may grow to 2.25 GiB: the kernel's RAM (up to 2 GiB), then PISCO's
++const RUNTIME_AT = 0x81000000;    // what the runtime's module needs (its data and heap above 2 GiB)
 +
 +export const enabled = new URL(location.href).searchParams.get("pisco") !== "0";
 +let say = null;
@@ -451,8 +706,9 @@ index 0000000..5fd01d9
 +let trampoline = null;
 +// everything starts loading now, beside the kernel's own fetch and boot
 +export const ready = enabled ? (async () => {
-+  const [tramp, runtime, loader, index] = await Promise.all([
++  const [tramp, runtime, loader, qemu, index] = await Promise.all([
 +    compile(new URL("tramp.wasm", BASE)), compile(new URL("runtime.wasm", BASE)), fetchBytes(new URL("x86load", BASE)),
++    fetchBytes(new URL("qemu-x86_64", BASE)).catch(() => null),
 +    fetch(new URL("index.json", BASE)).then((r) => (r.ok ? r.json() : {})),
 +  ]);
 +  trampoline = new WebAssembly.Instance(tramp, { js: { tab: ttab } });
@@ -463,7 +719,7 @@ index 0000000..5fd01d9
 +    if (eager) { const p = compile(url); modules.set(sha, () => p); } else modules.set(sha, () => compile(url));
 +  }
 +  log(`runtime fetched; ${[...Object.values(index)].filter((e) => e.eager).length} of ${modules.size} lifted programs compiling (${ms()})`);
-+  return { runtime, loader, modules };
++  return { runtime, loader, qemu, modules };
 +})() : null;
 +
 +if (enabled) {
@@ -497,7 +753,7 @@ index 0000000..5fd01d9
 +  const leb = () => { let v = 0, s = 0, x; do { x = sec[at.i++]; v |= (x & 0x7f) << s; s += 7; } while (x & 0x80); return v >>> 0; };
 +  let memSize = 0, memAlign = 0, tableSize = 0;
 +  while (at.i < sec.length) { const kind = sec[at.i++], len = leb(), end = at.i + len; if (kind === 1) { memSize = leb(); memAlign = leb(); tableSize = leb(); } at.i = end; }
-+  const memBase = memSize ? ex.rt_side_alloc(memSize, 2 ** memAlign) : 0;
++  const memBase = memSize ? ex.rt_side_alloc(memSize, 2 ** memAlign) >>> 0 : 0;   // (above 2 GiB: unsigned)
 +  const table = ex.__indirect_function_table, tableBase = table.length;
 +  if (tableSize) table.grow(tableSize);
 +  const env = {
@@ -514,7 +770,7 @@ index 0000000..5fd01d9
 +  const side = new WebAssembly.Instance(module, { env, "GOT.mem": got, "GOT.func": gotFunc });
 +  side.exports.__wasm_apply_data_relocs?.();
 +  side.exports.__wasm_call_ctors?.();
-+  ex.rt_program_register(memBase + side.exports[`${name}_program`].value);
++  ex.rt_program_register((memBase + (side.exports[`${name}_program`].value >>> 0)) | 0);
 +}
 +
 +const hex = (buf) => [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, "0")).join("");
@@ -523,35 +779,54 @@ index 0000000..5fd01d9
 +// loader's bytes, for the caller to put where the shell below finds it (registerCommand).
 +export async function start(sayTo) {
 +  say = sayTo;
-+  const { runtime, loader, modules } = await ready;
++  const { runtime, loader, qemu, modules } = await ready;
 +  if (!kmem) throw new Error("PISCO: the kernel is not the patched one (no pisco imports)");
 +  if (kmem.buffer.byteLength < RUNTIME_AT) kmem.grow((RUNTIME_AT - kmem.buffer.byteLength) / 65536);
 +  const dec = new TextDecoder();
-+  const str = (p, n) => dec.decode(new Uint8Array(kmem.buffer, p, n).slice());
++  const str = (p, n) => dec.decode(new Uint8Array(kmem.buffer, p >>> 0, n >>> 0).slice());   // (the runtime's pointers are above 2 GiB: unsigned)
 +  const nowNs = () => BigInt(Math.round((performance.timeOrigin + performance.now()) * 1e6));
 +  // a program's module, by its image's sha256: loaded once; a second task that meets it meanwhile waits for it
 +  const loading = new Map();
-+  const load = async (sha, image, entries) => {
-+    let pending = modules.get(sha)?.();
-+    if (!pending) {
-+      // met for the first time: the supervisor lifts it on the host (once; kept by its sha256)
-+      log(`lifting a program met for the first time (${image.length} bytes, sha256 ${sha.slice(0, 16)}): once, on the host`);
++  // met for the first time: the supervisor lifts it on the host (once; kept by its sha256), and it is compiled here
++  // (urgent: a task waits for it, and the host lifts it before those lifted for a later run)
++  const lifting = new Map(), urgentOnes = new Set();
++  const lift = (sha, image, entries, urgent = false) => {
++    if (urgent && lifting.has(sha) && !urgentOnes.has(sha)) lifting.delete(sha);   // (asked again, ahead of the queue)
++    if (urgent) urgentOnes.add(sha);
++    if (!lifting.has(sha)) lifting.set(sha, (async () => {
++      log(`lifting a program met for the first time (${image.length} bytes, sha256 ${sha.slice(0, 16)})${urgent ? "" : " in the background"}: once, on the host`);
 +      const t = performance.now();
 +      const body = new Uint8Array(image.length + entries.length); body.set(image); body.set(entries, image.length);
-+      const r = await fetch(new URL(`lift?sha=${sha}&len=${image.length}`, BASE), { method: "POST", body });
-+      if (!r.ok) { log(`could not lift it: ${await r.text()}`); return 0; }
-+      pending = WebAssembly.compile(await r.arrayBuffer());
-+      log(`lifted it in ${((performance.now() - t) / 1000).toFixed(1)} s`);
-+    }
-+    loadSide(await pending, `p_${sha.slice(0, 16)}`);
++      const r = await fetch(new URL(`lift?sha=${sha}&len=${image.length}${urgent ? "&urgent=1" : ""}`, BASE), { method: "POST", body });
++      if (!r.ok) { log(`could not lift it: ${await r.text()}`); return null; }
++      const m = await WebAssembly.compile(await r.arrayBuffer());
++      log(`lifted ${sha.slice(0, 16)} in ${((performance.now() - t) / 1000).toFixed(1)} s`);
++      modules.set(sha, () => Promise.resolve(m));
++      return m;
++    })().catch((e) => { log(`${sha.slice(0, 16)}: ${e}`); return null; }));
++    return lifting.get(sha);
++  };
++  const load = async (sha, image, entries) => {
++    const m = await (modules.get(sha)?.() ?? lift(sha, image, entries, true));
++    if (!m) return 0;
++    loadSide(m, `p_${sha.slice(0, 16)}`);
 +    log(`program ${sha.slice(0, 16)} registered (${ms()})`);
 +    return 1;
 +  };
-+  const programImage = new WebAssembly.Suspending(async (addr, len, fns, nfns) => {
++  const programImage = new WebAssembly.Suspending(async (addr, len, fns, nfns, wait) => {
++    addr >>>= 0; len >>>= 0; fns >>>= 0; nfns >>>= 0;
 +    // (what the runtime hands over is read before the first await: another task may run while this one waits)
 +    const image = new Uint8Array(kmem.buffer, addr, len).slice();
 +    const entries = new Uint8Array(kmem.buffer.slice(fns, fns + 8 * nfns));   // (the functions its dynamic symbols name: u64s)
 +    const sha = hex(await crypto.subtle.digest("SHA-256", image));
++    // a task the runtime can start again on qemu-user does not wait for a lift: it is lifted for the next run (-1)
++    // wait 2: what else the run has mapped, for the next run: lifted in the background, nothing registered now
++    if (wait === 2) { if (!modules.has(sha) && !loading.has(sha) && qemu) lift(sha, image, entries); return -1; }
++    // (a second for the host to answer: one lifted already, for another container, comes back at once)
++    if (!wait && !loading.has(sha) && !modules.has(sha) && qemu) {
++      const m = await Promise.race([lift(sha, image, entries), new Promise((r) => setTimeout(r, 1000, undefined))]);
++      if (m === undefined) return -1;
++    }
 +    if (!loading.has(sha)) loading.set(sha, load(sha, image, entries).catch((e) => { log(`${sha.slice(0, 16)}: ${e}`); return 0; }));
 +    return loading.get(sha);
 +  });
@@ -560,18 +835,19 @@ index 0000000..5fd01d9
 +    kernel: { kw_user_addr: kex.kw_user_addr },
 +    host: { log: (p, n) => log(str(p, n)), now_ns: nowNs, program_image: programImage },
 +    wasi_snapshot_preview1: {
-+      clock_time_get: (id, prec, out) => { new DataView(kmem.buffer).setBigUint64(out, nowNs(), true); return 0; },
++      clock_time_get: (id, prec, out) => { new DataView(kmem.buffer).setBigUint64(out >>> 0, nowNs(), true); return 0; },
 +      fd_close: () => 0, fd_seek: () => 70,
 +      fd_write: (fd, iov, n, out) => {
 +        const dv = new DataView(kmem.buffer); let t = 0;
++        iov >>>= 0;
 +        for (let k = 0; k < n; k++) { const p = dv.getUint32(iov + 8 * k, true), l = dv.getUint32(iov + 8 * k + 4, true); log(str(p, l)); t += l; }
-+        dv.setUint32(out, t, true); return 0;
++        dv.setUint32(out >>> 0, t, true); return 0;
 +      },
 +    },
 +  });
 +  rt.exports._initialize();
 +  ttab.set(0, rt.exports.pisco_mine); ttab.set(1, rt.exports.pisco_run); ttab.set(2, rt.exports.pisco_after); ttab.set(3, rt.exports.pisco_flush);
-+  log(`runtime up (${ms()})`);
++  log(`runtime up (${ms()})${qemu ? "; qemu-user for programs not lifted yet" : ""}`);
 +  return loader;
 +}
 +

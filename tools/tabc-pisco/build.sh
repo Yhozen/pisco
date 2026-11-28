@@ -23,7 +23,7 @@ node "$out/patch-kernel.mjs" "$out/unkernel/package/dist/unkernel.wasm" "$out/ke
 node "$out/mktramp.mjs" "$out/tramp.wasm"
 CF="--target=wasm32-wasip1 -mbulk-memory -msimd128 -mnontrapping-fptoint -msign-ext -mtail-call -mllvm -wasm-enable-sjlj ${OPT:--O2} -fno-strict-aliasing -I$root/rt -Wno-everything -DGUEST_BITS=64 -DGUEST_MACHINE=1 -DGUEST_LINUX=1 -DGUEST_POLL_FLAGS=1"
 ex=$(grep -v '^#' "$root/rt/microvm-x64/side-exports.txt" | tr ' ' '\n' | grep -v '^$' | sort -u)
-LINK="-Wl,--import-memory,--initial-memory=$((0x41000000)),--max-memory=4294967296,--global-base=$((0x40000000)),-z,stack-size=8388608"
+LINK="-Wl,--import-memory,--initial-memory=$((0x81000000)),--max-memory=4294967296,--global-base=$((0x80000000)),-z,stack-size=8388608"
 LINK="$LINK -Wl,--export-table,--growable-table,--export=__stack_pointer,--export=__heap_base"
 for x in $ex rt_resolve rt_poll_f mc_resume_flags; do LINK="$LINK -Wl,-u,$x,--export=$x"; done   # (rt_resolve: LIFTER_MUSTTAIL=2, lift-side.sh)
 "$W/clang" $CF -mexec-model=reactor "$here/runtime.c" -o "$out/runtime.wasm" $LINK -lsetjmp

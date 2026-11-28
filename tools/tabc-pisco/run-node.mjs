@@ -34,7 +34,7 @@ const t0 = performance.now();
 const ms = () => (performance.now() - t0).toFixed(0);
 
 // ---- the hooks: the kernel's memory may grow past its RAM (our part), and the kernel gets its `pisco` imports ----
-const TOP = 0x50000000;   // the memory may grow to 1.25 GiB: the kernel's RAM, then the runtime's (from 0x40000000)
+const TOP = 0x90000000;   // the memory may grow to 2.25 GiB: the kernel's RAM, then the runtime's (from 0x80000000)
 const OrigMemory = WebAssembly.Memory;
 function Memory(desc) {
   if (!desc.shared && !desc.address && desc.maximum === desc.initial && desc.initial >= 1024) desc = { ...desc, maximum: TOP / 65536 };
@@ -61,14 +61,14 @@ WebAssembly.instantiate = async function (m, imports, ...rest) {
 
 // ---- PISCO's runtime and the lifted programs, once the kernel has booted ----
 const dec = new TextDecoder();
-const str = (p, n) => dec.decode(new Uint8Array(kmem.buffer, p, n));
+const str = (p, n) => dec.decode(new Uint8Array(kmem.buffer, p >>> 0, n >>> 0));   // (the runtime's pointers are above 2 GiB: unsigned)
 function loadSide(bytes, rt, name) {   // web/side.mjs, for a memory that is not shared
   const module = new WebAssembly.Module(bytes), ex = rt.exports;
   const sec = new Uint8Array(WebAssembly.Module.customSections(module, 'dylink.0')[0]);
   const at = { i: 0 }; const leb = () => { let v = 0, s = 0, x; do { x = sec[at.i++]; v |= (x & 0x7f) << s; s += 7; } while (x & 0x80); return v >>> 0; };
   let memSize = 0, memAlign = 0, tableSize = 0;
   while (at.i < sec.length) { const kind = sec[at.i++], len = leb(), end = at.i + len; if (kind === 1) { memSize = leb(); memAlign = leb(); tableSize = leb(); } at.i = end; }
-  const memBase = memSize ? ex.rt_side_alloc(memSize, 2 ** memAlign) : 0;
+  const memBase = memSize ? ex.rt_side_alloc(memSize, 2 ** memAlign) >>> 0 : 0;
   const table = ex.__indirect_function_table, tableBase = table.length;
   if (tableSize) table.grow(tableSize);
   const env = { memory: kmem, __indirect_function_table: table, __stack_pointer: ex.__stack_pointer,
@@ -81,12 +81,13 @@ function loadSide(bytes, rt, name) {   // web/side.mjs, for a memory that is not
   }
   const side = new WebAssembly.Instance(module, { env, 'GOT.mem': got, 'GOT.func': gotFunc });
   side.exports.__wasm_apply_data_relocs?.(); side.exports.__wasm_call_ctors?.();
-  ex.rt_program_register(memBase + side.exports[`${name}_program`].value);
+  ex.rt_program_register((memBase + (side.exports[`${name}_program`].value >>> 0)) | 0);
 }
 let rt = null;
 import crypto from 'node:crypto'; import { execFileSync } from 'node:child_process';
 const tried = new Set();
 function programImage(addr, len, fnsp, nfns) {
+  addr >>>= 0; len >>>= 0; fnsp >>>= 0;
   const image = Buffer.from(new Uint8Array(kmem.buffer, addr, len));
   const entries = [...new BigUint64Array(kmem.buffer.slice(fnsp, fnsp + 8 * nfns))].map((v) => v.toString(16));
   const sha = crypto.createHash('sha256').update(image).digest('hex'), name = `p_${sha.slice(0, 16)}`;
@@ -106,16 +107,16 @@ function programImage(addr, len, fnsp, nfns) {
   return 1;
 }
 function initPisco() {
-  const need = 0x41000000;
+  const need = 0x81000000;
   if (kmem.buffer.byteLength < need) kmem.grow((need - kmem.buffer.byteLength) / 65536);
   const nowNs = () => BigInt(Math.round(performance.now() * 1e6));
   rt = new WebAssembly.Instance(new WebAssembly.Module(fs.readFileSync(opt.rt)), {
     env: { memory: kmem }, kernel: { kw_user_addr: kex.kw_user_addr },
     host: { log: (p, n) => console.error(str(p, n)), now_ns: nowNs, program_image: programImage },
     wasi_snapshot_preview1: {
-      clock_time_get: (id, prec, out) => { new DataView(kmem.buffer).setBigUint64(out, nowNs(), true); return 0; },
+      clock_time_get: (id, prec, out) => { new DataView(kmem.buffer).setBigUint64(out >>> 0, nowNs(), true); return 0; },
       fd_close: () => 0, fd_seek: () => 70,
-      fd_write: (fd, iov, n, out) => { const dv = new DataView(kmem.buffer); let t = 0; for (let k = 0; k < n; k++) { const p = dv.getUint32(iov + 8 * k, true), l = dv.getUint32(iov + 8 * k + 4, true); process.stderr.write(str(p, l)); t += l; } dv.setUint32(out, t, true); return 0; },
+      fd_write: (fd, iov, n, out) => { const dv = new DataView(kmem.buffer); let t = 0; iov >>>= 0; out >>>= 0; for (let k = 0; k < n; k++) { const p = dv.getUint32(iov + 8 * k, true), l = dv.getUint32(iov + 8 * k + 4, true); process.stderr.write(str(p, l)); t += l; } dv.setUint32(out, t, true); return 0; },
     },
   });
   rt.exports._initialize();

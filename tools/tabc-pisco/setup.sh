@@ -32,6 +32,15 @@ share() {   # share <dir> <page dir> <kernel>
 }
 share "$out/share" "$src/page" "$out/kernel.wasm"
 mkdir -p "$out/share/pisco" && cp "$out/runtime.wasm" "$out/tramp.wasm" "$out/x86load" "$out/share/pisco/"
+# the first tier: qemu-user (aarch64, static), which runs a program PISCO has not lifted yet while it is lifted
+# (Alpine 3.24's package, GPL-2.0-only; docs/research/linux-gui.md)
+QEMU_APK=https://dl-cdn.alpinelinux.org/alpine/v3.24/community/aarch64/qemu-x86_64-11.0.3-r0.apk
+QEMU_SHA=3ccc698b81da078425115d531c23d328e9dd1c094fb1ac4dc9417d1687f4363f
+if [ ! -f "$out/qemu-x86_64" ]; then
+  mkdir -p "$out/qemu" && curl -fsSL -o "$out/qemu/q.apk" "$QEMU_APK" && echo "$QEMU_SHA  $out/qemu/q.apk" | sha256sum -c --quiet \
+    && tar -xzf "$out/qemu/q.apk" -C "$out/qemu" usr/bin/qemu-x86_64 2>/dev/null && mv "$out/qemu/usr/bin/qemu-x86_64" "$out/qemu-x86_64" && rm -rf "$out/qemu"
+fi
+cp "$out/qemu-x86_64" "$out/share/pisco/"
 if [ "${SHARE_STOCK:-}" = 1 ]; then
   rm -rf "$out/stock" && mkdir -p "$out/stock" && git -C "$src" archive "$TABC_COMMIT" page | tar -x -C "$out/stock"
   share "$out/share-stock" "$out/stock/page" "$U/dist/unkernel.wasm"

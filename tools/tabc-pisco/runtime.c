@@ -154,7 +154,8 @@ static u64 rd64(Cpu *c, u64 a) { u64 v; mmu_read(c, mmu_u, a, 8, a, &v); return 
 // the one whose code page at the address that runs hashes as its file's (rt/microvm-x64/run.c). Found again after
 // each change of address space. A program no module holds is rebuilt from memory and handed to the host
 // (program_image), which lifts it (Node) or has it lifted already (the page), and registers it.
-IMPORT("host", "program_image") int host_program_image(u32 image, u32 len, u32 fns, u32 n_fns);
+// (wait 0: a program the host has not lifted yet is lifted in the background, and the answer is -1 at once)
+IMPORT("host", "program_image") int host_program_image(u32 image, u32 len, u32 fns, u32 n_fns, u32 wait);
 static u64 calls_gen = 1;   // the generation of identities: a program registered, a flush of all or of code, a fork
 static void programs_forget(void) { prog_cur = 0; calls_gen++; }
 static int code_in(u64 a, u64 b) { for (unsigned i = 0; i < n_progs; i++) if (a < progs[i]->hi && b > progs[i]->lo) return 1; return 0; }
@@ -215,6 +216,20 @@ static void relocate(u8 *img, u64 size, const u8 *ph, unsigned phnum, u64 bias, 
     if (tag == 23) jmprel = v; if (tag == 2) pltsz = v; if (tag == 6) symtab = v; if (tag == 5) strtab = v;
     if ((tag == 12 || tag == 13) && v && n_fns < MAX_FNS) fns[n_fns++] = bias + v; }   // DT_INIT, DT_FINI: the loader calls them
   dynamic_functions(img, size, ph, phnum, bias, symtab, strtab);
+  if (apply == 2) {
+    // a library, read from memory after the loader relocated it: its image made the same in every program (what
+    // its own base gives is kept, what another module gives is zeroed: a symbol's address, a TLS offset), so that
+    // the library is lifted once for every program that maps it at its address (lib_address)
+    for (int t = 0; t < 2; t++) {
+      u64 o = t ? (jmprel ? off_of(ph, phnum, jmprel) : ~0ull) : (rela ? off_of(ph, phnum, rela) : ~0ull), n = t ? pltsz : relasz;
+      for (u64 k = 0; o != ~0ull && k + 24 <= n && o + k + 24 <= size; k += 24) {
+        u64 where, info, add, val; memcpy(&where, img + o + k, 8); memcpy(&info, img + o + k + 8, 8); memcpy(&add, img + o + k + 16, 8);
+        u64 w = off_of(ph, phnum, where); if (w == ~0ull || w + 8 > size) continue;
+        val = (u32)info == 8 ? bias + add : 0; memcpy(img + w, &val, 8);
+      }
+    }
+    return;
+  }
   if (!apply) return;
   u64 so = symtab ? off_of(ph, phnum, symtab) : ~0ull;
   for (int t = 0; t < 2; t++) {
@@ -257,8 +272,9 @@ static u64 image_below(Cpu *c, u64 pc, u8 h[64], u8 *ph, u64 *phnum) {
   }
   return ~0ull;
 }
+static u64 aux_sp;   // (0: the task's RSP; a prefetch reads the first stack instead)
 static int auxv(Cpu *c, u64 *aphdr, u64 *aphnum, u64 *entry, u64 *ibase) {
-  u64 sp = R[RSP], argc, v;
+  u64 sp = aux_sp ? aux_sp : R[RSP], argc, v;
   if (!user_read(c, sp, &argc, 8, 0) || argc > 4096) return 0;
   u64 at = sp + 8 * (argc + 2);
   for (int k = 0; k < 4096; k++, at += 8) { if (!user_read(c, at, &v, 8, 0)) return 0; if (!v) break; }
@@ -268,7 +284,92 @@ static int auxv(Cpu *c, u64 *aphdr, u64 *aphnum, u64 *entry, u64 *ibase) {
   }
   return 0;
 }
-static u64 st_asked;
+static u64 st_asked, st_first_tier;
+// ---- the first tier: a program not lifted yet runs at once on qemu-user, and is lifted on the host meanwhile ----
+// A task that has only loaded so far (mapped, opened and read files: what a second start does again) and meets code
+// no lifted program holds is started again, the same program with the same arguments and environment, on
+// qemu-x86_64 (an aarch64 program, beside x86load: /.pisco in the container); the host lifts what it met in the
+// background, and the next run is lifted. A task that has done more waits for the lift, as before.
+// v[31][0]: 1 while the task is clean (2: it was sent to qemu-user and that failed); v[31][1]: its first stack.
+#define CLEAN(k) ((k)->v[31][0])
+#define FIRST_SP(k) ((k)->v[31][1])
+static int lift_pending;   // the host's -1: lifting it in the background
+static u64 asked_pc;       // (one question per address: program_at asks again only elsewhere)
+// the system calls a program's loading makes, which a second start makes again (x86-64 numbers)
+static int harmless(u64 nr, u64 a0, u64 a1) {
+  switch (nr) {
+  case 0: case 17: return a0 != 0;            // read, pread64: not from standard input
+  case 16: return a1 == 0x5401 || a1 == 0x5413;   // ioctl: TCGETS, TIOCGWINSZ
+  case 2: case 257: case 3: case 4: case 5: case 6: case 262: case 8: case 9: case 10: case 11: case 12: case 13: case 14:
+  case 21: case 39: case 63: case 72: case 79: case 89: case 96: case 97: case 99: case 102: case 104: case 107: case 108:
+  case 110: case 137: case 158: case 186: case 201: case 204: case 218: case 228: case 273: case 302: case 318: case 334:
+  case 267: case 269: case 332: case 439:
+    return 1;
+  }
+  return 0;
+}
+static int ask_host(Cpu *c, u64 pc);
+// what else this run has mapped, lifted on the host too (no wait): the program, its loader, and each library musl's
+// loader has mapped (r_debug's link_map, which the program's DT_DEBUG points at), so that the next run meets them lifted
+static void prefetch(Cpu *c, u64 sp0) {
+  u64 aphdr = 0, aphnum = 0, entry = 0, ibase = 0, sv_asked = asked_pc;
+  aux_sp = sp0;
+  if (auxv(c, &aphdr, &aphnum, &entry, &ibase)) {
+    if (entry) ask_host(c, entry);
+    u8 h[64];
+    // (not the loader: it has run, and its memory is not the image met at its entry; met there, it was asked for)
+    u8 ph[64 * 56]; u64 bias = 0, dyn = 0;
+    if (aphnum && aphnum <= 64 && user_read(c, aphdr, ph, 56u * (unsigned)aphnum, 0)) {
+      for (unsigned i = 0; i < aphnum; i++) { u32 t; u64 va; memcpy(&t, ph + 56 * i, 4); memcpy(&va, ph + 56 * i + 16, 8); if (t == 6) bias = aphdr - va; }
+      for (unsigned i = 0; i < aphnum; i++) { u32 t; u64 va; memcpy(&t, ph + 56 * i, 4); memcpy(&va, ph + 56 * i + 16, 8); if (t == 2) dyn = va + bias; }
+    }
+    u64 dbg = 0;
+    for (int i = 0; dyn && i < 256; i++) { u64 d[2]; if (!user_read(c, dyn + 16 * i, d, 16, 0) || !d[0]) break; if (d[0] == 21) dbg = d[1]; }
+    u64 lm = 0; if (dbg) user_read(c, dbg + 8, &lm, 8, 0);
+    for (int n = 0; lm && n < 512; n++) {
+      u64 l[4]; if (!user_read(c, lm, l, 32, 0)) break;   // l_addr, l_name, l_ld, l_next
+      u64 base = l[0];
+      if (trace) { char nm[64] = {0}; if (l[1]) user_read(c, l[1], nm, 63, 0); logf_("pisco: prefetch: %s at 0x%llx (loader at 0x%llx, program at 0x%llx)", nm, base, ibase, bias); }
+      if (base && base != ibase && base != bias && user_read(c, base, h, 64, 0) && !memcmp(h, "\x7f" "ELF\x02\x01", 6)) {
+        u64 po; u16 pn; memcpy(&po, h + 32, 8); memcpy(&pn, h + 56, 2);
+        if (pn && pn <= 64 && po < 4096 && user_read(c, base + po, ph, 56u * pn, 0))
+          for (unsigned i = 0; i < pn; i++) { u32 t, fl; u64 va; memcpy(&t, ph + 56 * i, 4); memcpy(&fl, ph + 56 * i + 4, 4); memcpy(&va, ph + 56 * i + 16, 8);
+            if (t == 1 && (fl & 1)) { ask_host(c, va + base + 16); break; } }
+      }
+      lm = l[3];
+    }
+  }
+  aux_sp = 0; asked_pc = sv_asked;
+}
+static void first_tier(Cpu *c, u64 pc) {
+  Ctx *x = cur; struct kw_regs *k = x->kr; u64 sp0 = FIRST_SP(k), argc, v;
+  lift_pending = 0;
+  if (!sp0 || !user_read(c, sp0, &argc, 8, 0) || !argc || argc > 4096) return;
+  u64 envp = sp0 + 8 * (argc + 2), envc = 0;
+  while (envc < 65536 && user_read(c, envp + 8 * envc, &v, 8, 0) && v) envc++;
+  u64 auxp = envp + 8 * (envc + 1), path = 0;
+  for (int i = 0; i < 64; i++) { u64 kv[2]; if (!user_read(c, auxp + 16 * i, kv, 16, 0) || !kv[0]) break; if (kv[0] == 31) path = kv[1]; }
+  if (!path) return;
+  prefetch(c, sp0);
+  static const char qemu[] = "/.pisco/qemu-x86_64", zero[] = "-0";
+  u64 scr = (R[RSP] - 16384) & ~15ull, argv = scr + 64, w = argv, put;
+  mmu_write(c, mmu_u, scr, sizeof qemu, pc, qemu); mmu_write(c, mmu_u, scr + 32, sizeof zero, pc, zero);
+  #define PUT(val) do { put = (val); mmu_write(c, mmu_u, w, 8, pc, &put); w += 8; } while (0)
+  PUT(scr); PUT(scr + 32);
+  user_read(c, sp0 + 8, &v, 8, 0); PUT(v);   // -0 argv[0]
+  PUT(path);
+  for (u64 i = 1; i < argc; i++) { user_read(c, sp0 + 8 + 8 * i, &v, 8, 0); PUT(v); }
+  PUT(0);
+  #undef PUT
+  char name[96] = {0}; user_read(c, path, name, sizeof name - 1, 0);
+  for (unsigned i = 0; i < sizeof name - 1; i++) if (!name[i]) break; else if ((u8)name[i] < 32) name[i] = '?';
+  logf_("pisco: %s meets code not lifted yet: this run is on qemu-user, the next lifted", name);
+  st_first_tier++;
+  CLEAN(k) = 2; asked_pc = 0;
+  k->x[0] = scr; k->x[1] = argv; k->x[2] = envp; k->x[8] = 221; k->x[X_PEND] = 59 + 1; k->x[X_NEXT] = pc;
+  x->rflags = 0x202;
+  leave(x, EV_SYSCALL, pc);   // execve; should it fail, the task goes on here and waits for the lift
+}
 static int ask_host(Cpu *c, u64 pc) {
   u64 aphdr = 0, aphnum = 0, entry = 0, ibase = 0; int start = auxv(c, &aphdr, &aphnum, &entry, &ibase);
   u8 h[64], ph[64 * 56]; u64 phdr, phnum = 0, bias = 0; int apply = 0, found = 0;
@@ -296,7 +397,7 @@ static int ask_host(Cpu *c, u64 pc) {
   u8 *img = calloc(1, size); if (!img) return 0;
   for (unsigned i = 0; i < phnum; i++) { u32 t; u64 off, va, fs; memcpy(&t, ph + 56 * i, 4); memcpy(&off, ph + 56 * i + 8, 8); memcpy(&va, ph + 56 * i + 16, 8); memcpy(&fs, ph + 56 * i + 32, 8);
     if (t == 1 && fs && !user_read(c, va + bias, img + off, (unsigned)fs, 1)) { free(img); return 0; } }
-  n_fns = 0; relocate(img, size, ph, (unsigned)phnum, bias, apply);
+  n_fns = 0; relocate(img, size, ph, (unsigned)phnum, bias, apply ? 1 : 2);
   if (n_fns < MAX_FNS) fns[n_fns++] = pc;
   u64 po; memcpy(&po, h + 32, 8); u8 *p = img + po; u16 pn; memcpy(&pn, h + 56, 2);
   if (po + 56u * pn <= size) for (unsigned i = 0; i < pn; i++) {
@@ -307,8 +408,9 @@ static int ask_host(Cpu *c, u64 pc) {
   u16 exec = 2; memcpy(img + 16, &exec, 2); u64 e; memcpy(&e, h + 24, 8); e += bias; memcpy(img + 24, &e, 8);
   memset(img + 40, 0, 8); memset(img + 60, 0, 4);
   Ctx *x = cur; int polls = mc_budget;
-  int r = host_program_image((u32)(uptr)img, (u32)size, (u32)(uptr)fns, n_fns); free(img);
+  int r = host_program_image((u32)(uptr)img, (u32)size, (u32)(uptr)fns, n_fns, aux_sp ? 2 : CLEAN(x->kr) != 1); free(img);
   cur = x; mc_budget = polls;
+  if (r < 0) { lift_pending = 1; return 0; }
   return r;
 }
 static const ProgramDef *program_at(Cpu *c, u64 pc) {
@@ -324,7 +426,7 @@ static const ProgramDef *program_at(Cpu *c, u64 pc) {
     if (code_hash(pc, p->lo, p->hi) == p->page_hashes[((pc & ~0xFFFull) - (p->lo & ~0xFFFull)) >> 12]) {
       prog_cur = p; if (fs) *fs = (FrameSlot){ (uptr)host, page, sample_of(host), p }; break; }
   }
-  if (!prog_cur) { static u64 asked; if (asked != pc) { asked = pc; if (ask_host(c, pc)) return program_at(c, pc); } return 0; }
+  if (!prog_cur) { if (asked_pc != pc) { asked_pc = pc; if (ask_host(c, pc)) return program_at(c, pc); } return 0; }
   *slot = (IdSlot){ page, cur_pgd, calls_gen, prog_cur }; prog_cur_gen = calls_gen; prog_cur_pgd = cur_pgd;
   return prog_cur;
 }
@@ -342,6 +444,7 @@ static int enterable(u64 pc) {
 u64 mc_resume_flags;
 static void enter(Cpu *c, u64 pc) {
   const ProgramDef *p = program_at(c, pc); int i;
+  if (!p && lift_pending && CLEAN(cur->kr) == 1) first_tier(c, pc);
   if (!p) fatal(cur, pc, "no lifted program holds the code");
   if ((i = find(p->fn_addrs, p->fn_count, pc)) >= 0) { p->fn_ptrs[i](c); return; }
   if ((i = find(p->resume_at, p->resume_count, pc)) >= 0) { st_reenter++; c->resume = pc; p->fn_ptrs[p->resume_fn[i]](c); return; }
@@ -414,6 +517,24 @@ static u64 fl_a2x(u64 f) {
   return r;
 }
 // sets arm64's number and arguments; 0 when it is done here (RAX holds the result), 1 when the kernel does it
+// ---- a library at the same address in every program (and so one lifted module for it, apply == 2 above) ----
+// musl's loader opens a library and maps it with mmap(0, ...) at once; the runtime remembers the path of the last
+// library opened (v[30][0]: its hash; v[30][1]: its descriptor) and asks the kernel for an address of its own, from
+// the path's hash, as a hint: taken where it is free (else the kernel's choice, and a lift of its own)
+#define LIB_HASH(k) ((k)->v[30][0])
+#define LIB_FD(k) ((k)->v[30][1])
+static void lib_opened(Cpu *c, struct kw_regs *k, u64 path) {
+  char p[256]; LIB_HASH(k) = 0;
+  if (!user_read(c, path, p, sizeof p, 0)) { unsigned n = 0; while (n < sizeof p && user_read(c, path + n, p + n, 1, 0) && p[n]) n++; if (n == sizeof p) return; p[n] = 0; }
+  p[sizeof p - 1] = 0;
+  if (!strstr(p, ".so")) return;
+  u64 h = 1469598103934665603ull; for (const char *q = p; *q; q++) h = (h ^ (u8)*q) * 1099511628211ull;
+  LIB_HASH(k) = h | 1; LIB_FD(k) = ~0ull;
+}
+static u64 lib_address(struct kw_regs *k, u64 fd) {
+  if (!LIB_HASH(k) || LIB_FD(k) != fd) return 0;
+  return 0x100000000000ull + ((LIB_HASH(k) >> 8) % 65536) * 0x10000000ull;   // a 256 MiB slot of 16 TiB, below 2^45
+}
 static int translate(Ctx *x, Cpu *c, u64 *a) {
   u64 nr = R[RAX], p[6] = { R[RDI], R[RSI], R[RDX], R[10], R[8], R[9] };
   long n = -1;
@@ -421,13 +542,15 @@ static int translate(Ctx *x, Cpu *c, u64 *a) {
   #define SH(num) do { n = (num); a[0] = (u64)(s64)AT_FDCWD; for (int k_ = 0; k_ < 5; k_++) a[k_ + 1] = p[k_]; } while (0)
   switch (nr) {
   case 0: AS(63); break;   case 1: AS(64); break;   case 3: AS(57); break;
-  case 2: SH(56); a[2] = fl_x2a(a[2]); break;                       // open -> openat
-  case 257: AS(56); a[2] = fl_x2a(a[2]); break;                     // openat
+  case 2: SH(56); a[2] = fl_x2a(a[2]); lib_opened(c, x->kr, p[0]); break;   // open -> openat
+  case 257: AS(56); a[2] = fl_x2a(a[2]); lib_opened(c, x->kr, p[1]); break;  // openat
   case 4: SH(79); a[3] = 0; break;                                  // stat -> newfstatat
   case 6: SH(79); a[3] = 0x100; break;                              // lstat
   case 5: AS(80); break;                                            // fstat
   case 262: AS(79); break;                                          // newfstatat
-  case 8: AS(62); break;   case 9: AS(222); break;  case 10: AS(226); break; case 11: AS(215); break; case 12: AS(214); break;
+  case 8: AS(62); break;
+  case 9: AS(222); if (!a[0] && a[4] < 1024 && !a[5]) a[0] = lib_address(x->kr, a[4]); break;   // mmap (a library's first: lib_address)
+  case 10: AS(226); break; case 11: AS(215); break; case 12: AS(214); break;
   case 13: AS(134); break; case 14: AS(135); break; case 15: AS(139); break; case 16: AS(29); break;  case 17: AS(67); break;  case 18: AS(68); break;
   case 19: AS(65); break;  case 20: AS(66); break;
   case 21: SH(48); a[3] = 0; break;                                 // access -> faccessat
@@ -547,6 +670,7 @@ static void syscall_done(Cpu *c, struct kw_regs *k) {
   R[RAX] = (u64)r;
   if (r < 0 && r > -4096) return;
   switch (nr) {
+  case 2: case 257: if (LIB_HASH(k) && LIB_FD(k) == ~0ull) LIB_FD(k) = (u64)r; break;
   case 4: case 6: stat_a2x(c, R[RSI]); break;
   case 5: stat_a2x(c, R[RSI]); break;
   case 262: stat_a2x(c, R[RDX]); break;
@@ -563,6 +687,7 @@ void rt_syscall_m(Cpu *c, u64 next, Flags *f) {
   Ctx *x = cur; u64 a[7] = {0};
   u64 rflags = flags_get64(f);
   if (trace > 1) logf_("pisco: system call %llu at 0x%llx", R[RAX], next);
+  if (CLEAN(x->kr) == 1 && !harmless(R[RAX], R[RDI], R[RSI])) CLEAN(x->kr) = 0;
   if (!translate(x, c, a)) return;   // done here: the code goes on
   st_syscalls++;
   u64 nr = R[RAX];
@@ -699,11 +824,12 @@ EXPORT("pisco_after") u32 pisco_after(u64 cpu_, u64 regs_, u32 ev) {
   k->sp = sp; k->pc = MARK | entry; k->tpidr = 0; k->x[X_TAG] = X64_TAG;
   k->x[X_FP] = 0x1F80 | (u64)0x037F << 32; k->x[X_FLAGS] = 0x202;
   programs_forget();   // (a new program in this address space)
+  CLEAN(k) = 1; FIRST_SP(k) = sp;   // (it has only been loaded: the first tier may start it again on qemu-user)
   if (trace) logf_("pisco: a task becomes x86-64: entry 0x%llx, stack 0x%llx", entry, sp);
   return pisco_run(cpu_, regs_);
 }
 EXPORT("pisco_stats") void pisco_stats(void) {
-  logf_("pisco: %llu runs, %llu system calls to the kernel, %llu exits at polls, %llu TLB misses, %llu full TLB flushes, %llu entries at return addresses, %llu programs asked for, %u registered",
-        st_runs, st_syscalls, st_polls_out, st_misses, st_flushes, st_reenter, st_asked, n_progs);
+  logf_("pisco: %llu runs on qemu-user (first tier); %llu runs, %llu system calls to the kernel, %llu exits at polls, %llu TLB misses, %llu full TLB flushes, %llu entries at return addresses, %llu programs asked for, %u registered",
+        st_first_tier, st_runs, st_syscalls, st_polls_out, st_misses, st_flushes, st_reenter, st_asked, n_progs);
   logf_("pisco: flushes: %llu ranges, %llu all, %llu address spaces; %llu page hashes; %llu indirect calls too deep, unwound", st_fk[1], st_fk[2], st_fk[3], st_hash, st_unwound);
 }
