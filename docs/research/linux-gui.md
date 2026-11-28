@@ -173,7 +173,10 @@ pays more at its start is not known yet (each new address space looks its progra
 
 **Two bugs of the lifted desktop.** Lifted Xorg answers xterm's `X_OpenFont` with BadAlloc (with `-fn fixed`,
 `-fn 6x13` or `-fa monospace`), while twm, started before it, opens its font set; the same packages on arm64 open
-both. And once, Xorg was gone a few seconds after it started (`Can't open display`). Neither is found yet.
+both. And once, Xorg was gone a few seconds after it started (`Can't open display`). Neither is found yet. The
+first is in the server: with Xorg run on qemu-user (`/.pisco/qemu-x86_64 /usr/libexec/Xorg`) and every client
+lifted, xterm opens its font and shows its prompt beside twm, xeyes and xclock. That Xorg gets no input, though:
+qemu-user does not pass evdev's ioctls, so it has no keyboard or mouse (the lifted Xorg has both).
 
 **Fixed on the way.** The runtime registered at most 64 programs (a desktop maps more: xterm's 65th library got
 SIGILL); now 1024. The lifter had no 16-bit `idiv` in 64-bit code (libfreetype's `idiv si`: fc-cache got
