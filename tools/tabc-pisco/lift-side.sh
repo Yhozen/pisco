@@ -12,6 +12,9 @@ set -euo pipefail
 root=$(cd "$(dirname "$0")/../.." && pwd)
 export LIFTER_MUSTTAIL=${LIFTER_MUSTTAIL-2}
 if [ "${1:-}" = --tools ]; then
+  # (LIFT_TOOLS_KEY: a key given, for a cache kept across a lifter change that only adds instructions, which the
+  # modules lifted before stop at; those that met one are removed by hand and lifted again)
+  if [ -n "${LIFT_TOOLS_KEY:-}" ]; then echo "$LIFT_TOOLS_KEY"; exit 0; fi
   { cat "$root/target/release/lifter" "$root/rt/cpu.h" "$0"; echo "$LIFTER_MUSTTAIL ${OPT:--O2} ${SPLIT:-16}"; } | sha256sum | cut -c1-16; exit 0
 fi
 elf=$1; name=$2; out=$3; shift 3

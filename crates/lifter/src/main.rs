@@ -3132,6 +3132,10 @@ fn extra(i: &Instruction, elf: bool, machine: bool) -> Option<String> {
         M::Imul if i.op_count() == 1 && bits == 32 => format!("{{s64 p=(s64)(s32)R[0]*(s32){};R[0]=(u32)p;R[2]=(u32)(p>>32);f.cf=f.of=p!=(s32)p;}}", rd(i, 0)),
         M::Div if bits == 8 => format!("{{u16 n=(u16)R[0];u8 d={};if(!d)rt_trap(0x{:x});R[0]=(R[0]&~0xFFFFull)|(u16)((n%d)<<8|(u8)(n/d));}}", rd(i, 0), i.ip()),
         M::Div if bits == 16 => format!("{{u32 n=((u32)(u16)R[2]<<16)|(u16)R[0];u16 d={};if(!d)rt_trap(0x{:x});R[0]=(R[0]&~0xFFFFull)|(u16)(n/d);R[2]=(R[2]&~0xFFFFull)|(u16)(n%d);}}", rd(i, 0), i.ip()),
+        M::Idiv if bits == 8 => format!("{{s16 n=(s16)R[0];s8 d=(s8){};if(!d)rt_trap(0x{:x});R[0]=(R[0]&~0xFFFFull)|(u16)((u8)(n%d)<<8|(u8)(n/d));}}", rd(i, 0), i.ip()),
+        M::Idiv if bits == 16 => format!("{{s32 n=(s32)(((u32)(u16)R[2]<<16)|(u16)R[0]);s16 d=(s16){};if(!d)rt_trap(0x{:x});R[0]=(R[0]&~0xFFFFull)|(u16)(n/d);R[2]=(R[2]&~0xFFFFull)|(u16)(n%d);}}", rd(i, 0), i.ip()),
+        M::Imul if i.op_count() == 1 && bits == 8 => format!("{{s16 p=(s16)(s8)R[0]*(s8){};R[0]=(R[0]&~0xFFFFull)|(u16)p;f.cf=f.of=p!=(s8)p;}}", rd(i, 0)),
+        M::Imul if i.op_count() == 1 && bits == 16 => format!("{{s32 p=(s32)(s16)R[0]*(s16){};R[0]=(R[0]&~0xFFFFull)|(u16)p;R[2]=(R[2]&~0xFFFFull)|(u16)(p>>16);f.cf=f.of=p!=(s16)p;}}", rd(i, 0)),
         // ---- the virtual CPU ----
         M::Cpuid => "rt_cpuid(c);".into(),
         M::Rdtsc => "{u64 t=rt_rdtsc();R[0]=(u32)t;R[2]=t>>32;}".into(),

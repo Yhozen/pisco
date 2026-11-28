@@ -370,6 +370,23 @@ static void first_tier(Cpu *c, u64 pc) {
   x->rflags = 0x202;
   leave(x, EV_SYSCALL, pc);   // execve; should it fail, the task goes on here and waits for the lift
 }
+// A task that cannot be started again (it has done more than load) and meets code not lifted yet sleeps in the
+// kernel while the host lifts it, and tries again: half a second of nanosleep, with RAX kept (v[29][0]) and given
+// back as it was. The kernel runs the other tasks meanwhile (waiting in the page would stop them all: the page's
+// answer suspends the kernel's one thread).
+enum { WAIT_PEND = 0x10000 };
+static u64 st_slept;
+static void sleep_retry(Cpu *c, u64 pc) {
+  Ctx *x = cur; struct kw_regs *k = x->kr;
+  lift_pending = 0; asked_pc = 0;
+  if (!st_slept++ || trace) logf_("pisco: a task waits for the lift of code at 0x%llx, asleep (the others run)", pc);
+  u64 ts[2] = { 0, 500000000 }, scr = (R[RSP] - 16384) & ~15ull;
+  mmu_write(c, mmu_u, scr, 16, pc, ts);
+  k->v[29][0] = R[RAX];
+  k->x[0] = scr; k->x[1] = 0; k->x[8] = 101; k->x[X_PEND] = WAIT_PEND; k->x[X_NEXT] = pc;
+  x->rflags = mc_resume_flags;
+  leave(x, EV_SYSCALL, pc);
+}
 static int ask_host(Cpu *c, u64 pc) {
   u64 aphdr = 0, aphnum = 0, entry = 0, ibase = 0; int start = auxv(c, &aphdr, &aphnum, &entry, &ibase);
   u8 h[64], ph[64 * 56]; u64 phdr, phnum = 0, bias = 0; int apply = 0, found = 0;
@@ -408,7 +425,7 @@ static int ask_host(Cpu *c, u64 pc) {
   u16 exec = 2; memcpy(img + 16, &exec, 2); u64 e; memcpy(&e, h + 24, 8); e += bias; memcpy(img + 24, &e, 8);
   memset(img + 40, 0, 8); memset(img + 60, 0, 4);
   Ctx *x = cur; int polls = mc_budget;
-  int r = host_program_image((u32)(uptr)img, (u32)size, (u32)(uptr)fns, n_fns, aux_sp ? 2 : CLEAN(x->kr) != 1); free(img);
+  int r = host_program_image((u32)(uptr)img, (u32)size, (u32)(uptr)fns, n_fns, aux_sp ? 2 : CLEAN(x->kr) == 1 ? 0 : 3); free(img);
   cur = x; mc_budget = polls;
   if (r < 0) { lift_pending = 1; return 0; }
   return r;
@@ -445,6 +462,7 @@ u64 mc_resume_flags;
 static void enter(Cpu *c, u64 pc) {
   const ProgramDef *p = program_at(c, pc); int i;
   if (!p && lift_pending && CLEAN(cur->kr) == 1) first_tier(c, pc);
+  if (!p && lift_pending) sleep_retry(c, pc);
   if (!p) fatal(cur, pc, "no lifted program holds the code");
   if ((i = find(p->fn_addrs, p->fn_count, pc)) >= 0) { p->fn_ptrs[i](c); return; }
   if ((i = find(p->resume_at, p->resume_count, pc)) >= 0) { st_reenter++; c->resume = pc; p->fn_ptrs[p->resume_fn[i]](c); return; }
@@ -666,6 +684,7 @@ static void stat_a2x(Cpu *c, u64 buf) {
 }
 // what a system call returned (x0), as x86-64's result, its structures converted
 static void syscall_done(Cpu *c, struct kw_regs *k) {
+  if (k->x[X_PEND] == WAIT_PEND) { k->x[X_PEND] = 0; R[RAX] = k->v[29][0]; return; }   // (sleep_retry's)
   u64 nr = k->x[X_PEND] - 1; s64 r = (s64)k->x[0]; k->x[X_PEND] = 0;
   R[RAX] = (u64)r;
   if (r < 0 && r > -4096) return;
@@ -702,10 +721,17 @@ void rt_syscall_m(Cpu *c, u64 next, Flags *f) {
 void rt_syscall(Cpu *c, u64 next) { Flags f = {0}; rt_syscall_m(c, next, &f); }
 
 // ---- what user code may meet otherwise ----
-void rt_trap(u64 a) { leave(cur, EV_ILLEGAL, a); }
+void rt_trap(u64 a) {   // (the lifter's trap: a gap in the code it decoded, or ud2: SIGILL; said once per address)
+  static u64 said; if (said != a) { said = a; logf_("pisco: a trap in lifted code at 0x%llx (SIGILL)", a); }
+  leave(cur, EV_ILLEGAL, a);
+}
 void rt_unimpl(u64 a) { fatal(cur, a, "an instruction that is not lifted"); }
-void rt_hlt(Cpu *c, u64 next) { (void)c; leave(cur, EV_ILLEGAL, next); }
-void rt_exc(Cpu *c, u32 vector, u32 err, u64 rip, u64 next) { (void)c; (void)err; (void)next; leave(cur, vector == 3 ? EV_BREAKPOINT : EV_ILLEGAL, rip); }
+void rt_hlt(Cpu *c, u64 next) { (void)c; logf_("pisco: hlt in lifted code before 0x%llx (SIGILL)", next); leave(cur, EV_ILLEGAL, next); }
+void rt_exc(Cpu *c, u32 vector, u32 err, u64 rip, u64 next) {
+  (void)c; (void)err; (void)next;
+  static u64 said; if (vector != 3 && said != rip) { said = rip; logf_("pisco: exception %u in lifted code at 0x%llx (SIGILL)", vector, rip); }
+  leave(cur, vector == 3 ? EV_BREAKPOINT : EV_ILLEGAL, rip);
+}
 void flags_set64(Cpu *c, Flags *f, u64 v) { (void)c; f->cf = v & 1; f->pf = (v >> 2) & 1; f->af = (v >> 4) & 1; f->zf = (v >> 6) & 1; f->sf = (v >> 7) & 1; f->df = (v >> 10) & 1; f->of = (v >> 11) & 1; mc_rflags = (v & 0x240000) | 2; }
 void rt_cpuid(Cpu *c) {
   u32 leaf = (u32)R[RAX], a = 0, b = 0, cx = 0, d = 0;
