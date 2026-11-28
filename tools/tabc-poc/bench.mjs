@@ -9,6 +9,8 @@
 //   tabc-arm64   tabc run (TABC, default tabc on PATH) on alpine:3.24.4, its arm64 image: unkernel, aarch64 on kwemu
 //   tabc-x86     the same container, with alpine:3.24.4's amd64 layer in a chroot run by qemu-user (qemu-x86_64,
 //                registered with binfmt_misc): what an amd64 image costs on tabc today
+//   tabc-src     tabc-arm64 with tabc built from source (tools/tabc-pisco/setup.sh, SHARE_STOCK=1), unchanged
+//   tabc-pisco   that tabc with PISCO (docs/research/tabc-pisco.md): alpine:3.24.4's amd64 image, its programs lifted
 //   native       the amd64 layer in a chroot on this machine (sudo)
 //   pisco-k      an experiment: out/images/alpine-k, the benchmark also lifted into the kernel's module (INKERNEL=1)
 // Each run is one container from nothing: the browser started, the kernel booted, the workload run, the container
@@ -109,13 +111,36 @@ async function pisco(w, image = 'out/images/alpine') {
 }
 
 // ---- tabc: one `tabc run` per container, arm64 or the amd64 layer under qemu-user ----
-function tabc(w, arch) {
-  const bin = process.env.TABC || 'tabc', base = ['run', '--cpus', '1', '-m', '256m'];
-  if (w === 'echo' || w === 'idle') return runProcess(bin, [...base, IMAGE, 'sh', '-c', command(w)], { idle: w === 'idle' });
+function tabc(w, arch, env = {}) {
+  const bin = env.TABC || process.env.TABC || 'tabc', base = ['run', '--cpus', '1', '-m', '256m'];
+  if (w === 'echo' || w === 'idle') return runProcess(bin, [...base, IMAGE, 'sh', '-c', command(w)], { env, idle: w === 'idle' });
   const prelude = arch === 'arm64' ? 'cp /opt/x/bench-aarch64 /usr/local/bin/bench; cp /opt/x/workload /usr/local/bin/workload; workload "$@"'
     : '. /opt/x/prelude.sh; chroot /x86 /usr/local/bin/workload "$@"';
-  return runProcess(bin, [...base, '-v', `${VOL}:/opt/x:ro`, IMAGE, 'sh', '-c', prelude, 'sh', w]);
+  return runProcess(bin, [...base, '-v', `${VOL}:/opt/x:ro`, IMAGE, 'sh', '-c', prelude, 'sh', w], { env });
 }
+
+// ---- tabc-pisco: tabc 1.0.0 built from source with PISCO in it (tools/tabc-pisco/setup.sh into TABC_PISCO, default
+// out/tabc-pisco) on alpine:3.24.4's amd64 image, its programs run lifted as tasks of the same kernel (unkernel's,
+// patched so that kw_run asks PISCO first); a program met for the first time is lifted on the host ----
+const tabcPiscoDir = () => path.resolve(process.env.TABC_PISCO || path.join(root, 'out/tabc-pisco'));
+function tabcPisco(w) {
+  const dir = tabcPiscoDir(), vol = path.join(dir, 'vol');
+  if (!fs.existsSync(path.join(vol, 'workload'))) {
+    fs.mkdirSync(vol, { recursive: true });
+    fs.copyFileSync(path.join(root, 'out/tabc-poc/bench/bench-x86_64'), path.join(vol, 'bench-x86_64'));
+    fs.copyFileSync(path.join(root, 'tools/tabc-poc/workload'), path.join(vol, 'workload'));
+    for (const f of ['bench-x86_64', 'workload']) fs.chmodSync(path.join(vol, f), 0o755);
+  }
+  const env = { TABC_SHARE: path.join(dir, 'share'), TABC_IMAGE_ARCH: 'amd64', XDG_CACHE_HOME: path.join(dir, 'cache'),
+    TABC_PISCO_LIFT: path.join(root, 'tools/tabc-pisco/lift-side.sh') };
+  const bin = path.join(dir, 'tabc'), base = ['run', '--cpus', '1', '-m', '256m'];
+  if (w === 'echo' || w === 'idle') return runProcess(bin, [...base, IMAGE, 'sh', '-c', command(w)], { env, idle: w === 'idle' });
+  const prelude = 'cp /opt/x/bench-x86_64 /usr/local/bin/bench; cp /opt/x/workload /usr/local/bin/workload; workload "$@"';
+  return runProcess(bin, [...base, '-v', `${vol}:/opt/x:ro`, IMAGE, 'sh', '-c', prelude, 'sh', w], { env });
+}
+// tabc-src: tabc-arm64 with the same tabc built from source (setup.sh with SHARE_STOCK=1), its own page and kernel
+const tabcSrc = (w) => { const dir = tabcPiscoDir();
+  return tabc(w, 'arm64', { TABC: path.join(dir, 'tabc'), TABC_SHARE: path.join(dir, 'share-stock'), XDG_CACHE_HOME: path.join(dir, 'cache-stock') }); };
 
 // ---- native: the amd64 layer in a chroot ----
 function nativeRun(w) {
@@ -154,8 +179,8 @@ async function main() {
   const [side, n = '5', ...ws] = process.argv.slice(2);
   if (side === 'report') return report();
   const runs = +n, list = ws.length ? ws : WORKLOADS;
-  const run = { pisco: (w) => pisco(w), 'pisco-k': (w) => pisco(w, 'out/images/alpine-k'), 'tabc-arm64': (w) => tabc(w, 'arm64'), 'tabc-x86': (w) => tabc(w, 'x86'), native: (w) => nativeRun(w) }[side];
-  if (!run) { console.error('bench.mjs: pisco, pisco-k, tabc-arm64, tabc-x86, native or report'); process.exit(2); }
+  const run = { pisco: (w) => pisco(w), 'pisco-k': (w) => pisco(w, 'out/images/alpine-k'), 'tabc-arm64': (w) => tabc(w, 'arm64'), 'tabc-x86': (w) => tabc(w, 'x86'), 'tabc-src': (w) => tabcSrc(w), 'tabc-pisco': (w) => tabcPisco(w), native: (w) => nativeRun(w) }[side];
+  if (!run) { console.error('bench.mjs: pisco, pisco-k, tabc-arm64, tabc-x86, tabc-src, tabc-pisco, native or report'); process.exit(2); }
   if (side === 'native') nativeSetup();
   fs.mkdirSync(results, { recursive: true });
   const file = path.join(results, process.env.BENCH_OUT || `${side}.json`), out = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')) : { side, runs: {} };
@@ -173,7 +198,7 @@ async function main() {
 
 // ---- the doc's tables: median (best) of the runs ----
 function report() {
-  const sides = ['native', 'pisco', 'pisco-k', 'tabc-arm64', 'tabc-x86'].filter((s) => fs.existsSync(path.join(results, `${s}.json`)));
+  const sides = ['native', 'pisco', 'pisco-k', 'tabc-arm64', 'tabc-x86', 'tabc-src', 'tabc-pisco'].filter((s) => fs.existsSync(path.join(results, `${s}.json`)));
   const data = Object.fromEntries(sides.map((s) => [s, JSON.parse(fs.readFileSync(path.join(results, `${s}.json`), 'utf8'))]));
   const med = (v) => { v = v.filter((x) => x != null).sort((a, b) => a - b); return v.length ? (v.length % 2 ? v[v.length >> 1] : (v[v.length / 2 - 1] + v[v.length / 2]) / 2) : null; };
   const cell = (v, f = (x) => x) => { v = v.filter((x) => x != null); return v.length ? `${f(med(v))} (${f(Math.min(...v))})` : '–'; };

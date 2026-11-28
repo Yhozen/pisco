@@ -446,6 +446,12 @@ fn jump_table_abs64(img: &Image, insns: &BTreeMap<u64, Instruction>, jmp: &Instr
     if out.is_empty() { None } else { Some(out) }
 }
 fn jump_table(img: &Image, insns: &BTreeMap<u64, Instruction>, jmp: &Instruction, range: Option<(u64, u64)>) -> Option<Vec<u64>> {
+    // the table's base may be set on another path than the closest `lea` before the load (GCC: a loop whose table
+    // base is set before it, an error path's `lea` of the same register in between): each in turn, the first
+    // whose entries all land in code
+    (0..4).find_map(|nth| jump_table_nth(img, insns, jmp, range, nth))
+}
+fn jump_table_nth(img: &Image, insns: &BTreeMap<u64, Instruction>, jmp: &Instruction, range: Option<(u64, u64)>, nth: usize) -> Option<Vec<u64>> {
     let target = jmp.op0_register().full_register();
     let prev: Vec<&Instruction> = insns.range(..jmp.ip()).rev().take(64).map(|(_, i)| i).collect();
     // the load of the entry into R (or its 32-bit part) and the register it was rebased with
@@ -478,11 +484,18 @@ fn jump_table(img: &Image, insns: &BTreeMap<u64, Instruction>, jmp: &Instruction
         }
         found.or_else(|| insns.values().find(|i| i.mnemonic() == Mnemonic::Lea && i.op0_register().full_register() == r && i.is_ip_rel_memory_operand()).map(|i| i.ip_rel_memory_address()))
     };
-    let base = lea_of(base_reg)?;
+    let base = if nth == 0 { lea_of(base_reg)? } else {
+        // the nth `lea base,[rip+X]` of the function: those before the load, closest first, then the others
+        let mut all: Vec<u64> = insns.range(..load.ip()).rev().map(|(_, i)| i).chain(insns.range(load.ip()..).map(|(_, i)| i))
+            .filter(|i| i.mnemonic() == Mnemonic::Lea && i.op0_register().full_register() == base_reg && i.is_ip_rel_memory_operand())
+            .map(|i| i.ip_rel_memory_address()).collect();
+        all.dedup();
+        *all.get(nth)?
+    };
     let (table, rebase) = if img.is_base(base) {
         (base + load.memory_displacement64(), base) // RVAs, rebased by the image base
     } else {
-        (base.wrapping_add(load.memory_displacement64()), add_base.and_then(lea_of).unwrap_or(base))
+        (base.wrapping_add(load.memory_displacement64()), if add_base == Some(base_reg) { base } else { add_base.and_then(lea_of).unwrap_or(base) })
     };
     // the index computed from a compared register by non-decreasing steps (MSVC's memset / memcpy:
     // `cmp R8,0x80; jae loop; lea R9,[R8+0xF]; and R9,-16; mov R11,R9; shr R11,4; mov R11D,[R10+R11*4+rva]`):
