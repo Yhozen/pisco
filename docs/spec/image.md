@@ -36,14 +36,17 @@ Each layer has the annotation `org.pisco.layer.role`, and `org.opencontainers.im
 |---|---|---|---|
 | `base` | layer | the base's drive ([base.md](base.md)): its folders, files and the placeholders of the DLLs it answers for | by every app FROM the base |
 | `library` | layer | one per library the recipe names: a placeholder for each DLL it answers for | by every app that names it |
-| `app` | layer | the app's files: what the recipe's extract steps and `[files]` placed | never |
-| `shaders` | layer | what the warm-up compiled ([recipe.md](recipe.md#warm-up)), in the app's folder | never |
-| `module` | module | the module a host starts the app in | never |
-| `program` | module | a module of one more program (a Linux app's, a machine's), named in the config | never |
+| `app` | layer | the app's files: what the recipe's extract steps and `[files]` placed | never (below) |
+| `shaders` | layer | what the warm-up compiled ([recipe.md](recipe.md#warm-up)), in the app's folder | never (below) |
+| `module` | module | the module a host starts the app in | never (below) |
+| `program` | module | a module of one more program (a Linux app's, a machine's), named in the config | never (below) |
 <!-- /roles -->
 
 File layers come first, in the order of the table; `module` is the first module. A layer that is never shared has
-the annotation `org.pisco.local-only` = `"true"`: it is made from the user's own files, and must not be published.
+the annotation `org.pisco.local-only` = `"true"`: it is made from the user's own files, and must not be published
+([distribution.md](distribution.md#what-may-be-published)). The app's own layers (`app`, `shaders`, `module`,
+`program`) are local-only unless every input of the recipe is `built_by`: then the app is made from the
+repository's own sources, and may be pushed to a registry as a whole.
 
 ## Files
 

@@ -28,7 +28,7 @@ same "quirks" "$(marked docs/spec/recipe.md quirks)" "$(of quirk)"
 same "base keys" "$(marked docs/spec/base.md base-keys)" "$(of base-key)"
 # the image: the config's fields (docs/spec/image.md) are the schema's, and the layer roles are the ones pisco writes
 same "config fields" "$(marked docs/spec/image.md config)" "$(node -e 'console.log(Object.keys(JSON.parse(require("fs").readFileSync("docs/spec/config.schema.json")).properties).join("\n"))')"
-same "layer roles" "$(marked docs/spec/image.md roles)" "$(grep -ohE '\(ROLE, "[a-z]+"\)' crates/pisco/src/build.rs | sed 's/(ROLE, "\(.*\)")/\1/')"
+same "layer roles" "$(marked docs/spec/image.md roles)" "$(grep -ohE '\(ROLE, "[a-z]+"\)|own\("[a-z]+"' crates/pisco/src/build.rs | sed -E 's/.*"([a-z]+)".*/\1/')"
 # sessions (docs/spec/sessions.md): the keys and steps are web/session.mjs's, every session of a recipe is read, and a
 # session with an unknown step, a key that does not go with its step, or no schema is refused
 same "session keys" "$(marked docs/spec/sessions.md session-keys)" "$(node --input-type=module -e 'import { SESSION_KEYS } from "./web/session.mjs"; console.log(SESSION_KEYS.join("\n"))')"

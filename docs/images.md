@@ -149,6 +149,12 @@ sources/                one checkout of each git source, at the commit last inst
 sources.toml            the namespaces: @ns = "<git url>"
 ```
 
+`pisco push <name> ghcr.io/<owner>/<name>:<tag>` sends an app made only from this repository's sources to a
+registry, and `pisco pull <ref> [--as <name>]` installs one from there ([spec/distribution.md](spec/distribution.md#registries)).
+Credentials: `PISCO_REGISTRY_TOKEN` (and `PISCO_REGISTRY_USER`), or for ghcr.io `GITHUB_TOKEN` or `gh auth token`
+(pushing needs `write:packages`); curl gets them in a file of headers, not on its command line. `localhost` and
+`127.0.0.1` are spoken to in http.
+
 `index.json`'s entry says where the app came from (`org.pisco.source`). `pisco inspect` and `pisco census` take an
 installed app's name too. Removing an app removes the blobs no other app names. `out/images` stays where the tests
 build.
