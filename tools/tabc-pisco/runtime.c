@@ -542,12 +542,14 @@ static u64 fl_a2x(u64 f) {
 // the path's hash, as a hint: taken where it is free (else the kernel's choice, and a lift of its own)
 #define LIB_HASH(k) ((k)->v[30][0])
 #define LIB_FD(k) ((k)->v[30][1])
+static int diag_pending; static s64 diag_fd = -1;
 static int diag_fonts = 0;   // (a diagnosis, 1: the font files programs open, and mmap's failures; how the lifted libXfont2 bug was found)
 static void lib_opened(Cpu *c, struct kw_regs *k, u64 path) {
   char p[256]; LIB_HASH(k) = 0;
   if (!user_read(c, path, p, sizeof p, 0)) { unsigned n = 0; while (n < sizeof p && user_read(c, path + n, p + n, 1, 0) && p[n]) n++; if (n == sizeof p) return; p[n] = 0; }
   p[sizeof p - 1] = 0;
   if (diag_fonts && strstr(p, "font")) logf_("pisco: diag: open %s", p);
+  if (diag_fonts && strstr(p, "12x13ja")) diag_pending = 1;
   if (!strstr(p, ".so")) return;
   u64 h = 1469598103934665603ull; for (const char *q = p; *q; q++) h = (h ^ (u8)*q) * 1099511628211ull;
   LIB_HASH(k) = h | 1; LIB_FD(k) = ~0ull;
@@ -689,6 +691,11 @@ static void stat_a2x(Cpu *c, u64 buf) {
 static void syscall_done(Cpu *c, struct kw_regs *k) {
   if (k->x[X_PEND] == WAIT_PEND) { k->x[X_PEND] = 0; R[RAX] = k->v[29][0]; return; }   // (sleep_retry's)
   u64 nr = k->x[X_PEND] - 1; s64 r = (s64)k->x[0]; k->x[X_PEND] = 0;
+  if (diag_fonts && (nr == 2 || nr == 257) && diag_pending) { diag_pending = 0; diag_fd = r; logf_("pisco: diag: the font is fd %lld", r); }
+  if (diag_fonts && diag_fd >= 0 && (nr == 0 || nr == 17 || nr == 8 || nr == 3) && (s64)R[RDI] == diag_fd) {
+    logf_("pisco: diag: %s(fd %lld, 0x%llx) = %lld", nr == 0 ? "read" : nr == 17 ? "pread" : nr == 8 ? "lseek" : "close", diag_fd, nr == 8 ? R[RSI] : R[RDX], r);
+    if (nr == 3) diag_fd = -1;
+  }
   if (diag_fonts && (nr == 9 || nr == 25) && r < 0 && r > -4096) logf_("pisco: diag: %s failed: %lld (length 0x%llx)", nr == 9 ? "mmap" : "mremap", r, nr == 9 ? R[RSI] : R[RDX]);
   R[RAX] = (u64)r;
   if (r < 0 && r > -4096) return;

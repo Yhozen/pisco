@@ -181,8 +181,12 @@ known yet (each new address space looks its programs up again: `programs_forget`
 runtime's log of the files Xorg opens shows which: after `nil2` and `6x13B` (which load), `12x13ja`, the font xterm
 asks for wide characters, and then the iso10646 ones; every failure of libXfont2's PCF reader returns AllocError,
 whatever the reason. Fonts of one-byte encodings (ISO 8859) load; fonts of two-byte encodings do not, in the lifted
-libXfont2 only (arm64 loads them, and an Xorg run on qemu-user with every client lifted does too). The lifted
-instruction that goes wrong is not found yet; `LATIN_FONTS=1` removes the others so that xterm, whose wide font
+libXfont2 only (arm64 loads them, and an Xorg run on qemu-user with every client lifted does too). With
+`12x13ja` uncompressed and the runtime logging the reads of it (`diag_fonts` in `runtime.c`), the reader goes
+through the whole file (171 reads of 8 KiB, past the encodings), seeks to the last table (the BDF accelerators),
+reads it and closes the file: what fails is after the tables, in what is built from them, and the font's encoding
+table has 65,536 entries (256 rows of 256), a Latin font's 256. The lifted instruction that goes wrong is not found
+yet (libXfont2 exports none of its reader's symbols); `LATIN_FONTS=1` removes the others so that xterm, whose wide font
 then falls back, runs. Once, with them, Xorg was also gone a few seconds after it started.
 
 **Fixed on the way.** The runtime registered at most 64 programs (a desktop maps more: xterm's 65th library got
