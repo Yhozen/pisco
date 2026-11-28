@@ -2,9 +2,10 @@
 // run-node.mjs: unkernel's kernel in Node, patched (build.sh), with PISCO's runtime for x86-64 tasks (runtime.wasm)
 // in the kernel's memory above its RAM. A program met for the first time is lifted (lift-side.sh) into --cache
 // (default out/tabc-pisco/lifted, by the sha256 of its image) and loaded; tabc's supervisor does the same for the page.
-//   node run-node.mjs [--no-pisco] [--dir d] [--mem MiB] [--stats] [--trace n] -- cmd...
-// The directory is the guest's /mnt/x. Each command after -- is a shell command line run by `sh -c` in the guest
-// (vm.exec), as root, its output printed: with an amd64 root in d, `sh /mnt/x/reg.sh; chroot /mnt/x/root ...`.
+//   node run-node.mjs [--root dir] [--no-pisco] [--dir d] [--mem MiB] [--stats] [--trace n] -- cmd...
+// x86load is registered with binfmt_misc first. --root: an amd64 root file system (an image's layers unpacked),
+// each command run in it (chroot, with /proc, /tmp and /dev). Otherwise each command after -- is run by the base
+// system's `sh -c` (vm.exec), as root, with the directory d at /mnt/x; its output is printed.
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -26,6 +27,7 @@ for (let i = 0; i < args.length; i++) {
   else if (a === '--trace') opt.trace = +args[++i];
   else if (a === '--stats') opt.stats = true;
   else if (a === '--cache') opt.cache = args[++i];
+  else if (a === '--root') opt.root = args[++i];
   else throw new Error('unknown option ' + a);
 }
 const t0 = performance.now();
@@ -122,12 +124,25 @@ function initPisco() {
   ttab.set(0, rt.exports.pisco_mine); ttab.set(1, rt.exports.pisco_run); ttab.set(2, rt.exports.pisco_after); ttab.set(3, rt.exports.pisco_flush);
 }
 
-const { createKernel, nodeFs } = await import(path.resolve(opt.unk));
+const { createKernel, nodeFs, MemoryFs } = await import(path.resolve(opt.unk));
+// x86load where binfmt_misc finds it (registered below, as tabc's init does), and an amd64 root if one is given
+const pbin = new MemoryFs(); pbin.writeFile('/x86load', new Uint8Array(fs.readFileSync(path.join(out, 'x86load'))), { mode: 0o755 });
+const mounts = { '/mnt/x': nodeFs(path.resolve(opt.dir)), '/pisco': { fs: pbin, readOnly: true } };
+if (opt.root) mounts['/mnt/root'] = nodeFs(path.resolve(opt.root));
 const kernel = opt.kernel ? new WebAssembly.Module(fs.readFileSync(opt.kernel)) : undefined;
-const vm = await createKernel({ kernel, memoryMiB: opt.mem, jit: opt.jit, mounts: { '/mnt/x': nodeFs(path.resolve(opt.dir)) } });
+const vm = await createKernel({ kernel, memoryMiB: opt.mem, jit: opt.jit, mounts });
 console.error(`[run] booted in ${ms()} ms (memory ${kmem.buffer.byteLength >> 20} MiB)`);
 if (opt.pisco) { initPisco(); console.error(`[run] pisco loaded at ${ms()} ms`); }
-for (const c of cmds) {
+if (opt.pisco) {
+  const reg = 'mount -t binfmt_misc none /proc/sys/fs/binfmt_misc 2>/dev/null; echo 0 > /proc/sys/kernel/randomize_va_space; echo 1 > /proc/sys/vm/legacy_va_layout; ' +
+    "printf '%s' ':x86_64:M::\\x7fELF\\x02\\x01\\x01\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x02\\x00\\x3e\\x00:" +
+    "\\xff\\xff\\xff\\xff\\xff\\xfe\\xfe\\x00\\xff\\xff\\xff\\xff\\xff\\xff\\xff\\xff\\xfe\\xff\\xff\\xff:/pisco/x86load:PF' > /proc/sys/fs/binfmt_misc/register" +
+    (opt.root ? '; for d in proc tmp dev; do mkdir -p /mnt/root/$d; done; mount -t proc proc /mnt/root/proc; mount -t tmpfs tmp /mnt/root/tmp; mount -o bind /dev /mnt/root/dev' : '');
+  const r = await vm.exec('sh', ['-c', reg], { user: 'root' });
+  if (r.exitCode) console.error(`[run] registering x86load: ${r.stderr}`);
+}
+for (const c0 of cmds) {
+  const c = opt.root ? `chroot /mnt/root /bin/sh -c ${JSON.stringify(c0).replace(/\$/g, '\\$')}` : c0;
   const s = performance.now();
   const r = await vm.exec('sh', ['-c', c], { user: 'root' });
   process.stdout.write(r.stdout); if (r.stderr) process.stderr.write(r.stderr);

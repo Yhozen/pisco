@@ -233,3 +233,10 @@ TABC_SHARE=out/tabc-pisco/share TABC_IMAGE_ARCH=amd64 out/tabc-pisco/tabc run al
 for s in tabc-arm64 tabc-src tabc-pisco; do node tools/tabc-poc/bench.mjs $s 5; done
 node tools/tabc-poc/bench.mjs report
 ```
+
+The same kernel and runtime in Node, without tabc or a browser (programs lifted into `out/tabc-pisco/lifted` when
+first met), on an amd64 root unpacked from an image:
+
+```sh
+node tools/tabc-pisco/run-node.mjs --root <amd64 root> -- 'uname -m; seq 1 100000 | gzip | wc -c'
+```
