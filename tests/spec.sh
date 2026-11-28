@@ -5,7 +5,7 @@
 #      the markers of docs/spec/recipe.md, and what `pisco recipe --keys` prints, the same in both directions
 #   2. the config's fields and the layer roles of docs/spec/image.md: the schema's (config.schema.json) and pisco's
 #   3. docs/spec/host.md is what tools/gen-host-spec.mjs makes of the sources, and every SW_* variable has a kind
-#   4. every recipe in recipes/ is read (schema 1); a recipe with a misspelt key in any of its tables, an unknown
+#   4. every recipe in recipes/ is read (schema 1), in the folder of its name; a recipe with a misspelt key in any of its tables, an unknown
 #      schema, an input pinned twice or a name not in a list is refused
 set -uo pipefail
 root=$(cd "$(dirname "$0")/.." && pwd); cd "$root"
@@ -43,7 +43,9 @@ for (const w of wrong) { try { checkSession(w); console.error(`accepted, and mus
 console.log(n); process.exit(bad ? 1 : 0);') || fail=1
 # the host interface (docs/spec/host.md) is what the sources give, and every SW_* variable has its kind
 node tools/gen-host-spec.mjs --check > $T/host.txt || { cat $T/host.txt; fail=1; }
-n=0; for r in recipes/*/; do $P recipe "$r" --json > /dev/null 2> $T/err || { echo "$r: $(cat $T/err)"; fail=1; }; n=$((n + 1)); done
+# every recipe is read, and is in the folder of its name (docs/spec/distribution.md#sources)
+n=0; for r in recipes/*/; do $P recipe "$r" --json > $T/r.json 2> $T/err || { echo "$r: $(cat $T/err)"; fail=1; }; n=$((n + 1))
+  [ "$(node -p 'JSON.parse(require("fs").readFileSync(process.argv[1])).name' $T/r.json 2>/dev/null)" = "$(basename $r)" ] || { echo "$r: not the folder of its name"; fail=1; }; done
 # refused: each line a change made to recipes/tag/recipe.toml (sed), and a word the error must have
 bad=0
 while IFS='|' read -r change want; do

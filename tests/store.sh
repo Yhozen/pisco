@@ -6,6 +6,10 @@
 #   2. a second app FROM the same base (the recipe copied under another name) shares the base's layer: one blob
 #   3. `pisco remove` of one keeps what the other uses, and frees the rest; installing again replaces, and leaves
 #      the app's saves alone
+#   4. a third party's recipe from a git repository: by <url>#app, by @ns/app (pisco source add) and by owner/repo/app
+#      (GitHub's place stood in for by PISCO_GITHUB), the user's file given with --input and checked by its sha256;
+#      the image records the commit. Refused: a third party's recipe with built_by, with an input outside its folder,
+#      or in a folder that is not its name; and the input when its sha256 is not the recipe's
 # Needs hello's 32-bit build (tests/run.sh build).
 set -uo pipefail
 root=$(cd "$(dirname "$0")/.." && pwd); cd "$root"
@@ -22,7 +26,7 @@ blobs() { ls $PISCO_HOME/blobs/sha256 | sort; }
 (cd $T/elsewhere && $P run hello32 > $T/run.txt 2>&1) || bad "pisco run hello32: $(tail -3 $T/run.txt)"
 grep -q "PASS" $T/run.txt || bad "pisco run hello32 printed: $(head -3 $T/run.txt)"
 [ -d $PISCO_HOME/saves/hello32 ] || bad "no saves/hello32"
-$P list | grep -q "^hello32 .*official" || bad "pisco list: $($P list)"
+grep -q "^hello32 .*official" <<< "$($P list)" || bad "pisco list: $($P list)"
 $P inspect hello32 > /dev/null || bad "pisco inspect hello32"
 
 # 2. another app FROM base/windows-x86:1 shares its layer
@@ -32,7 +36,7 @@ $P install $T/hello-again > $T/install2.log 2>&1 || { cat $T/install2.log; bad "
 base_of() { node -e 'const fs=require("fs"),d=process.argv[1];const i=JSON.parse(fs.readFileSync(d+"/index.json"));const m=JSON.parse(fs.readFileSync(d+"/blobs/sha256/"+i.manifests[0].digest.slice(7)));console.log(m.layers.find(l=>l.annotations["org.pisco.layer.role"]==="base").digest.slice(7))' "$1"; }
 b1=$(base_of $PISCO_HOME/apps/hello32); b2=$(base_of $PISCO_HOME/apps/hello-again)
 [ "$b1" = "$b2" ] || bad "the two apps' base layers differ: $b1 $b2"
-$P list | grep -q "^hello-again .*dir:" || bad "pisco list does not say where hello-again came from"
+grep -q "^hello-again .*dir:" <<< "$($P list)" || bad "pisco list does not say where hello-again came from"
 
 # 3. remove one: the base's layer stays for the other; remove both: nothing stays
 echo kept > $PISCO_HOME/saves/hello32/note
@@ -46,5 +50,34 @@ $P run hello32 > /dev/null 2>&1 || bad "hello32 does not run after hello-again's
 $P remove hello32 > /dev/null || bad "pisco remove hello32"
 [ -z "$(blobs)" ] || bad "blobs left with no app installed: $(blobs | wc -l)"
 $P run hello32 > /dev/null 2>&1 && bad "pisco run of a removed app ran"
-[ $fail = 0 ] && echo "the store: installed by name, run from another folder, a base's layer shared by two apps, removed without what the other uses"
+
+# 4. third parties: a git repository of recipes
+exe=$root/fixtures/hello/target/i686-pc-windows-msvc/release/hello.exe; sha=$(sha256sum $exe | cut -d' ' -f1)
+repo=$T/gh/someone/recipes; mkdir -p $repo/recipes/hello-third
+third() { sed -e "s/^name = \"hello32\"/name = \"$1\"/" -e 's|^file = .*|file = "hello.exe"|' -e "s|^built_by = .*|sha256 = \"$sha\"|" recipes/hello32/recipe.toml; }
+third hello-third > $repo/recipes/hello-third/recipe.toml
+mkdir -p $repo/recipes/scripted $repo/recipes/outside $repo/recipes/misnamed
+sed 's/^name = "hello32"/name = "scripted"/' recipes/hello32/recipe.toml > $repo/recipes/scripted/recipe.toml
+third outside | sed 's|^file = .*|file = "../../../../.ssh/id_rsa"|' > $repo/recipes/outside/recipe.toml
+third hello-third > $repo/recipes/misnamed/recipe.toml
+git -C $repo init -q && git -C $repo add -A && git -C $repo -c user.name=t -c user.email=t@t commit -qm recipes
+commit=$(git -C $repo rev-parse HEAD)
+$P install "file://$repo#hello-third" > $T/third.log 2>&1 && bad "a third party's recipe installed without the user's file"
+grep -q "hello.exe" $T/third.log || bad "no input, and the message does not name it: $(tail -2 $T/third.log)"
+$P install "file://$repo#hello-third" --input program=$root/fixtures/hello/target/x86_64-pc-windows-msvc/release/hello.exe > $T/third.log 2>&1 && bad "a file with another sha256 was taken"
+$P install "file://$repo#hello-third" --input program=$exe > $T/third.log 2>&1 || { tail -3 $T/third.log; bad "pisco install <git url>#app"; }
+grep -q "third party" $T/third.log || bad "installing a third party's recipe did not say so"
+$P run hello-third > $T/run3.txt 2>&1; grep -q PASS $T/run3.txt || bad "pisco run hello-third: $(tail -3 $T/run3.txt)"
+grep -q "$commit" $PISCO_HOME/apps/hello-third/index.json || bad "the image does not record the source's commit"
+$P source add @someone "file://$repo" > /dev/null || bad "pisco source add"
+grep -q "@someone/hello-third" <<< "$($P search hello)" || bad "pisco search does not find @someone/hello-third: $($P search hello)"
+$P install @someone/hello-third --input program=$exe > /dev/null 2>&1 || bad "pisco install @ns/app"
+PISCO_GITHUB=file://$T/gh $P install someone/recipes/hello-third --input program=$exe > /dev/null 2>&1 || bad "pisco install owner/repo/app"
+for r in scripted:built_by outside:"plain file name" misnamed:"folder of its name"; do
+  out=$($P install @someone/${r%%:*} --input program=$exe 2>&1) && bad "@someone/${r%%:*} installed, and must not be"
+  echo "$out" | grep -q "${r#*:}" || bad "@someone/${r%%:*}: refused, but not for its ${r#*:}: $out"
+done
+$P remove hello-third > /dev/null
+
+[ $fail = 0 ] && echo "the store: installed by name, run from another folder, a base's layer shared by two apps, removed without what the other uses; a third party's recipe by URL, @ns and owner/repo, and what it may not do refused"
 exit $fail
