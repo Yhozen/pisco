@@ -120,6 +120,7 @@ table and what `pisco` accepts are the same list (the rows between the two marke
 | `opt` | string | clang's level for the lifted C (default `-O2`) |
 | `programs` | list of strings | microvm: programs lifted ahead of time and linked with the kernel |
 | `modules` | list of strings | microvm: programs lifted ahead of time, each into a module of its own (kept apart for its licence) |
+| `lifted` | string | microvm: a folder of programs already lifted into modules of their own (`<sha256>-<tools>.wasm`, a run's lift cache): a layer each |
 <!-- /hints.pisco -->
 
 ## Inputs

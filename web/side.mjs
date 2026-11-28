@@ -15,9 +15,9 @@ function dylink(module) {
   }
   return info;
 }
-// bytes: the module's; main: the app's instance; memory: its memory. Returns the side module's instance.
+// bytes: the module's (or the module, compiled); main: the app's instance; memory: its memory. Returns the side module's instance.
 export function loadSide(bytes, main, memory, name) {
-  const module = new WebAssembly.Module(bytes), dl = dylink(module), ex = main.exports;
+  const module = bytes instanceof WebAssembly.Module ? bytes : new WebAssembly.Module(bytes), dl = dylink(module), ex = main.exports;
   const memBase = dl.memSize ? ex.rt_side_alloc(dl.memSize, 2 ** dl.memAlign) : 0;
   const table = ex.__indirect_function_table, tableBase = table.length;
   if (dl.tableSize) table.grow(dl.tableSize);

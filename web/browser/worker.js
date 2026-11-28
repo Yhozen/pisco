@@ -20,7 +20,7 @@ onmessage = (e) => {
   } else run(e.data);
 };
 function run(d) {
-  const { module, memory, dir, drive = null, folder = null, tids, tid, args, env, start, pool, store = [], t0 = 0, kernel = null, programs = null, side = [], pid = 1, mode = 'start' } = d;
+  const { module, memory, dir, drive = null, folder = null, tids, tid, args, env, start, pool, store = [], t0 = 0, kernel = null, programs = null, side = [], lifted = new Map(), pid = 1, mode = 'start' } = d;
   // one monotonic clock for every thread: each worker's performance.now() counts from its own start
   const clock = () => performance.timeOrigin + performance.now() - t0;
   const u8 = () => new Uint8Array(memory.buffer), dv = () => new DataView(memory.buffer);
@@ -122,9 +122,18 @@ function run(d) {
   };
   // a machine (rt/microvm-x64): each of its kernel's tasks on a wasm stack of its own (JSPI), as in web/run-node.mjs
   const machine = WebAssembly.Module.exports(module).some((e) => e.name === 'rt_co_entry');
-  let coEntry = null;
+  let coEntry = null, setInstance = () => {};
   if (machine) {
-    host.program_image = () => 0;   // (programs lifted when they first run need the lifter: Node only, web/lift.mjs)
+    // a program no module holds: one lifted ahead of time if the image has it, found by the sha256 of the image the
+    // machine took of it, as web/lift.mjs's cache is (lifting it here would need the lifter: Node only). The hash is
+    // async, so the machine's stack waits on it (JSPI)
+    let instance = null; const tried = new Set(); setInstance = (i) => { instance = i; };
+    host.program_image = new WebAssembly.Suspending(async (addr, len) => {
+      const bytes = new Uint8Array(memory.buffer, addr, len).slice();
+      const sha = [...new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))].map((b) => b.toString(16).padStart(2, '0')).join('');
+      if (tried.has(sha) || !lifted.has(sha)) { tried.add(sha); bus.postMessage({ out: `pisco: a program no build lifted (sha256 ${sha.slice(0, 16)}): the page cannot lift it\n` }); return 0; }
+      tried.add(sha); loadSide(lifted.get(sha), instance, memory, `p_${sha.slice(0, 16)}`); return 1;
+    });
     // (a network needs a host that terminates its frames: Node only for now, web/net-node.mjs)
     host.net_open = () => bus.postMessage({ out: 'pisco: no network in the page yet (SW_NET is for Node)\n' });
     host.net_send = () => {};
@@ -138,6 +147,7 @@ function run(d) {
   }
   const instance = new WebAssembly.Instance(module, { env: { memory }, wasi_snapshot_preview1: wasi, wasi: { 'thread-spawn': spawn }, host });
   if (machine) {
+    setInstance(instance);
     coEntry = WebAssembly.promising(instance.exports.rt_co_entry);
     for (const [n, bytes] of side) loadSide(bytes, instance, memory, n);   // its programs in modules of their own
     WebAssembly.promising(instance.exports._start)().then(() => exit(0), (err) => { bus.postMessage({ out: `pisco: ${err && err.stack || err}\n` }); exit(123); });

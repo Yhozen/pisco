@@ -55,7 +55,7 @@ __attribute__((weak)) extern const unsigned rt_program_count;
 static const ProgramDef *side[256]; static unsigned n_side;
 __attribute__((export_name("rt_program_register"))) void rt_program_register(const ProgramDef *p) {
   if (n_side == 256) rt_fatal("machine: more than 256 programs in modules of their own");
-  side[n_side++] = p; if (mc_trace) rt_log("machine: program %s, a module of its own", p->name);
+  side[n_side++] = p; machine_calls_forget(); if (mc_trace) rt_log("machine: program %s, a module of its own", p->name);
 }
 // the memory a side module's data and C stack frames need: the host asks for it before it instantiates the module
 __attribute__((export_name("rt_side_alloc"))) u32 rt_side_alloc(u32 size, u32 align) { void *p = aligned_alloc(align < 16 ? 16 : align, (size + 15) & ~15u); if (!p) rt_fatal("machine: no memory for a program's module"); memset(p, 0, size); return (u32)(uptr)p; }
@@ -250,12 +250,22 @@ static void enter(Cpu *c, u64 pc) {
   uart_flush();
   rt_fatal("machine: the CPU goes on at 0x%llx, which is no lifted function and no return address", pc);
 }
+// The functions indirect calls and jumps went to, by address: musl's PLT (`jmp *GOT`) and function pointers go to
+// the same few again and again, and finding one (which program holds the address, the hash of its page, a binary
+// search) costs more than the call. A program's entries hold while the address space is the same: a write of CR3,
+// a flush or an invlpg (the code at an address may be another program's then) or a program registered starts a new
+// generation. The kernel's are its own and hold for ever (generation 0).
+typedef struct { u64 pc, gen; void (*fn)(Cpu *); } CallSlot;
+static CallSlot calls[4096]; static u64 calls_gen = 1;
+void machine_calls_forget(void) { calls_gen++; }
 // an indirect call or jump: a function's start, or a return address in one (a program's longjmp jumps to the
 // return address of its setjmp): then what was running is abandoned and the code is entered there, in the loop
 // that runs it (the innermost level's, or the task's root)
 void rt_call(Cpu *c, u64 t) {
+  CallSlot *s = &calls[((t >> 4) ^ (t >> 16)) & 4095]; u64 gen = (t >> 47) ? 0 : calls_gen;
+  if (s->pc == t && s->gen == gen) { s->fn(c); return; }
   Code k = code_of(c, t); int i;
-  if ((i = find(k.fn_addrs, k.fn_count, t)) >= 0) { k.fn_ptrs[i](c); return; }
+  if ((i = find(k.fn_addrs, k.fn_count, t)) >= 0) { *s = (CallSlot){ t, gen, k.fn_ptrs[i] }; k.fn_ptrs[i](c); return; }
   if (co_cur->levels) { co_cur->levels->loop_pc = t; longjmp(co_cur->levels->loop, 1); }
   co_cur->root_pc = t; longjmp(co_cur->root, 1);
 }

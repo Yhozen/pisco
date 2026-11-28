@@ -48,6 +48,10 @@ pub struct Recipe {
     pub programs: Vec<String>,
     /// a machine's app: [hints.pisco] modules, programs each in a wasm module of its own (a side module the host loads)
     pub modules: Vec<String>,
+    /// a machine's app: [hints.pisco] lifted, a folder of programs already lifted into modules of their own, each named
+    /// <sha256 of its image>-<tools>.wasm (web/lift.mjs's cache, filled by a run of the image in Node): a layer each,
+    /// named in the config's `lifted` by that sha256, which is how the page finds one when it first runs
+    pub lifted: Option<String>,
     pub cpu: Option<Vec<String>>, pub dll: BTreeMap<String, String>, pub registry: Vec<RegValue>,
     pub split: usize, pub entries: Vec<u64>, pub base_address: Option<u64>, pub opt: String,
     /// [code] load: DLLs the app loads itself (LoadLibrary) from its folder or below it, lifted with it
@@ -139,7 +143,7 @@ pub const KEYS: &[&str] = &["schema", "name", "from", "libraries",
     "cpu.features", "dll", "registry", "files", "quirks",
     "code.entries", "code.base", "code.load", "warmup.frames", "warmup.session", "permissions.network", "hints"];
 /// pisco's own options, [hints.pisco] (docs/spec/recipe.md)
-pub const HINTS: &[&str] = &["split", "opt", "programs", "modules"];
+pub const HINTS: &[&str] = &["split", "opt", "programs", "modules", "lifted"];
 pub const EXTRACT_KINDS: &[&str] = &["innosetup", "zip", "wise", "installshield", "file", "folder", "cab", "copy"];
 pub const DLL_CHOICES: &[&str] = &["native", "builtin"];
 pub const QUIRKS: &[&str] = &["heap_fill"];
@@ -296,6 +300,7 @@ pub fn load_recipe(dir: &Path) -> R<Recipe> {
         args: strs(run, "args")?.unwrap_or_default(),
         initrd: s(run, "initrd"), cmdline: s(run, "cmdline"),
         programs: micro("programs")?, modules: micro("modules")?,
+        lifted: { let v = s(&ours, "lifted"); if v.is_some() && platform != "microvm-x64" { return Err(format!("{at}: [hints.pisco] lifted: for a machine's app (base/microvm-x64)")); } v },
         cpu, dll, files,
         registry: registry(table(&t, "registry")?)?,
         split: ours.get("split").map(|v| v.as_integer().filter(|n| *n >= 1).ok_or(format!("{at}: hints.pisco.split: a number from 1"))).transpose()?.unwrap_or(8) as usize,

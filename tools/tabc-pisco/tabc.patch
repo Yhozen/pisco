@@ -1,0 +1,578 @@
+SPDX-License-Identifier: MIT
+tabc-pisco: tabc 1.0.0 (https://github.com/fzakaria/tabc, 8b7e7920606d5fc20197c19da92a1f308504dbe2, MIT) with PISCO
+in it (docs/research/tabc-pisco.md). Applied by tools/tabc-pisco/setup.sh; tabc's licence, and these changes under it.
+
+diff --git a/cmd/tabc-init/main.go b/cmd/tabc-init/main.go
+index 39a2fd8..fd30e15 100644
+--- a/cmd/tabc-init/main.go
++++ b/cmd/tabc-init/main.go
+@@ -283,6 +283,7 @@ func enter(root string, spec guest.Spec) error {
+ 		}
+ 	}
+ 
++	registerX86()
+ 	if err := syscall.Chroot(root); err != nil {
+ 		return fmt.Errorf("entering the root: %w", err)
+ 	}
+@@ -392,3 +393,31 @@ func executable(path string) bool {
+ 	}
+ 	return info.Mode().IsRegular() && info.Mode()&executableBits != 0
+ }
++
++// PISCO (page/pisco.js): when the page put x86load beside init, every x86-64
++// ELF file, static or position-independent, runs through it, as lifted code.
++// F: the interpreter is opened now, so it is found inside the container's
++// root too; P: the program's argv[0] is kept (busybox's applets).
++const x86Loader = "/tabc/bin/x86load"
++
++func registerX86() {
++	if _, err := os.Stat(x86Loader); err != nil {
++		return
++	}
++	// Without randomisation, a library musl's loader maps is at the same
++	// address on every run, so its image, and its lifted module, is the same.
++	os.WriteFile("/proc/sys/kernel/randomize_va_space", []byte("0"), 0)
++	// and maps bottom up, from the guest's TASK_UNMAPPED_BASE: below 2^47, where
++	// x86-64 code may be (the guest's top-down layout starts near 2^48)
++	os.WriteFile("/proc/sys/vm/legacy_va_layout", []byte("1"), 0)
++	const binfmt = "/proc/sys/fs/binfmt_misc"
++	if _, err := os.Stat(binfmt + "/register"); err != nil {
++		syscall.Mount("none", binfmt, "binfmt_misc", 0, "")
++	}
++	if _, err := os.Stat(binfmt + "/x86_64"); err == nil {
++		return
++	}
++	entry := `:x86_64:M::\x7fELF\x02\x01\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x02\x00\x3e\x00:` +
++		`\xff\xff\xff\xff\xff\xfe\xfe\x00\xff\xff\xff\xff\xff\xff\xff\xff\xfe\xff\xff\xff:` + x86Loader + `:PF`
++	os.WriteFile(binfmt+"/register", []byte(entry), 0)
++}
+diff --git a/internal/image/image.go b/internal/image/image.go
+index 40994df..2a32836 100644
+--- a/internal/image/image.go
++++ b/internal/image/image.go
+@@ -23,10 +23,18 @@ import (
+ 
+ // The guest is aarch64 Linux on every host, so that is the platform of
+ // every image, whatever machine asks.
+-const (
+-	guestOS   = "linux"
+-	guestArch = "arm64"
+-)
++// With PISCO (TABC_IMAGE_ARCH=amd64), an amd64 image's programs run lifted on
++// the same guest, so the image may be amd64.
++const guestOS = "linux"
++
++var guestArch = imageArch()
++
++func imageArch() string {
++	if arch := os.Getenv("TABC_IMAGE_ARCH"); arch != "" {
++		return arch
++	}
++	return "arm64"
++}
+ 
+ // Where the cache keeps layers and what each reference last resolved to
+ // under its root, a layer's file name, and the name a layer has while
+diff --git a/internal/supervisor/pisco.go b/internal/supervisor/pisco.go
+new file mode 100644
+index 0000000..0475f9e
+--- /dev/null
++++ b/internal/supervisor/pisco.go
+@@ -0,0 +1,236 @@
++package supervisor
++
++// PISCO: an amd64 image's programs run as lifted wasm, ahead-of-time
++// translations of their x86-64 code, as ordinary tasks of the guest's
++// kernel (page/pisco.js). The page asks here for the translations:
++//
++//	pisco/index.json        the programs this image's containers have
++//	                        run before, by the sha256 of each program's
++//	                        image; those most of them ran are compiled
++//	                        while the kernel boots
++//	pisco/lifted/<sha>.wasm one of them
++//	pisco/lift?sha=&len=    POST: a program met for the first time: its
++//	                        image (len bytes), then the addresses of the
++//	                        functions its dynamic symbols name (u64s, the
++//	                        lifter's entries). Lifted here, on the host
++//	                        (TABC_PISCO_LIFT, the lifter and wasi-sdk),
++//	                        once: kept by its sha256 for every image
++//	pisco/<file>            PISCO's runtime and loader, from the share
++//
++// Lifting runs on the host because the host has the compiler; the
++// page then runs only compiled code, as it runs the kernel.
++
++import (
++	"crypto/sha256"
++	"encoding/binary"
++	"encoding/hex"
++	"encoding/json"
++	"fmt"
++	"io"
++	"net/http"
++	"os"
++	"os/exec"
++	"strconv"
++
++	"path/filepath"
++	"regexp"
++	"strings"
++	"sync"
++	"time"
++)
++
++type piscoServer struct {
++	dir   string // the cache: lifted/<sha>.wasm, images/<key>.json
++	key   string // this image: the hash of its layers' names
++	lift  string // the script that lifts one program
++	tools string // what its lifts depend on besides the image (its --tools)
++	logf  func(string, ...any)
++	mu    sync.Mutex
++	seen  map[string]bool // the programs this container ran
++	share func(w http.ResponseWriter, r *http.Request, name string)
++}
++
++var shaPattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
++
++func newPisco(layers []string, logf func(string, ...any), share func(http.ResponseWriter, *http.Request, string)) *piscoServer {
++	base, err := os.UserCacheDir()
++	if err != nil {
++		base = os.TempDir()
++	}
++	names := make([]string, len(layers)) // (a layer's file is named by its digest: the key is the image's, wherever the cache is)
++	for i, l := range layers {
++		names[i] = filepath.Base(l)
++	}
++	h := sha256.Sum256([]byte(strings.Join(names, "\n")))
++	p := &piscoServer{
++		dir:   filepath.Join(base, "tabc", "pisco"),
++		key:   hex.EncodeToString(h[:16]),
++		lift:  os.Getenv("TABC_PISCO_LIFT"),
++		logf:  logf,
++		share: share,
++	}
++	// another lifter makes other modules: they are kept apart
++	if p.lift != "" {
++		if out, err := exec.Command(p.lift, "--tools").Output(); err == nil {
++			p.tools = strings.TrimSpace(string(out))
++		}
++	}
++	return p
++}
++
++func (p *piscoServer) record() string { return filepath.Join(p.dir, "images", p.key+".json") }
++func (p *piscoServer) module(sha string) string {
++	if p.tools != "" {
++		return filepath.Join(p.dir, "lifted", sha+"-"+p.tools+".wasm")
++	}
++	return filepath.Join(p.dir, "lifted", sha+".wasm")
++}
++
++// imageRecord is what this image's containers ran: how many containers
++// asked for the index, and how many of them ran each program.
++type imageRecord struct {
++	Runs     int            `json:"runs"`
++	Programs map[string]int `json:"programs"`
++}
++
++func (p *piscoServer) load() imageRecord {
++	r := imageRecord{Programs: map[string]int{}}
++	if data, err := os.ReadFile(p.record()); err == nil {
++		json.Unmarshal(data, &r)
++	}
++	if r.Programs == nil {
++		r.Programs = map[string]int{}
++	}
++	return r
++}
++
++func (p *piscoServer) save(r imageRecord) {
++	data, _ := json.Marshal(r)
++	os.MkdirAll(filepath.Dir(p.record()), 0o755)
++	os.WriteFile(p.record(), data, 0o644)
++}
++
++// remember counts a program once for this container.
++func (p *piscoServer) remember(sha string) {
++	p.mu.Lock()
++	defer p.mu.Unlock()
++	if p.seen == nil {
++		p.seen = map[string]bool{}
++	}
++	if p.seen[sha] {
++		return
++	}
++	p.seen[sha] = true
++	r := p.load()
++	r.Programs[sha]++
++	p.save(r)
++}
++
++func (p *piscoServer) serve(w http.ResponseWriter, r *http.Request, rest string) {
++	switch {
++	case rest == "index.json":
++		// every program this image's containers ran, and whether to compile it
++		// while the kernel boots: those most of them ran (the shell, musl's
++		// loader). The others are compiled when they are first met.
++		p.mu.Lock()
++		r := p.load()
++		runs := r.Runs
++		r.Runs++
++		p.save(r)
++		p.mu.Unlock()
++		type entry struct {
++			File  string `json:"file"`
++			Eager bool   `json:"eager"`
++		}
++		index := map[string]entry{}
++		for sha, n := range r.Programs {
++			if _, err := os.Stat(p.module(sha)); err == nil {
++				index[sha] = entry{filepath.Base(p.module(sha)), 2*n >= runs}
++			}
++		}
++		writeJSON(w, index)
++	case strings.HasPrefix(rest, "lifted/"):
++		sha, _, _ := strings.Cut(strings.TrimSuffix(strings.TrimPrefix(rest, "lifted/"), ".wasm"), "-")
++		if !shaPattern.MatchString(sha) {
++			http.NotFound(w, r)
++			return
++		}
++		w.Header().Set("Content-Type", "application/wasm")
++		http.ServeFile(w, r, p.module(sha))
++	case rest == "lift" && r.Method == http.MethodPost:
++		p.serveLift(w, r)
++	default:
++		p.share(w, r, rest)
++	}
++}
++
++func (p *piscoServer) serveLift(w http.ResponseWriter, r *http.Request) {
++	sha := r.URL.Query().Get("sha")
++	size, err := strconv.Atoi(r.URL.Query().Get("len"))
++	if !shaPattern.MatchString(sha) || err != nil || size < 0 {
++		http.Error(w, "bad request", http.StatusBadRequest)
++		return
++	}
++	body, err := io.ReadAll(io.LimitReader(r.Body, 512<<20))
++	if err != nil || len(body) < size || (len(body)-size)%8 != 0 {
++		http.Error(w, "bad request", http.StatusBadRequest)
++		return
++	}
++	image, entries := body[:size], body[size:]
++	var fns []string
++	for k := 0; k+8 <= len(entries); k += 8 {
++		fns = append(fns, strconv.FormatUint(binary.LittleEndian.Uint64(entries[k:]), 16))
++	}
++	if got := sha256.Sum256(image); hex.EncodeToString(got[:]) != sha {
++		http.Error(w, "the image is not the one named", http.StatusBadRequest)
++		return
++	}
++	out := p.module(sha)
++	if _, err := os.Stat(out); err != nil {
++		if err := p.liftOne(sha, image, fns, out); err != nil {
++			p.logf("pisco: %v", err)
++			http.Error(w, err.Error(), http.StatusUnprocessableEntity)
++			return
++		}
++	}
++	p.remember(sha)
++	w.Header().Set("Content-Type", "application/wasm")
++	http.ServeFile(w, r, out)
++}
++
++var liftLock sync.Mutex
++
++func (p *piscoServer) liftOne(sha string, image []byte, fns []string, out string) error {
++	if p.lift == "" {
++		return fmt.Errorf("a program no one has lifted (sha256 %s), and no TABC_PISCO_LIFT to lift it", sha[:16])
++	}
++	liftLock.Lock()
++	defer liftLock.Unlock()
++	if _, err := os.Stat(out); err == nil {
++		return nil
++	}
++	os.MkdirAll(filepath.Dir(out), 0o755)
++	elf := filepath.Join(filepath.Dir(out), sha+".elf")
++	if err := os.WriteFile(elf, image, 0o644); err != nil {
++		return err
++	}
++	defer os.Remove(elf)
++	args := []string{elf, "p_" + sha[:16], out}
++	args = append(args, fns...)
++	p.logf("pisco: lifting a program met for the first time (%d bytes, sha256 %s)", len(image), sha[:16])
++	start := time.Now()
++	cmd := exec.Command(p.lift, args...)
++	if output, err := cmd.CombinedOutput(); err != nil {
++		return fmt.Errorf("lifting %s: %v: %s", sha[:16], err, lastLines(string(output), 5))
++	}
++	p.logf("pisco: lifted %s in %.1f s", sha[:16], time.Since(start).Seconds())
++	return nil
++}
++
++func lastLines(s string, n int) string {
++	lines := strings.Split(strings.TrimSpace(s), "\n")
++	if len(lines) > n {
++		lines = lines[len(lines)-n:]
++	}
++	return strings.Join(lines, "\n")
++}
+diff --git a/internal/supervisor/server.go b/internal/supervisor/server.go
+index d7dc3f7..30638a4 100644
+--- a/internal/supervisor/server.go
++++ b/internal/supervisor/server.go
+@@ -99,6 +99,9 @@ type server struct {
+ 	// container's neighbours are looked for (internal/netreg).
+ 	root     string
+ 	networks []string
++
++	// pisco serves lifted programs (pisco.go)
++	pisco *piscoServer
+ }
+ 
+ // newToken returns a fresh secret.
+@@ -160,6 +163,8 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+ 			return
+ 		}
+ 		s.volumes[index].Serve(w, r, op)
++	case "pisco":
++		s.pisco.serve(w, r, remainder)
+ 	case routeUnkernel:
+ 		s.serveShared(w, r, assets.Unkernel, remainder)
+ 	case routeXterm:
+diff --git a/internal/supervisor/supervisor.go b/internal/supervisor/supervisor.go
+index 7f52857..6770d7f 100644
+--- a/internal/supervisor/supervisor.go
++++ b/internal/supervisor/supervisor.go
+@@ -147,7 +147,11 @@ func Run(options Options) int {
+ 		return failCreation(options.Ready, err)
+ 	}
+ 	defer logFile.Close()
+-	logger := log.New(logFile, "", log.LstdFlags|log.Lmicroseconds)
++	var logTo io.Writer = logFile
++	if os.Getenv("TABC_LOG_STDERR") != "" { // (PISCO's experiments: the log as it is written)
++		logTo = io.MultiWriter(logFile, os.Stderr)
++	}
++	logger := log.New(logTo, "", log.LstdFlags|log.Lmicroseconds)
+ 
+ 	status, err := run(options, dir, logger, logFile)
+ 	if err != nil {
+@@ -283,6 +287,9 @@ func run(options Options, dir string, logger *log.Logger, logFile *os.File) (int
+ 		root:     options.Root,
+ 		networks: networkNames(planned.Networks),
+ 	}
++	pages.pisco = newPisco(planned.Layers, logger.Printf, func(w http.ResponseWriter, r *http.Request, name string) {
++		pages.serveShared(w, r, "pisco", name)
++	})
+ 	listener, err := net.Listen("tcp4", loopbackAddress)
+ 	if err != nil {
+ 		return 0, err
+diff --git a/page/guest.js b/page/guest.js
+index 4f2793f..6f15d45 100644
+--- a/page/guest.js
++++ b/page/guest.js
+@@ -16,6 +16,7 @@
+ // but then the guest's network has to be one the SDK builds there, and
+ // this guest's network is the supervisor (supervisorNet).
+ 
++import * as pisco from "./pisco.js";
+ import { checkSupport, createKernel, FsError, MemoryFs } from "./unkernel/web.mjs";
+ import { State, ToGuest, ToPage } from "./messages.js";
+ 
+@@ -839,6 +840,8 @@ async function main() {
+   const bin = new MemoryFs();
+   bin.writeFile(`/${INIT_NAME}`, new Uint8Array(init), { mode: EXECUTABLE });
+   bin.writeFile(`/${SPEC_NAME}`, spec);
++  // PISCO: the interpreter of x86-64 files, beside init
++  if (pisco.enabled) bin.writeFile("/x86load", (await pisco.ready).loader, { mode: EXECUTABLE });
+ 
+   // A browser that cannot run the kernel is told so in its own words,
+   // before the kernel fails in the kernel's. This is what a person who
+@@ -855,7 +858,8 @@ async function main() {
+   // all on one shared memory. A page that is not cross-origin isolated
+   // has no shared memory, and its guest gets one CPU.
+   const shared = globalThis.crossOriginIsolated === true && typeof SharedArrayBuffer === "function";
+-  const cpus = shared ? config.cpus : SINGLE_CPU;
++  // (PISCO's runtime is built for the one-CPU kernel)
++  const cpus = shared && !pisco.enabled ? config.cpus : SINGLE_CPU;
+ 
+   // The log's timestamps are how a start-up's time is accounted for.
+   tell(ToSupervisor.LOG, { message: `booting the kernel, ${cpus} CPUs` });
+@@ -886,6 +890,11 @@ async function main() {
+     tell(ToSupervisor.LOG, { message: `the guest has ${booted} CPUs, not ${cpus}` });
+   }
+ 
++  // PISCO: its runtime in the kernel's memory; init has x86-64 files run through x86load (cmd/tabc-init)
++  if (pisco.enabled) {
++    await pisco.start((message) => tell(ToSupervisor.LOG, { message }));
++  }
++
+   // The guest is up and the image is mounted: the container is created.
+   guest = vm;
+   setStatus(State.WAITING, "created");
+diff --git a/page/pisco.js b/page/pisco.js
+new file mode 100644
+index 0000000..5fd01d9
+--- /dev/null
++++ b/page/pisco.js
+@@ -0,0 +1,162 @@
++// PISCO in tabc's guest: an amd64 image's programs run as lifted wasm (PISCO's lifter: x86-64 to C to wasm, ahead
++// of time), as ordinary tasks of the same unkernel kernel, instead of under an emulator.
++//
++// The kernel (unkernel's, as tabc ships it) is patched so that its one entry into user code, kw_run, asks PISCO
++// first: a task whose registers say x86-64 runs on pisco.run, any other on kwemu as before. This module:
++// - lets the kernel's memory grow past its RAM, and gives the kernel its `pisco` imports (a trampoline whose table
++//   is filled once PISCO's runtime is there);
++// - fetches PISCO's runtime (runtime.wasm), the loader (x86load, an aarch64 program run as binfmt_misc's interpreter of
++//   x86-64 files) and the image's lifted programs (a side module each, by the sha256 of the program's image), and
++//   compiles them while the kernel boots;
++// - after boot, instantiates the runtime in the kernel's memory above its RAM and registers x86load.
++// A program is registered when it first runs: the runtime rebuilds its image from memory, and the module of that
++// image's sha256 is instantiated. One no container of this image has run before is lifted by the supervisor, on the
++// host (internal/supervisor/pisco.go), once; it is kept for every image after that.
++
++const BASE = new URL("pisco/", location.href);
++const TOP = 0x50000000;           // the memory may grow to 1.25 GiB: the kernel's RAM, then PISCO's (from 1 GiB)
++const RUNTIME_AT = 0x41000000;    // what the runtime's module needs (its data and heap above 1 GiB)
++
++export const enabled = new URL(location.href).searchParams.get("pisco") !== "0";
++let say = null;
++const log = (m) => { console.log(`[pisco] ${m}`); say?.(`pisco: ${m}`); };
++const t0 = performance.now();
++const ms = () => `${(performance.now() - t0).toFixed(0)} ms`;
++
++const fetchBytes = async (url) => {
++  const r = await fetch(url);
++  if (!r.ok) throw new Error(`${url}: ${r.status}`);
++  return new Uint8Array(await r.arrayBuffer());
++};
++const compile = async (url) => WebAssembly.compile(await fetchBytes(url));
++
++let kmem = null, kex = null, rt = null;
++const ttab = new WebAssembly.Table({ element: "anyfunc", initial: 4 });
++let trampoline = null;
++// everything starts loading now, beside the kernel's own fetch and boot
++export const ready = enabled ? (async () => {
++  const [tramp, runtime, loader, index] = await Promise.all([
++    compile(new URL("tramp.wasm", BASE)), compile(new URL("runtime.wasm", BASE)), fetchBytes(new URL("x86load", BASE)),
++    fetch(new URL("index.json", BASE)).then((r) => (r.ok ? r.json() : {})),
++  ]);
++  trampoline = new WebAssembly.Instance(tramp, { js: { tab: ttab } });
++  const modules = new Map();
++  // those most of this image's containers ran are compiled now; the others when they are first met
++  for (const [sha, { file, eager }] of Object.entries(index)) {
++    const url = new URL(`lifted/${file}`, BASE);
++    if (eager) { const p = compile(url); modules.set(sha, () => p); } else modules.set(sha, () => compile(url));
++  }
++  log(`runtime fetched; ${[...Object.values(index)].filter((e) => e.eager).length} of ${modules.size} lifted programs compiling (${ms()})`);
++  return { runtime, loader, modules };
++})() : null;
++
++if (enabled) {
++  const OrigMemory = WebAssembly.Memory;
++  function Memory(desc) {
++    if (!desc.shared && !desc.address && desc.maximum === desc.initial && desc.initial >= 1024) desc = { ...desc, maximum: TOP / 65536 };
++    return new OrigMemory(desc);
++  }
++  Memory.prototype = OrigMemory.prototype;
++  WebAssembly.Memory = Memory;
++  const origInstantiate = WebAssembly.instantiate;
++  WebAssembly.instantiate = async function (m, imports, ...rest) {
++    if (imports && imports.unkernel && imports.env && imports.env.memory && m instanceof WebAssembly.Module &&
++        WebAssembly.Module.imports(m).some((i) => i.module === "pisco")) {
++      await ready;
++      imports = { ...imports, pisco: trampoline.exports };
++      kmem = imports.env.memory;
++      const r = await origInstantiate.call(this, m, imports, ...rest);
++      kex = (r.instance ?? r).exports;
++      return r;
++    }
++    return origInstantiate.call(this, m, imports, ...rest);
++  };
++}
++
++// web/side.mjs, for a memory that is not shared
++function loadSide(module, name) {
++  const ex = rt.exports;
++  const sec = new Uint8Array(WebAssembly.Module.customSections(module, "dylink.0")[0]);
++  const at = { i: 0 };
++  const leb = () => { let v = 0, s = 0, x; do { x = sec[at.i++]; v |= (x & 0x7f) << s; s += 7; } while (x & 0x80); return v >>> 0; };
++  let memSize = 0, memAlign = 0, tableSize = 0;
++  while (at.i < sec.length) { const kind = sec[at.i++], len = leb(), end = at.i + len; if (kind === 1) { memSize = leb(); memAlign = leb(); tableSize = leb(); } at.i = end; }
++  const memBase = memSize ? ex.rt_side_alloc(memSize, 2 ** memAlign) : 0;
++  const table = ex.__indirect_function_table, tableBase = table.length;
++  if (tableSize) table.grow(tableSize);
++  const env = {
++    memory: kmem, __indirect_function_table: table, __stack_pointer: ex.__stack_pointer,
++    __memory_base: new WebAssembly.Global({ value: "i32", mutable: false }, memBase),
++    __table_base: new WebAssembly.Global({ value: "i32", mutable: false }, tableBase),
++  };
++  const got = {}, gotFunc = {};
++  for (const i of WebAssembly.Module.imports(module)) {
++    if (i.module === "env" && i.kind === "function") { if (!ex[i.name]) throw new Error(`${name}: the runtime exports no ${i.name}`); env[i.name] = ex[i.name]; }
++    else if (i.module === "GOT.mem") got[i.name] = new WebAssembly.Global({ value: "i32", mutable: true }, ex[i.name].value);
++    else if (i.module === "GOT.func") { const at = table.length; table.grow(1); table.set(at, ex[i.name]); gotFunc[i.name] = new WebAssembly.Global({ value: "i32", mutable: true }, at); }
++  }
++  const side = new WebAssembly.Instance(module, { env, "GOT.mem": got, "GOT.func": gotFunc });
++  side.exports.__wasm_apply_data_relocs?.();
++  side.exports.__wasm_call_ctors?.();
++  ex.rt_program_register(memBase + side.exports[`${name}_program`].value);
++}
++
++const hex = (buf) => [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, "0")).join("");
++
++// After boot: PISCO's runtime in the kernel's memory, and x86load as the interpreter of x86-64 files. Returns the
++// loader's bytes, for the caller to put where the shell below finds it (registerCommand).
++export async function start(sayTo) {
++  say = sayTo;
++  const { runtime, loader, modules } = await ready;
++  if (!kmem) throw new Error("PISCO: the kernel is not the patched one (no pisco imports)");
++  if (kmem.buffer.byteLength < RUNTIME_AT) kmem.grow((RUNTIME_AT - kmem.buffer.byteLength) / 65536);
++  const dec = new TextDecoder();
++  const str = (p, n) => dec.decode(new Uint8Array(kmem.buffer, p, n).slice());
++  const nowNs = () => BigInt(Math.round((performance.timeOrigin + performance.now()) * 1e6));
++  // a program's module, by its image's sha256: loaded once; a second task that meets it meanwhile waits for it
++  const loading = new Map();
++  const load = async (sha, image, entries) => {
++    let pending = modules.get(sha)?.();
++    if (!pending) {
++      // met for the first time: the supervisor lifts it on the host (once; kept by its sha256)
++      log(`lifting a program met for the first time (${image.length} bytes, sha256 ${sha.slice(0, 16)}): once, on the host`);
++      const t = performance.now();
++      const body = new Uint8Array(image.length + entries.length); body.set(image); body.set(entries, image.length);
++      const r = await fetch(new URL(`lift?sha=${sha}&len=${image.length}`, BASE), { method: "POST", body });
++      if (!r.ok) { log(`could not lift it: ${await r.text()}`); return 0; }
++      pending = WebAssembly.compile(await r.arrayBuffer());
++      log(`lifted it in ${((performance.now() - t) / 1000).toFixed(1)} s`);
++    }
++    loadSide(await pending, `p_${sha.slice(0, 16)}`);
++    log(`program ${sha.slice(0, 16)} registered (${ms()})`);
++    return 1;
++  };
++  const programImage = new WebAssembly.Suspending(async (addr, len, fns, nfns) => {
++    // (what the runtime hands over is read before the first await: another task may run while this one waits)
++    const image = new Uint8Array(kmem.buffer, addr, len).slice();
++    const entries = new Uint8Array(kmem.buffer.slice(fns, fns + 8 * nfns));   // (the functions its dynamic symbols name: u64s)
++    const sha = hex(await crypto.subtle.digest("SHA-256", image));
++    if (!loading.has(sha)) loading.set(sha, load(sha, image, entries).catch((e) => { log(`${sha.slice(0, 16)}: ${e}`); return 0; }));
++    return loading.get(sha);
++  });
++  rt = new WebAssembly.Instance(runtime, {
++    env: { memory: kmem },
++    kernel: { kw_user_addr: kex.kw_user_addr },
++    host: { log: (p, n) => log(str(p, n)), now_ns: nowNs, program_image: programImage },
++    wasi_snapshot_preview1: {
++      clock_time_get: (id, prec, out) => { new DataView(kmem.buffer).setBigUint64(out, nowNs(), true); return 0; },
++      fd_close: () => 0, fd_seek: () => 70,
++      fd_write: (fd, iov, n, out) => {
++        const dv = new DataView(kmem.buffer); let t = 0;
++        for (let k = 0; k < n; k++) { const p = dv.getUint32(iov + 8 * k, true), l = dv.getUint32(iov + 8 * k + 4, true); log(str(p, l)); t += l; }
++        dv.setUint32(out, t, true); return 0;
++      },
++    },
++  });
++  rt.exports._initialize();
++  ttab.set(0, rt.exports.pisco_mine); ttab.set(1, rt.exports.pisco_run); ttab.set(2, rt.exports.pisco_after); ttab.set(3, rt.exports.pisco_flush);
++  log(`runtime up (${ms()})`);
++  return loader;
++}
++
++export const stats = () => rt?.exports.pisco_stats();

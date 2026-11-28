@@ -1,0 +1,36 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# A container on the lifted Linux (docs/research/tabc-poc.md): Docker Hub's alpine:3.24.4 for linux/amd64, its layer
+# as the initramfs (tools/tabc-poc/mkinitramfs.py) with /init (recipes/alpine/init) and the compiled benchmark
+# (tools/tabc-poc/bench.c) added, on Linux 6.18 lifted (tools/build-linux.sh). Alpine's programs are dynamically
+# linked: each is lifted when it first runs in Node, and those modules come with the image ([hints.pisco] lifted), so the
+# page runs them too. tools/tabc-poc/build.sh makes it. No sha256: built on this machine.
+schema = 1
+name = "alpine"
+from = "base/microvm-x64:1"
+
+[about]
+display_name = "Alpine 3.24.4, a container"
+version = "3.24.4"
+revision = 1
+
+[[input]]
+id = "root"
+kind = "folder"
+file = "../../out/tabc-poc/root"
+built_by = "tools/tabc-poc/build.sh"
+
+[[extract]]
+kind = "folder"
+input = "root"
+app = "/"
+
+[run]
+kernel = "/vmlinux"
+initrd = "/initramfs.cpio"
+# as recipes/linux's, quiet: the boot's own lines are not the container's output
+cmdline = "console=ttyS0,115200 panic=-1 no_timer_check vdso=0 tsc=reliable 8250.nr_uarts=1 norandmaps quiet"
+
+[hints.pisco]
+split = 16
+# the programs lifted when they first ran (tools/tabc-poc/build.sh: a run of the image in Node)
+lifted = "../../out/tabc-poc/lifted"

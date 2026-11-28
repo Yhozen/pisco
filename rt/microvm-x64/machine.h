@@ -110,4 +110,5 @@ typedef struct Co {
 extern Co *co_cur;
 void run_level(Cpu *c, Level *l, u64 pc) __attribute__((noreturn));
 void machine_programs_forget(void);   // the address space changed: which program runs is found again
+void machine_calls_forget(void);     // the code at an address may have changed: indirect calls' targets are found again
 extern const u64 rt_machine_entry, rt_machine_pgt;

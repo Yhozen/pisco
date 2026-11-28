@@ -812,6 +812,21 @@ pub fn build(root: &Path, o: &Opts) -> R<()> {
         let b = put(MODULE, &io(std::fs::read(w), w)?, own("program", n.clone()))?;
         side_map.insert(n.clone(), format!("sha256:{}", b.digest)); program_layers.push(b);
     }
+    // a machine's programs lifted ahead of time ([hints.pisco] lifted): a layer each, named in the config's `lifted` by the
+    // sha256 of the image the machine takes of it (web/lift.mjs)
+    let mut lifted_map: BTreeMap<String, String> = BTreeMap::new();
+    if let Some(d) = &r.lifted {
+        let d = r.dir.join(d);
+        let mut ws: Vec<PathBuf> = io(std::fs::read_dir(&d), &d)?.filter_map(|e| e.ok().map(|e| e.path())).filter(|p| p.extension().is_some_and(|x| x == "wasm")).collect();
+        ws.sort();
+        for w in &ws {
+            // <sha256 of the image>-<the tools' hash>.wasm, as web/lift.mjs names them (or <sha256>.wasm)
+            let sha = w.file_stem().and_then(|x| x.to_str()).map(|x| x.split('-').next().unwrap()).filter(|x| x.len() == 64 && x.bytes().all(|b| b.is_ascii_hexdigit())).ok_or(format!("[hints.pisco] lifted: {} is not named <sha256>-<tools>.wasm", w.display()))?;
+            if lifted_map.contains_key(sha) { return Err(format!("[hints.pisco] lifted: two modules of the image {} (lifted by two lifters?): keep one", &sha[..16])); }
+            let b = lay.put(MODULE, &io(std::fs::read(w), w)?, &[(ROLE, "program"), (TITLE, &format!("lifted {}", &sha[..16])), (LOCAL, "true")])?;
+            lifted_map.insert(sha.to_string(), format!("sha256:{}", b.digest)); program_layers.push(b);
+        }
+    }
     let program_map: BTreeMap<String, String> = if base.os == "linux" { lift_of.iter().map(|(g, k)| (format!("/{g}"), digest_of[k].clone())).collect() } else { BTreeMap::new() };
     let registry = recipe::merge_registry(&base.registry, &r.registry);
     let config = json!({
@@ -830,6 +845,7 @@ pub fn build(root: &Path, o: &Opts) -> R<()> {
         "permissions": if r.network { json!({ "network": true }) } else { serde_json::Value::Null },
         "programs": if program_map.is_empty() { serde_json::Value::Null } else { json!(program_map) },
         "side": if side_map.is_empty() { serde_json::Value::Null } else { json!(side_map) },
+        "lifted": if lifted_map.is_empty() { serde_json::Value::Null } else { json!(lifted_map) },
         "source": { "sha256": sha, "extract": r.source.extract, "added": ex.added },
         "build": { "lift": lifted.key, "lifter": t.lifter_hash, "clang": t.clang_version, "opt": r.opt, "runtime_opt": base.opt, "tools": tool_versions(&r),
             "programs": if user_lifts.is_empty() { serde_json::Value::Null } else { json!(user_lifts.iter().map(|(n, l)| (n.clone(), l.key.clone())).collect::<BTreeMap<_, _>>()) } },

@@ -25,7 +25,7 @@ export function programImage({ instance, memory, log }) {
     const sha = crypto.createHash('sha256').update(image).digest('hex'), name = `p_${sha.slice(0, 16)}`;
     if (tried.has(sha)) return 0; tried.add(sha);
     tools ??= toolsHash();
-    const dir = path.join(root, 'out/lift-cache'), wasm = path.join(dir, `${sha}-${tools}.wasm`);
+    const dir = process.env.PISCO_LIFT_CACHE ? path.resolve(process.env.PISCO_LIFT_CACHE) : path.join(root, 'out/lift-cache'), wasm = path.join(dir, `${sha}-${tools}.wasm`);
     if (!fs.existsSync(wasm)) {
       fs.mkdirSync(dir, { recursive: true }); const tmp = path.join(dir, `${sha}.elf`); fs.writeFileSync(tmp, image);
       log(`lifting a program met when it first ran (${len} bytes, sha256 ${sha.slice(0, 16)})`); const t0 = Date.now();

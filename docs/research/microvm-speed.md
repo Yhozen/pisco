@@ -191,6 +191,9 @@ This is a lifter gap, and every route needs it fixed.
 Licences: the patched module is a modified GPL-2.0 kernel, built from a release at run time. None of unkernel's code
 would be in the repository.
 
+**Followed up** in [tabc-pisco.md](tabc-pisco.md): the same mechanism inside tabc, in Chrome, with dynamically
+linked programs, lifting on first run on the host, and per-task C stacks (items 1, 2, 5 and part of 7 above).
+
 ## 4. Native paths
 
 **The principle**: the wasm realisation is the reference and is always in the image. A native realisation is an

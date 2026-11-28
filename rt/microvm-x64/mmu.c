@@ -8,9 +8,10 @@
 TlbEntry mmu_k[4096], mmu_u[4096];
 u8 *ram; u64 ram_size;
 
-void mmu_flush(void) { memset(mmu_k, 0, sizeof mmu_k); memset(mmu_u, 0, sizeof mmu_u); }
+void mmu_flush(void) { memset(mmu_k, 0, sizeof mmu_k); memset(mmu_u, 0, sizeof mmu_u); machine_calls_forget(); }
 void rt_invlpg(Cpu *c, u64 a) {
-  (void)c; u64 tag = (a >> 12) + 1; unsigned i = (a >> 12) & 4095;
+  (void)c; if (!(a >> 47)) machine_calls_forget();
+  u64 tag = (a >> 12) + 1; unsigned i = (a >> 12) & 4095;
   if (mmu_k[i].rtag == tag || mmu_k[i].wtag == tag) mmu_k[i] = (TlbEntry){0};
   if (mmu_u[i].rtag == tag || mmu_u[i].wtag == tag) mmu_u[i] = (TlbEntry){0};
 }

@@ -112,6 +112,7 @@ A JSON document, written with sorted keys and no white space, that depends only 
 | `permissions` | what the app may be given beyond its drive ([recipe.md](recipe.md#permissions)): `network`; null for none |
 | `programs` | a Linux app's programs: each path and the digest of the module that holds it |
 | `side` | the machine's programs in modules of their own: each name and its module's digest |
+| `lifted` | the machine's programs lifted ahead of time: the sha256 of the image the machine takes of each, and its module's digest |
 | `build` | how this builder made it (tool versions, its keys); free for each builder |
 <!-- /config -->
 
