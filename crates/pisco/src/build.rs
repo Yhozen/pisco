@@ -19,6 +19,8 @@ use std::time::Instant;
 pub struct Opts { pub recipe: PathBuf, pub source: Option<PathBuf>, pub out: Option<PathBuf>, pub cache: Option<PathBuf>, pub compare: Option<PathBuf>,
     /// --lock: write the recipe's lock (recipe.lock) from this build
     pub lock: bool,
+    /// keep a pinned file input in the store's inputs (pisco install), so that the next install finds it
+    pub keep_inputs: bool,
     /// inputs named on the command line: --input <id>=<path> (and --with <ID>=<folder>), matched without regard to case
     pub with: Vec<(String, PathBuf)> }
 /// What a file of the builder's machine is on a drive with modes and links (`modes`: a Linux drive) or without:
@@ -56,6 +58,40 @@ fn check_pin(pin: &Pin, sha: &str, what: &str) -> R<()> {
         Pin::BuiltBy(b) => { say(&format!("input: {what} is built here by {b} (it has {sha}): not pinned")); Ok(()) }
         Pin::Unpinned(why) => { say(&format!("input: {what} is not pinned ({why}); it has {sha}")); Ok(()) }
     }
+}
+/// The store's inputs: a file input by its sha256 (docs/images.md#the-store)
+fn input_cache() -> PathBuf { crate::store::home().join("inputs/sha256") }
+/// Where a file input is when the command line does not say: beside the recipe (`file`), in the store's inputs (by
+/// one of its sha256s), or fetched from its `url` into them. The input is checked by its caller
+fn locate(r: &Recipe, i: &recipe::Input) -> R<PathBuf> {
+    let beside = r.dir.join(&i.file);
+    if beside.exists() || i.folder { return Ok(beside); }
+    let shas: &[String] = match &i.pin { Pin::Sha256(l) => l, _ => &[] };
+    if let Some(p) = shas.iter().map(|h| input_cache().join(h)).find(|p| p.is_file()) { say(&format!("input: {} from the store's inputs ({})", i.id, p.display())); return Ok(p); }
+    if let Some(url) = &i.url {
+        let dir = input_cache(); io(std::fs::create_dir_all(&dir), &dir)?;
+        let tmp = dir.join(format!(".fetch{}", std::process::id()));
+        say(&format!("input: {} fetched from {url}", i.id));
+        let st = Command::new("curl").args(["-fsSL", "--proto", "=https,http", "-o"]).arg(&tmp).arg(url).status().map_err(|e| format!("curl: {e}"))?;
+        if !st.success() { let _ = std::fs::remove_file(&tmp); return Err(format!("input {}: could not fetch {url}", i.id)); }
+        let sha = oci::sha256(&io(std::fs::read(&tmp), &tmp)?);
+        if !shas.contains(&sha) { let _ = std::fs::remove_file(&tmp); return Err(format!("input {}: {url} gave sha256 {sha}, the recipe wants {}: not kept", i.id, shas.join(" or "))); }
+        let dst = dir.join(&sha); io(std::fs::rename(&tmp, &dst), &dst)?;
+        return Ok(dst);
+    }
+    let pin = match &i.pin { Pin::Sha256(l) => format!("sha256 {}", l.join(" or ")), Pin::BuiltBy(b) => format!("made by {b}"), Pin::Unpinned(w) => format!("any version: {w}") };
+    Err(format!("input {id}: {file} is not beside the recipe, nor in the store's inputs. Give it: --input {id}=<path to {file}> ({pin}{wh})",
+        id = i.id, file = i.file, wh = i.where_.as_ref().map(|w| format!("; where: {w}")).unwrap_or_default()))
+}
+/// A pinned file input kept in the store's inputs: a hard link when it can be, else a copy
+fn keep_input(src: &Path, sha: &str) -> R<()> {
+    let dir = input_cache(); io(std::fs::create_dir_all(&dir), &dir)?;
+    let dst = dir.join(sha);
+    if dst.exists() || src.starts_with(&dir) { return Ok(()); }
+    let tmp = dir.join(format!(".keep{}", std::process::id()));
+    let _ = std::fs::remove_file(&tmp);
+    if std::fs::hard_link(src, &tmp).is_err() { io(std::fs::copy(src, &tmp), &tmp)?; }
+    io(std::fs::rename(&tmp, &dst), &dst)
 }
 /// Whether the app's drive has modes and links (a Linux drive: docs/spec/image.md#files)
 fn modes(r: &Recipe) -> bool { matches!(r.platform.as_str(), "linux-x64" | "microvm-x64" | "ps5") }
@@ -566,13 +602,14 @@ pub fn build(root: &Path, o: &Opts) -> R<()> {
     say(&format!("{}: FROM {}{}", r.name, base.reference(), if r.libraries.is_empty() { String::new() } else { format!(", libraries {}", r.libraries.join(" ")) }));
 
     // 1. the source, then its files
-    let src = o.source.clone().or_else(|| bound(&o.with, &r.primary.id).cloned()).unwrap_or(r.dir.join(&r.source.file));
+    let src = match o.source.clone().or_else(|| bound(&o.with, &r.primary.id).cloned()) { Some(p) => p, None => locate(&r, &r.primary)? };
     // a folder input (a title the user built or copied) is known by its tree digest
     let sha = if r.primary.folder {
         if !src.is_dir() { return Err(format!("{}: input {} is a folder", src.display(), r.primary.id)); }
         folder_digest(&src, r.primary.files.as_deref(), modes(&r))?
     } else { let data = io(std::fs::read(&src), &src)?; oci::sha256(&data) };
     check_pin(&r.primary.pin, &sha, &format!("{} ({})", src.display(), r.primary.id))?;
+    if o.keep_inputs && !r.primary.folder && matches!(r.primary.pin, Pin::Sha256(_)) { keep_input(&src, &sha)?; }
     let mut ex = extract(&r, &src, &sha, &cache, &o.with)?;
     if let Some(c) = &o.compare { compare(&ex, c)?; }
     // [files]: settings a setup step would write, put in the title's files (a file the installer has is replaced)

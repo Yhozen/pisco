@@ -143,6 +143,8 @@ blobs/sha256/<digest>   every app's blobs, once: apps FROM one base share its la
 apps/<name>/            an image layout whose blobs/ is a link to ../../blobs: a host reads it as any image folder
 saves/<name>/           what the app keeps between runs (SW_SAVES; `--saves` says another place), kept across installs
 tmp/                    an install builds here, then moves the app into apps/ by one rename
+inputs/sha256/<sha256>  each pinned file input an install was given or fetched (a hard link when it can be), so
+                        installing again needs no --input; removing an app leaves them (they are the user's files)
 sources/                one checkout of each git source, at the commit last installed from
 sources.toml            the namespaces: @ns = "<git url>"
 ```

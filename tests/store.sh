@@ -10,6 +10,9 @@
 #      (GitHub's place stood in for by PISCO_GITHUB), the user's file given with --input and checked by its sha256;
 #      the image records the commit. Refused: a third party's recipe with built_by, with an input outside its folder,
 #      or in a folder that is not its name; and the input when its sha256 is not the recipe's
+#   5. inputs: installed again, the third party's app needs no --input (the store's inputs keep it by sha256); an
+#      input with a url is fetched from a web server on this machine, checked, and kept; one whose url gives other
+#      bytes is refused and nothing of it kept
 # Needs hello's 32-bit build (tests/run.sh build).
 set -uo pipefail
 root=$(cd "$(dirname "$0")/.." && pwd); cd "$root"
@@ -77,7 +80,25 @@ for r in scripted:built_by outside:"plain file name" misnamed:"folder of its nam
   out=$($P install @someone/${r%%:*} --input program=$exe 2>&1) && bad "@someone/${r%%:*} installed, and must not be"
   echo "$out" | grep -q "${r#*:}" || bad "@someone/${r%%:*}: refused, but not for its ${r#*:}: $out"
 done
-$P remove hello-third > /dev/null
 
-[ $fail = 0 ] && echo "the store: installed by name, run from another folder, a base's layer shared by two apps, removed without what the other uses; a third party's recipe by URL, @ns and owner/repo, and what it may not do refused"
+# 5. inputs kept by sha256, and fetched from a url
+$P install @someone/hello-third > $T/again.log 2>&1 || { tail -3 $T/again.log; bad "installing hello-third again needed its input"; }
+grep -q "store's inputs" $T/again.log || bad "the second install did not take the input from the store's inputs"
+mkdir -p $T/web; cp $exe $T/web/hello.exe; cp $root/fixtures/hello/target/x86_64-pc-windows-msvc/release/hello.exe $T/web/other.exe
+node -e 'const h=require("http"),fs=require("fs"),p=require("path");const s=h.createServer((q,r)=>{const f=p.join(process.argv[1],p.basename(q.url));fs.existsSync(f)?r.end(fs.readFileSync(f)):r.writeHead(404).end()}).listen(0,"127.0.0.1",()=>fs.writeFileSync(process.argv[2],String(s.address().port)))' $T/web $T/port &
+web=$!; for _ in $(seq 50); do [ -s $T/port ] && break; sleep 0.1; done; port=$(cat $T/port)
+for n in fetched wrong-bytes; do mkdir -p $repo/recipes/$n; third $n > $repo/recipes/$n/recipe.toml; done
+sed -i "s|^file = .*|&\nurl = \"http://127.0.0.1:$port/hello.exe\"|" $repo/recipes/fetched/recipe.toml
+sed -i "s|^file = .*|&\nurl = \"http://127.0.0.1:$port/other.exe\"|" $repo/recipes/wrong-bytes/recipe.toml
+git -C $repo add -A && git -C $repo -c user.name=t -c user.email=t@t commit -qm urls
+rm -rf $PISCO_HOME/inputs
+out=$($P install @someone/wrong-bytes 2>&1) && bad "an input whose url gives other bytes was taken"
+echo "$out" | grep -q "the recipe wants" || bad "wrong bytes refused, but not saying why: $out"
+[ -z "$(ls -A $PISCO_HOME/inputs/sha256 2>/dev/null)" ] || bad "the wrong bytes were kept: $(ls -A $PISCO_HOME/inputs/sha256)"
+$P install @someone/fetched > $T/fetch.log 2>&1 || { tail -3 $T/fetch.log; bad "an input with a url was not fetched"; }
+[ -f $PISCO_HOME/inputs/sha256/$sha ] || bad "the fetched input is not kept by its sha256"
+kill $web 2>/dev/null
+$P remove hello-third > /dev/null; $P remove fetched > /dev/null
+
+[ $fail = 0 ] && echo "the store: installed by name, run from another folder, a base's layer shared by two apps, removed without what the other uses; a third party's recipe by URL, @ns and owner/repo, and what it may not do refused; inputs kept, and fetched from a url"
 exit $fail

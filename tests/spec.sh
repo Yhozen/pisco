@@ -74,6 +74,8 @@ s/^\[hints.pisco\]/[hint.pisco]/|hint is not a key of a recipe
 s/^sha256 = .*/&\nbuilt_by = "x"/|exactly one of sha256
 s/^sha256 = .*/sha256 = "abc"/|64 hex digits
 s/^name = "tag"/name = "Tag"/|lower-case
+s#^where = #url = "ftp://example.org/x"\n&#|an https://
+s#^sha256 = .*#unpinned = "any"\nurl = "https://example.org/x"#|url is for a file input pinned
 s/^\[registry\]/[quirks]\nheap_fil = 1\n[registry]/|heap_fil: not a quirk
 EOF
 [ $fail = 0 ] && echo "the spec's lists are pisco's ($(echo "$keys" | wc -l) names); $n recipes read; $bad wrong recipes refused, each saying why; $sessions sessions read"

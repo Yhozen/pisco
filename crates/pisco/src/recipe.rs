@@ -17,10 +17,14 @@ pub struct RegValue { pub key: String, pub name: String, pub data: RegData }
 pub enum Pin { Sha256(Vec<String>), BuiltBy(String), Unpinned(String) }
 /// [[input]]: a file or folder the user supplies
 #[derive(Clone, Debug)]
-pub struct Input { pub id: String, pub folder: bool, pub file: String, pub files: Option<Vec<String>>, pub pin: Pin }
+pub struct Input { pub id: String, pub folder: bool, pub file: String, pub files: Option<Vec<String>>, pub pin: Pin,
+    /// where a builder may fetch it (a pinned file input only: docs/spec/recipe.md#inputs)
+    pub url: Option<String>,
+    /// for a person: where it comes from
+    pub where_: Option<String> }
 /// The recipe's steps as pisco runs them: the first ([[extract]] innosetup, zip, wise, file or folder) with what
 /// follows it (installshield, cab, copy)
-pub struct Source { pub file: String, pub extract: String, pub app: Option<String>, pub map: BTreeMap<String, String>, pub cabs: Vec<Cab>,
+pub struct Source { pub extract: String, pub app: Option<String>, pub map: BTreeMap<String, String>, pub cabs: Vec<Cab>,
     pub root: Option<String>, pub adds: Vec<Add>,
     /// [source.installshield] groups: where each file group of an InstallShield 5 / 6 setup inside the installer
     /// goes, below the title's folder ("" the folder itself, "-" not installed); InstallShield's own script says
@@ -127,7 +131,7 @@ pub fn drive_path(p: &str) -> R<String> {
 /// Every key a recipe of schema 1 may have, "table.key" (docs/spec/recipe.md has the same list: tests/run.sh spec)
 pub const KEYS: &[&str] = &["schema", "name", "from", "libraries",
     "about.display_name", "about.version", "about.revision", "about.notes",
-    "input.id", "input.kind", "input.file", "input.files", "input.sha256", "input.built_by", "input.unpinned", "input.where",
+    "input.id", "input.kind", "input.file", "input.files", "input.sha256", "input.built_by", "input.unpinned", "input.url", "input.where",
     "extract.kind", "extract.input", "extract.app", "extract.map", "extract.root", "extract.groups", "extract.from", "extract.files", "extract.to",
     "run.exe", "run.display", "run.args", "run.kernel", "run.initrd", "run.cmdline",
     "cpu.features", "dll", "registry", "files", "quirks",
@@ -200,7 +204,12 @@ pub fn load_recipe(dir: &Path) -> R<Recipe> {
         if pins != 1 { return Err(format!("{at}: input {id}: say exactly one of sha256 (pinned), built_by (made here by a script) or unpinned (and why)")); }
         let pin = if let Some(v) = i.get("sha256") { Pin::Sha256(sha_list(v, &format!("{at}: input {id}: sha256"))?) }
             else if let Some(b) = s(i, "built_by") { Pin::BuiltBy(b) } else { Pin::Unpinned(s(i, "unpinned").ok_or(format!("{at}: input {id}: unpinned = \"why\""))?) };
-        inputs.push(Input { id: id.clone(), folder: kind == "folder", file: s(i, "file").ok_or(format!("{at}: input {id}: no file"))?, files, pin });
+        let url = s(i, "url");
+        if let Some(u) = &url {
+            if !matches!(pin, Pin::Sha256(_)) || kind != "file" { return Err(format!("{at}: input {id}: url is for a file input pinned by its sha256")); }
+            if !(u.starts_with("https://") || u.starts_with("http://")) { return Err(format!("{at}: input {id}: url = \"{u}\": an https:// (or http://) URL")); }
+        }
+        inputs.push(Input { id: id.clone(), folder: kind == "folder", file: s(i, "file").ok_or(format!("{at}: input {id}: no file"))?, files, pin, url, where_: s(i, "where") });
     }
     let input = |id: &Option<String>, step: &str| -> R<Input> {
         let id = id.as_ref().ok_or(format!("{at}: [[extract]] {step}: no input"))?;
@@ -229,7 +238,7 @@ pub fn load_recipe(dir: &Path) -> R<Recipe> {
                 if (kind == "folder") != i.folder { return Err(format!("{at}: [[extract]] {kind} reads input {}, a {}", i.id, if i.folder { "folder" } else { "file" })); }
                 let mut map = BTreeMap::new();
                 for (k, v) in table(e, "map")?.into_iter().flatten() { map.insert(k.clone(), v.as_str().ok_or(format!("{at}: [[extract]] map: strings"))?.to_string()); }
-                source = Some(Source { file: i.file.clone(), extract: kind.clone(), app: s(e, "app"), map, cabs: vec![],
+                source = Some(Source { extract: kind.clone(), app: s(e, "app"), map, cabs: vec![],
                     root: s(e, "root").map(|r| r.trim_matches('/').to_string()), adds: vec![], installshield: None });
                 primary = Some(i);
             }
