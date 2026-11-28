@@ -109,6 +109,7 @@ A JSON document, written with sorted keys and no white space, that depends only 
 | `source` | what the app was made from: the first input's `sha256` and the first step's `extract` kind, the `added` files (path and sha256) |
 | `guest` | `bits` (32 or 64) and `image` (the lowest and highest address of the app's code, hex): what a host needs to lay out memory |
 | `imports` | the functions the app imports (`dll!name`), for a census |
+| `permissions` | what the app may be given beyond its drive ([recipe.md](recipe.md#permissions)): `network`; null for none |
 | `programs` | a Linux app's programs: each path and the digest of the module that holds it |
 | `side` | the machine's programs in modules of their own: each name and its module's digest |
 | `build` | how this builder made it (tool versions, its keys); free for each builder |

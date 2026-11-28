@@ -77,7 +77,9 @@ fn main() {
                 let name = a.get("as").map(|p| p.to_string_lossy().into_owned()).unwrap_or(name);
                 let r = store::adopt(&dir, &name, &[("org.pisco.source", format!("oci:{from}@{digest}"))]);
                 if r.is_err() { let _ = std::fs::remove_dir_all(&dir); }
-                r.map(|app| println!("{name}: pulled into {} (pisco run {name})", app.display())) }) }
+                r.map(|app| {
+                    if oci::open(&app).is_ok_and(|i| i.config["permissions"]["network"] == true) { println!("{name}: may be given a network ([permissions] network): a run gives it one only when asked (SW_NET=1)"); }
+                    println!("{name}: pulled into {} (pisco run {name})", app.display()) }) }) }
         "remove" => { let a = parse(&args[1..], &[]); let Some(n) = a.pos.first() else { usage() }; store::remove(n).map(|_| println!("{n}: removed")) }
         "run" => run(&root, &parse(&args[1..], &["session", "saves"])),
         "recipe" => recipe_cmd(&parse(&args[1..], &[])),
@@ -146,7 +148,7 @@ fn recipe_cmd(a: &Args) -> R<()> {
         "about": { "display_name": r.display_name, "version": r.version, "revision": r.revision },
         "inputs": r.inputs.iter().map(|i| json!({ "id": i.id, "kind": if i.folder { "folder" } else { "file" }, "file": i.file, "files": i.files, "pin": pin(&i.pin), "url": i.url, "where": i.where_ })).collect::<Vec<_>>(),
         "run": { "exe": r.exe, "display": r.display, "args": r.args, "initrd": r.initrd, "cmdline": r.cmdline },
-        "cpu": { "features": r.cpu }, "dll": r.dll, "files": r.files, "quirks": { "heap_fill": r.heap_fill },
+        "cpu": { "features": r.cpu }, "dll": r.dll, "files": r.files, "quirks": { "heap_fill": r.heap_fill }, "permissions": { "network": r.network },
         "registry": r.registry.iter().map(|v| match &v.data {
             recipe::RegData::Dword(n) => json!({ "key": v.key, "name": v.name, "type": "dword", "value": n }),
             recipe::RegData::Sz(s) => json!({ "key": v.key, "name": v.name, "type": "sz", "value": s }) }).collect::<Vec<_>>(),
@@ -174,6 +176,7 @@ fn install(root: &Path, a: &Args) -> R<()> {
     let res = build::build(root, &build::Opts { recipe: found.dir.clone(), lock: false, keep_inputs: true, source: a.get("source"), out: Some(staging.clone()), cache: a.get("cache"), compare: None, with });
     if let Err(e) = res { let _ = std::fs::remove_dir_all(&staging); return Err(e); }
     let app = store::adopt(&staging, &r.name, &[("org.pisco.source", found.source)])?;
+    if r.network { println!("{}: may be given a network ([permissions] network): a run gives it one only when asked (SW_NET=1)", r.name); }
     println!("{}: installed in {} (pisco run {})", r.name, app.display(), r.name);
     Ok(())
 }
@@ -267,6 +270,7 @@ fn inspect(a: &Args) -> R<()> {
     println!("{image}: {} (manifest sha256:{})", img.manifest["annotations"][oci::TITLE].as_str().unwrap_or("?"), img.manifest_digest.trim_start_matches("sha256:"));
     println!("  FROM {}, libraries {}", c["base"].as_str().unwrap_or("?"), c["libraries"]);
     println!("  run {} ({}), {}-bit, CPU {}", c["run"]["exe"].as_str().unwrap_or("?"), c["run"]["display"].as_str().unwrap_or("no display"), c["guest"]["bits"], c["cpu"]["features"]);
+    if c["permissions"].is_object() { println!("  permissions {}", c["permissions"]); }
     println!("  dll {}, {} registry values, {} imports", c["dll"], c["registry"].as_array().map(|a| a.len()).unwrap_or(0), c["imports"].as_array().map(|a| a.len()).unwrap_or(0));
     for v in c["registry"].as_array().into_iter().flatten() { println!("    {}\\{} = {}", v["key"].as_str().unwrap_or(""), v["name"].as_str().unwrap_or(""), v["value"]); }
     println!("  config  {} {:>10} bytes", img.manifest["config"]["digest"].as_str().unwrap_or(""), img.manifest["config"]["size"]);

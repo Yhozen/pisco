@@ -80,6 +80,7 @@ table and what `pisco` accepts are the same list (the rows between the two marke
 | `input.sha256` | string, or list of strings | one of three | the input's sha256 (a folder's: its tree digest), or several accepted ones |
 | `input.built_by` | string | one of three | the input is made on the builder's machine by this script of the repository (its bytes depend on the compiler) |
 | `input.unpinned` | string | one of three | the input is not pinned, and why (any version of a redistributable) |
+| `permissions.network` | boolean | no | the app may be given a network ([below](#permissions)) |
 | `input.url` | string | no | a file input pinned by `sha256`: where a builder may fetch it (`https://`, or `http://`) |
 | `input.where` | string | no | for a person: where the input comes from |
 | `extract.kind` | string | yes | what the step does: one of the [extract kinds](#extract-kinds) |
@@ -202,6 +203,17 @@ Behaviour of the system that one app depends on and others must not get.
 
 A file of `[files]` is written as text: on the Windows platforms and the Xbox Series its lines end with CR LF, on the
 others with LF. It is placed after every extract step and replaces a file of the same path.
+
+## Permissions
+
+What an app may be given beyond its drive, its screen and its input. A host must not give an app what its config
+does not list (`permissions` in [image.md](image.md#the-config)), and a store should say what an app asks for when
+it is installed, as Flatpak's do. A permission is what an app may have, not what every run gives it: the user (or
+the host's settings) turns it on.
+
+| Permission | Means |
+|---|---|
+| `network` | a network device: the machine's virtio network ([platforms/microvm-x64.md](platforms/microvm-x64.md)); `pisco`'s Node host gives it with `SW_NET=1` |
 
 ## The lock
 

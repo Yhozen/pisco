@@ -2,9 +2,10 @@
 
 Start with [docs/plan.md](docs/plan.md) (the parts and the rules a change follows) and [docs/status.md](docs/status.md).
 
-Touching a recipe, a base, an image's config or layers, a session, a host function or an `SW_*` variable? The
-contract is [docs/spec/](docs/spec/README.md): read its README, then only the page it points you to. Change the spec
-in the same pull request (rule 7); `tests/run.sh spec` checks the lists match the code.
+Touching a recipe, a base, an image's config or layers, a session, a host function, an `SW_*` variable, or how apps
+are installed and published? The contract is [docs/spec/](docs/spec/README.md): read its README, then only the page
+it points you to. Change the spec in the same pull request (rule 7); `tests/run.sh spec` checks the lists match the
+code.
 
 ## Troubleshooting
 
