@@ -35,12 +35,14 @@ what makes it slow.
   lifted again for each program that mapped it elsewhere: 23 of the 52 images an x86-64 desktop met were such
   repeats. Each library now gets an address of its own (from its path), and its image is made the same in every
   program: no large library is lifted twice any more (before: libraries of 0.1 to 1.4 MB, up to five times).
-- **Fast where it is lifted, with two holes.** The x86-64 desktop, lifted: Xorg, twm, xeyes and xclock draw and
-  answer (![](../img/linux-gui-x86-64.png)), apk installs the desktop in 24 s against 40 s for arm64 on kwemu; the
-  picture costs the kernel's thread 3 to 5 times less than with the SDK's `frame()`. The holes: a process starts
-  in 30 ms against 19 (`xsetroot` 200 times in the running desktop: 6.1 s against 3.8), and lifted Xorg answers
-  xterm's `OpenFont` with BadAlloc (twm's opens), so xterm does not run on the x86-64 desktop yet
-  ([Fast](#4-fast)).
+- **The x86-64 desktop, lifted, and faster than arm64 on kwemu where programs run.** Xorg, twm, xterm, xeyes and
+  xclock, all x86-64 and lifted; typed into xterm, `uname -m` answers `x86_64`:
+  ![twm, xterm, xeyes and xclock, x86-64, lifted](../img/linux-gui-x86-64.png)
+  Side by side with the same desktop on arm64 (kwemu): xterm starts in 0.38 to 0.52 s against 0.54 to 0.58, scrolls
+  20,000 lines in 1.1 to 1.3 s against 1.6; apk installs it in 23 s against 25. Starting processes is 1.5 times
+  slower (`xsetroot` 200 times: 5.3 s against 3.6). The picture costs the kernel's thread 3 to 5 times less than
+  with the SDK's `frame()`. One bug left: lifted Xorg rejects fonts of two-byte encodings (xterm's wide font), so
+  the desktop runs with the Latin fonts only ([Fast](#4-fast)).
 
 ## 1. A desktop in a tab
 
@@ -157,27 +159,31 @@ In the same runs xterm's start took 3.0 to 7.0 s against 7.9 to 13.3 s, and its 
 
 ### The desktops side by side
 
-`bench.sh` in the running desktop (twm on both, `WM=twm`; the lift runner paused, nothing else running; one run
-each, after a warm-up run; the packages from a local cache):
+`bench.sh` in the running desktop, the same on both: twm (`WM=twm`), the Latin bitmap fonts only (`LATIN_FONTS=1`,
+below), the packages from a local cache, the lift runner paused and nothing else running; one run each, after a
+warm-up run:
 
 | | arm64, kwemu | x86-64, PISCO (lifted) |
 |---|---|---|
-| `apk add` of the desktop (from the cache) | 40 s | 24 to 27 s |
-| Xorg up | 1 s | 1 to 2 s |
-| `xsetroot` 200 times (a process start and a few requests each) | 3.8 s | 6.0 to 6.1 s |
-| xterm start, scroll of 20,000 lines | 0.84 to 1.36 s, 1.72 to 1.98 s | not run: `OpenFont` fails (below) |
+| `apk add` of the desktop | 25 s | 23 s |
+| Xorg up | under 1 s | 1 s |
+| xterm start (the first, then three more) | 0.83 s, then 0.54 to 0.58 s | 1.26 s, then 0.38 to 0.52 s |
+| xterm, `seq 1 20000` scrolled through it | 1.56 to 1.61 s | 1.08 to 1.28 s |
+| `xsetroot` 200 times (a process start and a few requests each) | 3.6 s | 5.3 s |
 
-Without an X server the process start is closer: `xsetroot` failing to connect, 50 times, 1.2 to 1.4 s on arm64
-against 1.6 to 2.3 s lifted; `/bin/true` 50 times, 0.43 to 0.51 s against 0.71 to 0.77 s. What a lifted process
-pays more at its start is not known yet (each new address space looks its programs up again: `programs_forget`).
+Lifted, the desktop is 1.3 to 1.5 times faster on what runs in a program (xterm's start and its scroll: xterm, Xlib
+and Xorg drawing text through pixman), and 1.5 times slower on starting processes. Without an X server the process
+start is closer: `xsetroot` failing to connect, 50 times, 1.2 to 1.4 s on arm64 against 1.6 to 2.3 s lifted;
+`/bin/true` 50 times, 0.43 to 0.51 s against 0.71 to 0.77 s. What a lifted process pays more at its start is not
+known yet (each new address space looks its programs up again: `programs_forget`).
 
-**Two bugs of the lifted desktop.** Lifted Xorg answers xterm's `X_OpenFont` with BadAlloc (by default, with
-`-fn 6x13`, with the font's full XLFD, with `-fa monospace`), while twm, started before it, opens its font set; the
-same packages on arm64 open both. And once (the run with `-fn fixed`), Xorg was gone a few seconds after it started
-(`Can't open display`). Neither is found yet. The
-first is in the server: with Xorg run on qemu-user (`/.pisco/qemu-x86_64 /usr/libexec/Xorg`) and every client
-lifted, xterm opens its font and shows its prompt beside twm, xeyes and xclock. That Xorg gets no input, though:
-qemu-user does not pass evdev's ioctls, so it has no keyboard or mouse (the lifted Xorg has both).
+**The fonts.** With all of Alpine's bitmap fonts, lifted Xorg answers xterm's `X_OpenFont` with BadAlloc. The
+runtime's log of the files Xorg opens shows which: after `nil2` and `6x13B` (which load), `12x13ja`, the font xterm
+asks for wide characters, and then the iso10646 ones; every failure of libXfont2's PCF reader returns AllocError,
+whatever the reason. Fonts of one-byte encodings (ISO 8859) load; fonts of two-byte encodings do not, in the lifted
+libXfont2 only (arm64 loads them, and an Xorg run on qemu-user with every client lifted does too). The lifted
+instruction that goes wrong is not found yet; `LATIN_FONTS=1` removes the others so that xterm, whose wide font
+then falls back, runs. Once, with them, Xorg was also gone a few seconds after it started.
 
 **Fixed on the way.** The runtime registered at most 64 programs (a desktop maps more: xterm's 65th library got
 SIGILL); now 1024. The lifter had no 16-bit `idiv` in 64-bit code (libfreetype's `idiv si`: fc-cache got
@@ -225,7 +231,7 @@ on it:
   program's size; a lift a task waits for and the runner's lift of the same program wait on one lock file, so a
   stopped runner stops that task (it happened while the runner was paused for a benchmark); the queue is lifted
   oldest first, with no notion of what the desktop needs first.
-- **Lifted Xorg's two bugs** (above): xterm's fonts, and one exit.
+- **Lifted Xorg's two bugs** (above): fonts of two-byte encodings, and one exit.
 - A program loaded with `dlopen` after it has done work waits for its lift (asleep, the others run): lifted Xorg
   waited about a minute for its five modules the first time.
 - PISCO needs the one-CPU kernel; the desktop runs on one CPU.

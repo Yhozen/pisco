@@ -8,6 +8,12 @@ t0=$(date +%s)
 # (the window manager: JWM, which brings cairo, glib and librsvg, or WM=twm, only the X libraries)
 apk add -q xorg-server xf86-video-fbdev xf86-input-evdev ${WM:-jwm} xterm font-misc-misc font-cursor-misc xeyes xclock xsetroot font-dejavu fontconfig 2>&1 | tail -3
 echo "apk took $(( $(date +%s) - t0 )) s"
+# (LATIN_FONTS: only the ISO 8859 bitmap fonts, the cursor font and nil2: lifted Xorg's libXfont2 rejects the fonts
+# of two-byte encodings xterm opens (12x13ja, the iso10646 ones), docs/research/linux-gui.md)
+if [ -n "$LATIN_FONTS" ]; then
+  for f in /usr/share/fonts/misc/*.pcf.gz; do case "$f" in *ISO8859*|*/cursor.pcf.gz|*/nil2.pcf.gz) ;; *) rm -f "$f";; esac; done
+  mkfontdir /usr/share/fonts/misc
+fi
 # no virtual console in this kernel: Xorg shares a stand-in for one (-sharevts) and never switches (-novtswitch)
 [ -e /dev/tty0 ] || ln -sf /dev/console /dev/tty0; [ -e /dev/tty7 ] || ln -sf /dev/console /dev/tty7
 mkdir -p /etc/X11/xorg.conf.d /tmp/.X11-unix
@@ -60,7 +66,7 @@ echo "Xorg up in $(( $(date +%s) - t0 )) s"; tail -5 /tmp/xorg.out
 export DISPLAY=:0
 xsetroot -solid '#2e5a6b'
 sleep 1; ${WM:-jwm} &   # (WM=twm: a window manager that needs only the X libraries)
-xterm ${XTERM_FONT:+-fn $XTERM_FONT} ${XTERM_FA:+-fa $XTERM_FA} -geometry 80x24+40+40 &
+xterm ${XTERM_FONT:+-fn $XTERM_FONT} ${XTERM_FA:+-fa $XTERM_FA} ${XTERM_FW:+-fw $XTERM_FW} -geometry 80x24+40+40 &
 xeyes -geometry 200x150+700+60 &
 xclock -geometry 200x200+700+260 &
 sleep 2; echo GUI-UP
