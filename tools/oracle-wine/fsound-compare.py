@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 # usage: fsound-compare.py WINE_LOG OUR_LOG [--quiet]
-# Sets the FMOD 3 calls a title made under Wine against the ones it made in our runtime.
-#   WINE_LOG  a WINEDEBUG=+snoop log of the title with the shipped fmod.dll unpacked (README.md), with a sound device
+# Sets the FMOD 3 calls an app made under Wine against the ones it made in our runtime.
+#   WINE_LOG  a WINEDEBUG=+snoop log of the app with the shipped fmod.dll unpacked (README.md), with a sound device
 #   OUR_LOG   a run with SW_FMOD_TRACE=1 (lines "pisco: fmod: Name(args) = result", rt/windows-x86/fmod3.c)
 # Wine's clock is the wall's and ours is virtual, so the two runs differ in how many frames a phase lasts, and so
 # in how often the per-frame calls are made and in when the sounds the game plays at random times (torches) start.
@@ -64,7 +64,7 @@ def events(calls):  # the calls that are not per frame, with sounds by name; (ki
         if name in SOUND_ARG and len(shown) > SOUND_ARG[name]: shown[SOUND_ARG[name]] = names.get(shown[SOUND_ARG[name]].lower().zfill(8), '?')
         if name in ('Sample_Load', 'Stream_Open'): shown = [re.sub(r'^[0-9a-f]+ ', '', a) for a in shown]
         if name == '3D_SetAttributes': shown = [shown[0]] + ['ptr' if a != '00000000' else '0' for a in shown[1:]]
-        if name in ('Reverb_SetProperties', 'SetMemorySystem'): shown = ['ptr', *shown[1:]]   # addresses of the title's own memory
+        if name in ('Reverb_SetProperties', 'SetMemorySystem'): shown = ['ptr', *shown[1:]]   # addresses of the app's own memory
         handle_arg = name not in ('Sample_Load', 'Stream_Open', 'Init', 'SetHWND', 'SetMinHardwareChannels', 'File_SetCallbacks', 'SetSFXMasterVolume',
                                   'Reverb_SetProperties', 'SetMemorySystem') and not name.startswith('3D_Set') or name == '3D_SetAttributes'
         if name in VOID: result = ''

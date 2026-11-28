@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
-# Microsoft's SimplePBR (Xbox-GDK-Samples, MIT; DirectXTK12), a Windows x64 desktop title, as the user builds it
+# Microsoft's SimplePBR (Xbox-GDK-Samples, MIT; DirectXTK12), a Windows x64 desktop app, as the user builds it
 # (tools/build-gdk-sample-pbr.sh) and tests/gfx/pbr.sh stages it with the MSVC runtime DLLs (out/pbr-game).
 # Nothing of Microsoft's is in this repository: the folder is the user's.
 schema = 1

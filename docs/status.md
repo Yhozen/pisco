@@ -1,15 +1,15 @@
 # Status and next steps, by runtime (2026-11-27)
 
 PISCO is one recompiler, one package format and several runtimes ([plan.md](plan.md)). Each runtime has its own
-titles, its own next steps and its own goal:
+apps, its own next steps and its own goal:
 
 | Runtime | Runs | Next | Goal |
 |---|---|---|---|
-| [Xbox Series](#xbox-series) | Doom as a console title, XCL's console test title (50/50) | D3D12.X shaders from RDNA2 code | Minecraft, the Xbox Series build |
+| [Xbox Series](#xbox-series) | Doom as a console app, XCL's console test app (50/50) | D3D12.X shaders from RDNA2 code | Minecraft, the Xbox Series build |
 | [Windows x64](#windows-x64) | Stockfish 19, SimpleTriangleDesktop, SimplePBR; Desire, logo to ending, in Node and headless Chrome | Desire played by hand on a real GPU | desktop D3D12 titles |
 | [Windows x86](#windows-x86) | Narbacular Drop, playable; Tag: The Power of Paint into its second level | Tag played by hand on a real GPU, then its later levels | 32-bit Direct3D 9 games of the 2000s |
 | [Linux x64](#linux-x64) | fastfetch 2.71.0; neofetch 7.1.0 (bash, busybox); cowsay 3.8.4 (perl) | threads, signals, writes | statically linked command-line programs |
-| [PS5](ps5.md) | the raymarching tech demo (CPU-drawn, AVX2): its three scenes, pad and music in the browser | more system functions, a GPU (AGC) title | PS5 homebrew |
+| [PS5](ps5.md) | the raymarching tech demo (CPU-drawn, AVX2): its three scenes, pad and music in the browser | more system functions, a GPU (AGC) app | PS5 homebrew |
 | [Microvm x64](#microvm-x64) | Linux 6.18 and busybox lifted, as an image: `/init`'s programs print what they print on QEMU; a shell typed into in a terminal or the page; a virtio disk; a network in Node | the network in the page | Linux itself, lifted, and its programs |
 
 ## Levels
@@ -40,20 +40,20 @@ locked with `pisco build --lock` from the user's own copies; desire's C++ runtim
 
 ## Shared: the recompiler, the core runtime, the packages
 
-- **Gate A (CPU and OS layer on synthetic titles): passed** in Node and headless Chrome — our own titles
-  (Rust, C++ with libc++/libunwind, a multi-image title with a DLL) and XCL's console test title (46 of its
+- **Gate A (CPU and OS layer on synthetic apps): passed** in Node and headless Chrome — our own apps
+  (Rust, C++ with libc++/libunwind, a multi-image app with a DLL) and XCL's console test app (46 of its
   50 checks in Node, where the 4 that read pixels back cannot pass; all 50 in Chrome, below).
 - wasm32 vs wasm64 measured (`docs/memory.md`).
-- **Title images**: `pisco build` makes an image FROM one base per runtime (`bases/`), the only list of the
-  runtime's files; one title of each base is built twice with empty caches to equal digests (`tests/run.sh images`).
+- **App images**: `pisco build` makes an image FROM one base per runtime (`bases/`), the only list of the
+  runtime's files; one app of each base is built twice with empty caches to equal digests (`tests/run.sh images`).
 
 ## Xbox Series
 
-- **Graphics, sound, input and saves on a console title: Doom** (step 3 of the graphics ladder; `fixtures/doom`,
+- **Graphics, sound, input and saves on a console app: Doom** (step 3 of the graphics ladder; `fixtures/doom`,
   `docs/journey.md` §3.9). D3D12.X → WebGPU in headless Chrome, XAudio2 → AudioWorklet, GameInput from the page,
   XGameSave's folder kept in OPFS. Its `-timedemo` frames, read back from WebGPU, equal native doomgeneric's on
   every frame native draws deterministically. Video: `fixtures/doom/video.sh`.
-- **XCL's console test title: 50 of 50 checks** in headless Chrome (step 4 of the ladder; `docs/journey.md`
+- **XCL's console test app: 50 of 50 checks** in headless Chrome (step 4 of the ladder; `docs/journey.md`
   §3.10, `tests/gfx/xcl.sh`): D3D12.X's UMA memory and console methods, DirectStorage, MFPlat, XG, XAudio2
   with XMA2 / Opus. What passing does not cover is listed in §3.10 (no raytracing, our own XG layout, no
   RDNA2 shaders yet).
@@ -61,7 +61,7 @@ locked with `pisco build --lock` from the user's own copies; desire's C++ runtim
 ### Next, toward its goal (Minecraft, the Xbox Series build), in the order it probably needs them
 
 The graphics ladder is done up to Minecraft (steps 1–4: SimpleTriangleDesktop and SimplePBR, now Windows x64
-titles; Doom; XCL's checks). What is left before and during step 5:
+apps; Doom; XCL's checks). What is left before and during step 5:
 
 1. **The Minecraft files** (`docs/first-run.md`): every Minecraft-specific answer waits on them, among them
    which imports are missing, which shader stages it uses and whether it needs wasm64. `tools/census.sh
@@ -97,13 +97,13 @@ gamepad, from the page), saves kept in OPFS in the browser and in a folder in No
   maze. In Node, strict, it now runs from its logo to the maze and its end pictures, with Wine's start-up calls
   and, from Wine's seeds, Wine's maze (D1: a window with a message queue, WIC on stb_image, D3D12 Memory
   Allocator's methods, shaders compiled by `pisco build`); its C++ exceptions, MSVC's FH4, are caught (D2).
-  Played in Node on the virtual clock with the keyboard (D3): logo, GAME OVER, the goal, with Wine's titles and
+  Played in Node on the virtual clock with the keyboard (D3): logo, GAME OVER, the goal, with Wine's apps and
   Direct3D 12 methods; in headless Chrome its still screens are within 0.3 of 255 of Wine's (D4). Next: played
   by hand in a desktop browser on a real GPU.
 
 ## Windows x86
 
-### Narbacular Drop, the first title
+### Narbacular Drop, the first app
 
 An ordinary 32-bit Windows game, by the same route (recompiled ahead of time, no
 Wine at run time). Wine is the oracle it is compared with. What the game needs, measured:
@@ -112,21 +112,21 @@ Wine at run time). Wine is the oracle it is compared with. What the game needs, 
 - **Compatibility layer**: a 32-bit mode in the lifter, a runtime built per guest width, a Win32 desktop layer
   (`rt/windows-x86/`: user32, gdi32, registry, DirectInput 8, Direct3D 9, FMOD 3), Direct3D 9 on the existing GPU
   ring with shaders generated by the runtime.
-- **Recipes and images**: a recipe per title (`recipes/<app>/recipe.toml`: `from` a base, the user's
+- **Recipes and images**: a recipe per app (`recipes/<app>/recipe.toml`: `from` a base, the user's
   installer by sha256, CPU features, registry values, DLL choices) built into an OCI image layout: ordered
   file layers that map onto `rt/vfs.c`'s overlay, the module, content-addressed so lifting and compiling are
-  cached. A title's own layers are built locally and never published.
+  cached. An app's own layers are built locally and never published.
 
 | # | Milestone | Passes when | State |
 |---|---|---|---|
 | M0 | Groundwork: toolchain script, licence map, the Wine oracle, the census | fixtures and Doom pass again; the oracle replays the session from a fresh prefix; the census answers the open questions | **done** (2026-11-24) |
-| M1 | 32-bit lifter and CPU | all 91 indirect jumps of the game resolved, only MMX / SSE / 3DNow left unlifted; `hello32` and an x87 title print what they print under Wine | **done** (2026-11-24): `hello` as a 32-bit program passes 7/7 and `fixtures/x87` prints the 27 lines it prints under Wine, in Node and in headless Chrome. On the game: 349,540 instructions lifted, all 88 jump tables recovered, 8,279 MMX / 3DNow instructions left out. 3 indirect jumps stay unresolved: they are not tables but the C++ exception machinery's jumps (see below) |
+| M1 | 32-bit lifter and CPU | all 91 indirect jumps of the game resolved, only MMX / SSE / 3DNow left unlifted; `hello32` and an x87 app print what they print under Wine | **done** (2026-11-24): `hello` as a 32-bit program passes 7/7 and `fixtures/x87` prints the 27 lines it prints under Wine, in Node and in headless Chrome. On the game: 349,540 instructions lifted, all 88 jump tables recovered, 8,279 MMX / 3DNow instructions left out. 3 indirect jumps stay unresolved: they are not tables but the C++ exception machinery's jumps (see below) |
 | M2 | Win32 process for a 32-bit guest | the game reaches `Direct3DCreate9` under `SW_STRICT=1` with the same import sequence as under Wine | **done** (2026-11-24): the game runs its C runtime's start-up, reads `File.Ore`, registers its class, creates and shows its window, and calls `Direct3DCreate9` from the same address as under Wine. Its calls up to there are Wine's: 81 steps, repeats folded (`tests/run.sh nd`). Our Direct3D 9 then declines; the game shows its own message box and exits cleanly |
 | M3 | Headless main loop (null GPU, DirectInput, silent FMOD, virtual clock, session player) | the session reaches the level in Node; Direct3D method counts equal Wine's | **done** (2026-11-24): in Node, in strict mode, the game plays the `menu-to-level` session to its end on a virtual clock: 6,256 frames in 4 s, exit code 0, the same log on every run (`tests/run.sh nd`). Frame by frame it makes Wine's Direct3D 9 calls: 27 kinds of frame are identical on both sides and cover 94 % of Wine's frames; the others are the level's, which are Wine's minus the 9 text draws a frame D3DX makes under Wine and not here, where GDI draws no glyphs yet ([narbacular-drop.md](narbacular-drop.md)) |
-| M4 | Pixels: Direct3D 9 on WebGPU | checkpoint screenshots match Wine's in headless Chrome | **done** (2026-11-24): in headless Chrome (WebGPU on SwiftShader) the session plays to its end in strict mode and a PNG is saved at each of its 13 checkpoints (`tests/run.sh ndgfx`). The eight still screens equal Wine's to one level in 255 once Wine's D3DX runs the code ours runs; the menu and the level differ from Wine's by less than two of Wine's own runs differ from each other. Second part: GDI draws text with Liberation Sans (built in, OFL) through stb_truetype, measured and drawn as Wine's GDI does (`tests/run.sh gdi`: every metric, ABC width, advance and placement equal), so D3DX's level title and hint appear where Wine has them, and the level's frames make Wine's Direct3D calls (73 kinds of frame identical, covering 11,851 of Wine's 11,857 frames). Left: Wine's TrueType hinting (glyph edges differ by up to half a pixel) ([narbacular-drop.md](narbacular-drop.md)) |
+| M4 | Pixels: Direct3D 9 on WebGPU | checkpoint screenshots match Wine's in headless Chrome | **done** (2026-11-24): in headless Chrome (WebGPU on SwiftShader) the session plays to its end in strict mode and a PNG is saved at each of its 13 checkpoints (`tests/run.sh ndgfx`). The eight still screens equal Wine's to one level in 255 once Wine's D3DX runs the code ours runs; the menu and the level differ from Wine's by less than two of Wine's own runs differ from each other. Second part: GDI draws text with Liberation Sans (built in, OFL) through stb_truetype, measured and drawn as Wine's GDI does (`tests/run.sh gdi`: every metric, ABC width, advance and placement equal), so D3DX's level app and hint appear where Wine has them, and the level's frames make Wine's Direct3D calls (73 kinds of frame identical, covering 11,851 of Wine's 11,857 frames). Left: Wine's TrueType hinting (glyph edges differ by up to half a pixel) ([narbacular-drop.md](narbacular-drop.md)) |
 | M5 | Input, sound, persistence | a scripted session places portals; music in the captured video; files survive a reload | **done** (2026-11-24): the oracle has a sound device (a PipeWire null sink, recorded). FMOD 3 plays on XAudio2's mixer, factored out (`rt/mixer.c`), with WAV, Ogg Vorbis (stb_vorbis) and MP3 (minimp3) read through the game's own file functions; on the virtual clock the mix is the same on every run (`SW_AUDIO_WAV`). Against Wine's `+snoop`: the same functions, the first 177 non-per-frame calls identical with their results (channel handles included) up to the game's first random choice of a sound, per-frame calls equal phase by phase, sounds started by family equal but for footsteps and torch pops, whose times are random; the first level's loudness within 0.4 dB of Wine's recording. The page feeds the keyboard (scan codes) and the mouse under Pointer Lock. `level1-portals` places both portals and walks out of the cage, in Node and in Chrome (its level views within 1-2 levels in 255 of Wine's on average); `system.opt`, written on Quit, survives a rerun (`SW_SAVES`) and a reload (OPFS), equal to Wine's to the byte (`tests/run.sh ndplay`). Video with sound: `recipes/narbacular-drop/video.sh` (108 s, its audio track at -26.4 dB mean, -2.5 dB peak) ([narbacular-drop.md](narbacular-drop.md)) |
 | M6 | Recipes and images | `pisco build` + `pisco run` from a clean checkout; identical digests on a second build | **done** (2026-11-25): `pisco` (`crates/pisco`) builds a recipe and the user's installer (sha256-checked, extracted with innoextract) into an OCI image layout with our own media types: the base's layer, one per library, the game's, the module, and a config with the exe, display, CPU, DLL choices and registry ([images.md](images.md)). Two builds with empty caches give the same manifest digest, for hello32 and Narbacular Drop; hello32 (FROM the same base) shares its base layer blob; a registry-only change rebuilds in about a second with nothing lifted, compiled or linked, the same module blob; the registry reaches advapi32 at run time from the config. `pisco run` plays menu-to-level in Node with the 13 checkpoints of `tests/run.sh nd`, and in headless Chrome with the still screens within 0.11 of 255 of the oracle's (`tests/run.sh images`). The installer's files equal the Wine install's but for `fmod.dll` (the oracle's is UPX-unpacked) |
-| M7 | Playable in the browser | a full playthrough by hand on a real GPU | **done as a proof of concept** (2026-11-25): the image of M6, served by `tools/serve.mjs` and opened in Chrome on an M1 MacBook Pro, is played by hand: "so smooth", and mouse-look under Pointer Lock feels right. Measured with the page's `&stats=1` counter (the title's own presents a 3 s interval, not capped at the display's rate): 294 to 355 frames a second in lighter views (142 to 184 draws a frame), 103 to 174 in the heaviest (318 to 322 draws a frame), against 10 to 20 on the test machine's SwiftShader; no WebGPU error and no draw left out over 4.4 M draws. A full playthrough and a scripted level 1 were dropped from the milestone: a playable game was the proof of concept asked for. Not checked by hand: Esc and a re-click under Pointer Lock, the later levels |
+| M7 | Playable in the browser | a full playthrough by hand on a real GPU | **done as a proof of concept** (2026-11-25): the image of M6, served by `tools/serve.mjs` and opened in Chrome on an M1 MacBook Pro, is played by hand: "so smooth", and mouse-look under Pointer Lock feels right. Measured with the page's `&stats=1` counter (the app's own presents a 3 s interval, not capped at the display's rate): 294 to 355 frames a second in lighter views (142 to 184 draws a frame), 103 to 174 in the heaviest (318 to 322 draws a frame), against 10 to 20 on the test machine's SwiftShader; no WebGPU error and no draw left out over 4.4 M draws. A full playthrough and a scripted level 1 were dropped from the milestone: a playable game was the proof of concept asked for. Not checked by hand: Esc and a re-click under Pointer Lock, the later levels |
 
 Decided by the census: no x86 exception dispatch, no shader translation, no clip planes or stencil for the
 first level; gdi32 text is needed (memory DCs, DIB sections, a real font); Uniscribe is not (D3DX falls back
@@ -140,15 +140,15 @@ runs, Wine's TrueType hinting (glyph edges differ by up to half a pixel), bold f
 playthrough by hand and a recording of one. The installer's `fmod.dll` is never run: the runtime's FMOD answers.
 
 What Windows desktop titles have since M6: a recipe `FROM` a base (`bases/windows-x86/1`) with named libraries, built
-by `pisco` into a title image whose layers make the C: drive and whose config gives the registry to advapi32
+by `pisco` into an app image whose layers make the C: drive and whose config gives the registry to advapi32
 ([images.md](images.md)); both hosts run an image (`web/image.mjs`).
 
 What they had after M5: FMOD 3 (`rt/windows-x86/fmod3.c`: samples, streams, channels as FMOD numbers them,
-3D with several listeners) on the runtime's one sound output (`rt/mixer.c`, shared with XAudio2; mixed on the title's
+3D with several listeners) on the runtime's one sound output (`rt/mixer.c`, shared with XAudio2; mixed on the app's
 thread under a virtual clock), sound files decoded by `rt/windows-x86/audio_decode.c`; input from the page (keyboard,
 Pointer Lock mouse) through a ring `rt/input.c` drains when DirectInput reads; a writable top layer over the
-title's own folder that the host keeps (`SW_SAVES/@game` in Node, OPFS in the browser). Not yet: ADPCM WAVs, Doppler,
-reverb, the other FSOUND functions (none of the 33 imports is missing, but FMOD has hundreds), deleting a title's own
+app's own folder that the host keeps (`SW_SAVES/@game` in Node, OPFS in the browser). Not yet: ADPCM WAVs, Doppler,
+reverb, the other FSOUND functions (none of the 33 imports is missing, but FMOD has hundreds), deleting an app's own
 files across runs.
 
 What they had after M4's second part: gdi32 text drawn for real (`rt/windows-x86/font.c`): every
@@ -156,7 +156,7 @@ face is Liberation Sans, regular or italic, built into the module (`#embed`, SIL
 Wine's GDI measures it and rasterised with stb_truetype (17 grey levels blended as Wine blends them, or one bit),
 into the DIB section a memory DC holds: `TextOutA`, `ExtTextOutA/W` (glyph indices, opaque and clipped
 rectangles, alignment, advances), `GetCharacterPlacementA/W`, `GetCharABCWidthsI`, `GetCharWidthI`,
-`GetFontUnicodeRanges`, `GetTextMetricsA/W`. A 32-bit title's uninitialised heap blocks are filled with `0xCD`, the
+`GetFontUnicodeRanges`, `GetTextMetricsA/W`. A 32-bit app's uninitialised heap blocks are filled with `0xCD`, the
 same on every host. Not yet: bold faces (no file: bold asks get the regular face), other families (Times New Roman,
 Courier New), TrueType hinting, rotated text.
 
@@ -166,13 +166,13 @@ key, checked natively with naga), a pipeline, bindings and data, sent as explici
 D3D12 uses (`rt/windows-x86/d3d9_gpu.c`, `rt/gpu_ring.c`, `rt/d3d12_cmd.h`) to the one back end (`web/gpu/backend.js`
 with `explicit.js`; in Node `null.js` checks every record and draws nothing). The browser host plays sessions on
 the virtual clock and saves a PNG at each checkpoint; `tools/oracle-wine/shot-compare.py` sets them against the
-oracle's. Not drawn yet, because no title here has asked: texture stages past the first, shaders, stencil, user
+oracle's. Not drawn yet, because no app here has asked: texture stages past the first, shaders, stencil, user
 clip planes, table fog, `DrawPrimitiveUP`, formats other than `A8R8G8B8` / `X8R8G8B8`, a Clear of part of a target.
 
 What they had at M3: Direct3D 9 as a null device (`rt/windows-x86/d3d9*.c`: every object with
 its references, state and bytes, state blocks, statistics; its adapter, format support, capabilities and a new
 device's state are the oracle's, asked with `tools/oracle-wine/d3d9probe.c`), DirectInput 8 (mouse and keyboard,
-immediate and buffered), an input state with a session player (`SW_SESSION`), the title's clock (`rt_now_us`;
+immediate and buffered), an input state with a session player (`SW_SESSION`), the app's clock (`rt_now_us`;
 virtual with `SW_CLOCK`), FMOD 3 as on a machine without a sound device, gdi32 with memory DCs, DIB sections and
 fonts whose text is measured by estimate and not drawn. Not yet: real glyphs, sound, input from the page, device
 loss and `Reset`, shaders, cube textures, queries.
@@ -184,16 +184,16 @@ it, sent to the title's window procedure), an empty registry, GDI objects, and a
 the loader sets an image's security cookie, as Windows does; a recipe (`recipes/<app>/recipe.toml`) gives the
 build the virtual CPU's features, registry values and the shipped DLLs the runtime answers for.
 
-What 32-bit titles have since M1: the lifter reads PE32 and lifts 32-bit code (`title.env` tells the build the
+What 32-bit apps have since M1: the lifter reads PE32 and lifts 32-bit code (`app.env` tells the build the
 width); the runtime is built per guest width (`-DGUEST_BITS=32`: arguments on the stack, stdcall clean-up from
 `tools/stdcall-sizes.sh`, the TEB on `fs`, 4-byte loader writes); a low image gets a gap between the runtime's
 stack and its data ([memory.md](memory.md)). Not yet for 32-bit guests: exception dispatch (the three
 unresolved jumps of the game are `_JumpToContinuation` and friends in its C runtime, reached only when a C++
-exception is thrown), MMX and 3DNow (left unlifted: a recipe's `[cpu]` leaves them out of CPUID, as Narbacular Drop's and Tag's do, so titles
+exception is thrown), MMX and 3DNow (left unlifted: a recipe's `[cpu]` leaves them out of CPUID, as Narbacular Drop's and Tag's do, so apps
 take other paths), `fbld` / `fbstp`, the x87 tag word and 80-bit precision. (Imports were then only the four the two
-test titles call; Narbacular Drop and Tag have brought the rest.)
+test apps call; Narbacular Drop and Tag have brought the rest.)
 
-### Tag: The Power of Paint (2008), the second title
+### Tag: The Power of Paint (2008), the second app
 
 DigiPen's game draws everything through 16 D3DX effects compiled at run time, and plays its sound through FMOD Ex.
 Built by `pisco build recipes/tag` from the installer, with Microsoft's `d3dx9_35.dll` from the installer's cab
@@ -209,7 +209,7 @@ lifted beside the exe. Measured ([docs/tag.md](tag.md) has each milestone):
 
 Still to do: playing it by hand on a real GPU (T6 of [the plan](plan.md)); the later levels.
 
-### Medal of Honor: Allied Assault's demo (2001), the third title
+### Medal of Honor: Allied Assault's demo (2001), the third app
 
 The first OpenGL game, on id Tech 3 (Ritual's version of the Quake III engine), with game code in DLLs the engine
 loads itself and Miles Sound System 6.1c beside it ([mohaa.md](mohaa.md)). What it brought to the runtime:
@@ -218,7 +218,7 @@ loads itself and Miles Sound System 6.1c beside it ([mohaa.md](mohaa.md)). What 
   high unpacks and the packs arranged to agree; `fixtures/mmx` prints Wine's 63 lines), `push`/`pop` of DS, ES and SS
   in a flat address space, and Miles' hand-written mixer found as code (balanced segment saves are not data).
 - **Images**: a `wise` extract step (a Wise installer and the InstallShield 5 / 6 cabinets inside it, read without
-  running either), `[code] load` (DLLs a title loads itself from its folder or below it, lifted with it), `[files]`
+  running either), `[code] load` (DLLs an app loads itself from its folder or below it, lifted with it), `[files]`
   (the settings a setup step writes).
 - **The process**: DLLs loaded on demand (DllMain at LoadLibrary, PROCESS_DETACH at the last FreeLibrary, the
   sections read again on a second load), files still open at the end saved as Windows would have written them,
@@ -257,7 +257,7 @@ loads itself and Miles Sound System 6.1c beside it ([mohaa.md](mohaa.md)). What 
 - **`fixtures/linux-proc`** (in `tests/run.sh linux`): fork, a pipe from child to parent, execve, a script run
   through its `#!`, wait4, a longjmp across a fork, against its native run.
 - A process is an instance of its program's module with memory of its own; the host keeps the process table and
-  the pipes (`web/kernel.mjs`). The file system is read-only, its root the title's folder or its image's drive, with
+  the pipes (`web/kernel.mjs`). The file system is read-only, its root the app's folder or its image's drive, with
   a generated `/proc`, `/sys`, `/dev` and `/etc` (`rt/linux-x64/`). It links none of the Windows core: only
   `rt/core.c`, `rt/clock.c` and `rt/builtins.c`.
 
@@ -268,15 +268,15 @@ loads itself and Miles Sound System 6.1c beside it ([mohaa.md](mohaa.md)). What 
 2. **Signals**: `SIGCHLD`, `SIGPIPE`, `kill` between processes (a shell with job control needs them).
 3. **A file system that can be written** (a tmpfs the processes share), so that a program can keep a file.
 4. **Position-independent programs** (static-PIE: `R_X86_64_RELATIVE`), so that a distribution's own static
-   binaries can be titles, and function discovery good enough for a stripped one.
+   binaries can be apps, and function discovery good enough for a stripped one.
 5. **Input**: the page's keyboard as standard input, and answers to a terminal's queries; then an interactive shell.
 6. **Fork without copying everything**: a fork copies the whole memory (64 MiB for bash, about 20 ms).
 7. **Smaller modules for large programs**: perl's is 34 MB, some of its code decoded into more than one function.
 
 ## Microvm x64
 
-A runtime that imitates a small x86-64 machine, so that a real Linux kernel is a title ([linux.md](linux.md); the
-reasoning and the measurements: [research/kernel-as-a-title.md](research/kernel-as-a-title.md)).
+A runtime that imitates a small x86-64 machine, so that a real Linux kernel is an app ([linux.md](linux.md); the
+reasoning and the measurements: [research/kernel-as-an-app.md](research/kernel-as-an-app.md)).
 
 - **K0, done**: `tools/build-linux.sh` builds Linux 6.18.65 and an initramfs of busybox; the lifter reads `vmlinux`
   (10,853 functions; 3,958 instructions of the system not lifted yet); QEMU boots it as the oracle, and what
@@ -321,11 +321,11 @@ reasoning and the measurements: [research/kernel-as-a-title.md](research/kernel-
 
 - 64-bit exceptions resume at the landing pads the lifter finds: GCC / LLVM LSDA, C scope tables, MSVC FH3 catch
   and cleanup funclets and catch continuations, and FH4's compressed tables (handlers named by a local
-  `__GSHandlerCheck_EH4` too). 32-bit titles have no exception
+  `__GSHandlerCheck_EH4` too). 32-bit apps have no exception
   dispatch yet.
-- AVX, AVX2, FMA and BMI are lifted (`avx.rs`, `rt/avx.h`; `tests/avx.sh` checks 120 results against the CPU). A VEX instruction `avx.rs` does not handle still traps. CPUID still does not report AVX, so titles that check it take their SSE paths; a PS5 title does not ask.
-- x87 is emulated with doubles (no 80-bit precision) for Windows and console titles, which run it at 53 bits; a
-  Linux title's registers keep 64 bits (`rt/cpu.h` `fpx`), its transcendental instructions compute in doubles.
-- Memory protection, guard pages and write watches do not exist; the VFS keeps S:\ and (Windows desktop titles) what a
-  title writes in its own folder, not deletions of its own files.
+- AVX, AVX2, FMA and BMI are lifted (`avx.rs`, `rt/avx.h`; `tests/avx.sh` checks 120 results against the CPU). A VEX instruction `avx.rs` does not handle still traps. CPUID still does not report AVX, so apps that check it take their SSE paths; a PS5 app does not ask.
+- x87 is emulated with doubles (no 80-bit precision) for Windows and console apps, which run it at 53 bits; a
+  Linux app's registers keep 64 bits (`rt/cpu.h` `fpx`), its transcendental instructions compute in doubles.
+- Memory protection, guard pages and write watches do not exist; the VFS keeps S:\ and (Windows desktop apps) what a
+  app writes in its own folder, not deletions of its own files.
 - One wait list serves all waits (events, semaphores, mutexes, address waits): correct, not fast with many threads.

@@ -12,13 +12,13 @@
 #      (out/nd/play-shots), the table of differences with the oracle's screenshots when they are there; then the
 #      menu-quit session in one page and a second page in the same browser profile, which must find system.opt
 #      in OPFS and read it.
-# Needs out/nd/title.wasm (tests/run.sh nd builds it). Environment: ND (the installed game's folder).
+# Needs out/nd/app.wasm (tests/run.sh nd builds it). Environment: ND (the installed game's folder).
 set -uo pipefail
 root=$(cd "$(dirname "$0")/../.." && pwd); cd "$root"
 ND=${ND:-$HOME/.pisco/oracle/prefix-narbacular-drop/drive_c/Program Files (x86)/Narbacular Drop}
 exe="$ND/Narbacular Drop.exe"; S=recipes/narbacular-drop/sessions; oracle=out/oracle/narbacular-drop
-[ -f out/nd/title.wasm ] || { echo "out/nd/title.wasm is not built (tests/run.sh nd)"; exit 1; }
-node_run() { SW_STRICT=1 SW_CLOCK=16667 timeout 900 node web/run-node.mjs out/nd/title.wasm "$exe"; }
+[ -f out/nd/app.wasm ] || { echo "out/nd/app.wasm is not built (tests/run.sh nd)"; exit 1; }
+node_run() { SW_STRICT=1 SW_CLOCK=16667 timeout 900 node web/run-node.mjs out/nd/app.wasm "$exe"; }
 level() { python3 -I tools/oracle-wine/audio-compare.py "$1" | sed -E 's/.*; mean ([-0-9.]+) dB, peak ([-0-9.]+) dB; samples sha256 ([0-9a-f]+)$/\1 \2 \3/'; }
 
 # 1. the portals, in Node
@@ -50,7 +50,7 @@ echo "saves (Node): Quit wrote system.opt ($(stat -c %s out/nd/saves/@game/syste
 [ "${NDPLAY_CHROME:-1}" = 0 ] && exit 0
 # 3. Chrome: the portals drawn, then a reload that keeps system.opt
 rm -rf out/nd/shots
-TIMEOUT=2400 SW_STRICT=1 SW_CLOCK=16667 SW_SESSION=$S/level1-portals.json node tools/run-chrome.mjs out/nd/title.wasm "$exe" > out/nd.play.chrome.log 2>&1 || { echo "the session ended with exit code $? in Chrome:"; tail -3 out/nd.play.chrome.log | cut -c1-300; exit 1; }
+TIMEOUT=2400 SW_STRICT=1 SW_CLOCK=16667 SW_SESSION=$S/level1-portals.json node tools/run-chrome.mjs out/nd/app.wasm "$exe" > out/nd.play.chrome.log 2>&1 || { echo "the session ended with exit code $? in Chrome:"; tail -3 out/nd.play.chrome.log | cut -c1-300; exit 1; }
 grep -q '^pisco: session done' out/nd.play.chrome.log || { echo "the session did not reach its end in Chrome"; exit 1; }
 grep -q '^gpu explicit records: .*"skipped":{}}, [0-9]* presents, 0 WebGPU errors$' out/nd.play.chrome.log || { echo "the back end left draws out or saw errors"; exit 1; }
 rm -rf out/nd/play-shots; mv out/nd/shots out/nd/play-shots
@@ -59,8 +59,8 @@ echo "portals (Chrome): $(wc -w <<<"$want") checkpoints saved in out/nd/play-sho
 if [ -f $oracle/portals/blue.png ]; then python3 -I tools/oracle-wine/shot-compare.py --table out/nd/play-shots $oracle/portals --diff out/nd/play-shots-diff | tee out/nd.play.shots.txt; fi
 rm -rf out/nd/chrome-profile
 port=$((9000 + RANDOM % 500))
-PORT=$port CHROME_PROFILE=out/nd/chrome-profile TIMEOUT=1200 SW_STRICT=1 SW_CLOCK=16667 SW_SESSION=$S/menu-quit.json node tools/run-chrome.mjs out/nd/title.wasm "$exe" > out/nd.quit.chrome.1.log 2>&1 || { echo "menu-quit ended with exit code $? in Chrome"; exit 1; }
+PORT=$port CHROME_PROFILE=out/nd/chrome-profile TIMEOUT=1200 SW_STRICT=1 SW_CLOCK=16667 SW_SESSION=$S/menu-quit.json node tools/run-chrome.mjs out/nd/app.wasm "$exe" > out/nd.quit.chrome.1.log 2>&1 || { echo "menu-quit ended with exit code $? in Chrome"; exit 1; }
 grep -q '^storage: saved game/system.opt (20 bytes)' out/nd.quit.chrome.1.log || { echo "Quit did not store system.opt in OPFS"; exit 1; }
-PORT=$port CHROME_PROFILE=out/nd/chrome-profile TIMEOUT=600 SW_STRICT=1 SW_CLOCK=16667 SW_TRACE=1 SW_SESSION_STEPS='wait 1000' node tools/run-chrome.mjs out/nd/title.wasm "$exe" > out/nd.quit.chrome.2.log 2>&1 || { echo "the reloaded page ended with exit code $?"; exit 1; }
+PORT=$port CHROME_PROFILE=out/nd/chrome-profile TIMEOUT=600 SW_STRICT=1 SW_CLOCK=16667 SW_TRACE=1 SW_SESSION_STEPS='wait 1000' node tools/run-chrome.mjs out/nd/app.wasm "$exe" > out/nd.quit.chrome.2.log 2>&1 || { echo "the reloaded page ended with exit code $?"; exit 1; }
 grep -q '^storage: 1 file(s) from earlier sessions' out/nd.quit.chrome.2.log && grep -q 'from game/system.opt gave 20 (overlay)' out/nd.quit.chrome.2.log || { echo "the reloaded page did not read system.opt from OPFS"; exit 1; }
 echo "saves (Chrome): Quit stored system.opt in OPFS; a new page in the same profile read it"

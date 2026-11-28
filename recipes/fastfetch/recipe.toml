@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
-# fastfetch 2.71.0 (https://github.com/fastfetch-cli/fastfetch, MIT): the first Linux title (docs/fastfetch.md).
+# fastfetch 2.71.0 (https://github.com/fastfetch-cli/fastfetch, MIT): the first Linux app (docs/fastfetch.md).
 # tools/build-fastfetch.sh builds it from its source into out/fastfetch: one x86-64 program, statically linked with
 # musl, with its symbols. Nothing of it is in the repository.
 schema = 1

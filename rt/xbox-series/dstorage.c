@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // xcrdapi.dll, the console's DirectStorage: DStorageGetFactory -> factory, queues, files, status arrays.
-// Vtable orders and the request layout are XCL's findings on a retail title (github.com/ivall/xcl, GPL-2.0):
+// Vtable orders and the request layout are XCL's findings on a retail app (github.com/ivall/xcl, GPL-2.0):
 //   factory: IUnknown, CreateQueue(desc, riid, out), OpenFile(path, riid, out), CreateStatusArray(capacity, name, riid, out), ...
 //   queue: IUnknown, EnqueueRequest, EnqueueStatus(array, index), EnqueueSignal(fence, value), Submit,
 //          CancelRequestsWithTag(mask, value), Close, ...
 //   request (0x48): options u64 @0 (bit 21: the destination is a physical page array; bit 22: the source is
 //          memory), destination @8, destination page offset u16 @0x10, destination size u32 @0x18, source
 //          @0x20 (a file, or memory), file offset u64 @0x28, source size u32 @0x30, cancellation tag @0x38.
-// Requests run in order when the queue is submitted, on the calling thread: file reads through the title's
+// Requests run in order when the queue is submitted, on the calling thread: file reads through the app's
 // file system, memory copies. A status entry gets the first failure since the previous one; a signal sets a
 // D3D12 fence from the CPU. Compressed (zlib, BCPack) requests are refused.
 #include "rt.h"

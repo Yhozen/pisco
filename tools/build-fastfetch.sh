@@ -1,9 +1,9 @@
 #!/bin/bash
 # SPDX-License-Identifier: GPL-2.0-or-later
 # build-fastfetch.sh [out dir, default out/fastfetch]: fastfetch (https://github.com/fastfetch-cli/fastfetch, MIT) as a
-# Linux title: one x86-64 program, statically linked with musl, not position-independent, with its symbols (the
+# Linux app: one x86-64 program, statically linked with musl, not position-independent, with its symbols (the
 # lifter finds its functions by them). Its source is fetched and checked by sha256; nothing of it is in the
-# repository (docs/fastfetch.md). No library it can load at run time is built in, and no threads: a title is one
+# repository (docs/fastfetch.md). No library it can load at run time is built in, and no threads: an app is one
 # process with one thread.
 # fastfetch is C23: it is compiled with llvm-mingw's clang (a cross compiler: its x86-64 back end serves Linux as
 # well), against musl (tools/setup-toolchain.sh musl) and the kernel's headers (tools/setup-toolchain.sh linux-headers).

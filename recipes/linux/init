@@ -1,6 +1,6 @@
 #!/bin/busybox sh
 # SPDX-License-Identifier: GPL-2.0-or-later
-# /init of the Linux title's initramfs (docs/linux.md): what the kernel starts first. It prints only what is the
+# /init of the Linux app's initramfs (docs/linux.md): what the kernel starts first. It prints only what is the
 # same on every machine that runs this kernel, QEMU or PISCO: no times, no addresses, no sizes of memory.
 mount -t proc proc /proc
 mount -t sysfs sys /sys
@@ -15,7 +15,7 @@ echo "awk: $(awk 'BEGIN { for (i = 0; i < 100000; i++) s += i % 7; print s }')"
 head -c 4194304 /dev/zero > /tmp/zeros
 echo "sha256: $(sha256sum < /tmp/zeros | cut -c1-16) of $(wc -c < /tmp/zeros) bytes written to a file"
 echo "sort: $(printf 'pear\napple\nfig\n' | sort | tr '\n' ' ')"
-echo "sed: $(echo 'the kernel is a title' | sed 's/title/program/')"
+echo "sed: $(echo 'the kernel is an app' | sed 's/app/program/')"
 echo "ls: $(ls / | tr '\n' ' ')"
 echo "id: $(id -u):$(id -g)"
 # a second program at busybox's addresses (fixtures/linux-hello, at 0x400000 too): what its C library prints

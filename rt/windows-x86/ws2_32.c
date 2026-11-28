@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // Windows Sockets on a machine with no network: start-up succeeds and the local host has a name and a loopback
 // address, sockets can be made, bound and configured, what is sent goes nowhere and nothing ever arrives (a
-// non-blocking receive says it would block). Old titles import ws2_32 by ordinal (wsock32 forwards to it).
+// non-blocking receive says it would block). Old apps import ws2_32 by ordinal (wsock32 forwards to it).
 #include "../rt.h"
 
 #define WSAEWOULDBLOCK 10035

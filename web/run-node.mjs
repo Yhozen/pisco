@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-// Runs a lifted title under Node: node run-node.mjs title.wasm <the title's .exe> [title arguments...]
-//                              or node run-node.mjs <image> [title arguments...] (a title image: web/image.mjs, docs/images.md;
-//                              its file layers are the title's C: drive, its config says which exe, its registry, ...)
+// Runs a lifted app under Node: node run-node.mjs app.wasm <the app's .exe> [app arguments...]
+//                              or node run-node.mjs <image> [app arguments...] (an app image: web/image.mjs, docs/images.md;
+//                              its file layers are the app's C: drive, its config says which exe, its registry, ...)
 // Environment: SW_* variables reach the runtime (SW_TRACE, SW_STRICT, SW_CLOCK, ...); SW_SAVES, SW_SESSION and SW_AUDIO_WAV
 // are the host's too. SW_DUMP_RAW=<file> writes each presented frame as packed RGBA (ffmpeg: -f rawvideo -pix_fmt rgba);
 // SW_KEYS=<json> is a scripted keyboard ([[ms, code, keyCode, down], ...], times on the virtual clock, as tools/run-chrome.mjs);
-// SW_MAX_FRAMES is the runtime's (videoout). SW_ROOT=<folder> (a Linux title): the folder is the root of its file system and every program
+// SW_MAX_FRAMES is the runtime's (videoout). SW_ROOT=<folder> (a Linux app): the folder is the root of its file system and every program
 // in it has its module beside it (bin/bash -> bin/bash.wasm), for execve; with SW_EXE=<path of the first program>.
-// The main thread only supervises: the title's threads (its main thread too) run in workers, so an exit
+// The main thread only supervises: the app's threads (its main thread too) run in workers, so an exit
 // from any of them ends the process even while others are blocked.
 import fs from 'node:fs';
 import path from 'node:path';
@@ -20,7 +20,7 @@ import { loadSide } from './side.mjs';
 import { programImage } from './lift.mjs';
 
 const EXIT = new BroadcastChannel('pisco-exit');
-const GPU_OPEN = new BroadcastChannel('pisco-gpu'); // a title thread opened the GPU ring: the supervisor runs the null back end
+const GPU_OPEN = new BroadcastChannel('pisco-gpu'); // an app thread opened the GPU ring: the supervisor runs the null back end
 const STACK_MB = +(process.env.PISCO_STACK_MB || 64); // wasm frames of recursive guest code live on the worker's native stack
 
 if (isMainThread) {
@@ -33,16 +33,16 @@ if (isMainThread) {
   } else {
     const [exePath, ...more] = rest; args = more;
     module = await WebAssembly.compile(fs.readFileSync(first));
-    dir = process.env.SW_ROOT ? path.resolve(process.env.SW_ROOT) : path.dirname(path.resolve(exePath)); // the title's folder: its exe and the DLLs it ships
+    dir = process.env.SW_ROOT ? path.resolve(process.env.SW_ROOT) : path.dirname(path.resolve(exePath)); // the app's folder: its exe and the DLLs it ships
   }
-  // a Linux title: its processes (web/kernel.mjs), each in a worker of its own
+  // a Linux app: its processes (web/kernel.mjs), each in a worker of its own
   const kernel = WebAssembly.Module.exports(module).some((e) => e.name === 'rt_fork_resume') ? createKernel() : null;
-  const programs = image?.config.programs || null;   // a title image's other programs: path -> module blob
+  const programs = image?.config.programs || null;   // an app image's other programs: path -> module blob
   const side = image?.config.side || null;           // a machine's programs in modules of their own: name -> blob
   const memory = new WebAssembly.Memory({ initial: 1024, maximum: 65536, shared: true });
   const tids = new Int32Array(new SharedArrayBuffer(4)); tids[0] = 1;
-  // SW_SAVES=<folder>: what the title keeps between runs (rt/vfs.c) lives there: its persistent storage (S:\) at the
-  // top, and a Windows desktop title's writes in its own folder (the top layer over it) in <folder>/@game
+  // SW_SAVES=<folder>: what the app keeps between runs (rt/vfs.c) lives there: its persistent storage (S:\) at the
+  // top, and a Windows desktop app's writes in its own folder (the top layer over it) in <folder>/@game
   const saves = process.env.SW_SAVES ? path.resolve(process.env.SW_SAVES) : null, store = [];
   const walk = (d, rel, mount) => { let es = []; try { es = fs.readdirSync(d, { withFileTypes: true }); } catch {} for (const e of es) {
     const p = path.join(d, e.name), r = rel ? `${rel}/${e.name}` : e.name;
@@ -104,7 +104,7 @@ if (isMainThread) {
   startProcess({ module, memory, tids, args, env, pid: 1, mode: 'start' });
 } else {
   const { module, memory, dir, imageDir, folder, tids, tid, args, env, saves, store, t0, kernel, programs, side = null, pid = 1, mode = 'start' } = workerData;
-  // a title image: its drive, read from the layers (the main thread has checked their digests)
+  // an app image: its drive, read from the layers (the main thread has checked their digests)
   const drive = imageDir ? (await openImageDir(imageDir, { verify: false, wasm: false })).drive : null;
   const clock = () => performance.timeOrigin + performance.now() - t0; // one monotonic clock for every thread
   const kinds = ['trap', 'instruction not lifted', 'import not implemented', 'indirect call to unknown code', 'image does not fit', 'fatal'];
@@ -112,7 +112,7 @@ if (isMainThread) {
   const dv = () => new DataView(memory.buffer);
   const text = (p, n) => Buffer.from(memory.buffer, p, n).toString();
   const exit = (code) => { EXIT.postMessage(code); Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0); };
-  const argv = ['title.wasm', ...args], envv = Object.entries(env).map(([k, v]) => `${k}=${v}`);
+  const argv = ['app.wasm', ...args], envv = Object.entries(env).map(([k, v]) => `${k}=${v}`);
   const strings = (list, ptrs, buf) => { let p = buf; list.forEach((s, i) => { dv().setUint32(ptrs + 4 * i, p, true); const b = Buffer.from(s + '\0'); u8().set(b, p); p += b.length; }); return 0; };
   const sizes = (list, a, b) => { dv().setUint32(a, list.length, true); dv().setUint32(b, list.reduce((n, s) => n + Buffer.byteLength(s) + 1, 0), true); return 0; };
   const sleeper = new Int32Array(new SharedArrayBuffer(4));
@@ -150,9 +150,9 @@ if (isMainThread) {
       dv().setUint32(nevents, 0, true); return 0;
     },
   };
-  // a path in the title's folder, matched without regard to case as Windows does: the real path or null
+  // a path in the app's folder, matched without regard to case as Windows does: the real path or null
   const resolve = (name) => {
-    let p = dir; name = name.replace(/^c:(\/|$)/i, '');   // (SW_ROOT: a Linux title's root is the folder)
+    let p = dir; name = name.replace(/^c:(\/|$)/i, '');   // (SW_ROOT: a Linux app's root is the folder)
     for (const part of name.split(/[\\/]/).filter(Boolean)) {
       let list; try { list = fs.readdirSync(p); } catch { return null; }
       const real = list.find((f) => f.toLowerCase() === part.toLowerCase()); if (!real) return null;
@@ -167,7 +167,7 @@ if (isMainThread) {
     if (!fds.has(name)) { const real = resolve(name); let fd = -1; try { if (real) fd = fs.openSync(real, 'r'); } catch {} fds.set(name, fd); }
     return fds.get(name);
   };
-  // the title's files from its image's drive: the names it asks for are in its folder, or "c:/..." on the drive
+  // the app's files from its image's drive: the names it asks for are in its folder, or "c:/..." on the drive
   const imageFiles = drive && {
     read_file: (name, nlen, off, len, dst) => { const b = drive.read(driveName(text(name, nlen), folder), Number(off), Number(len)); if (!b) return 0; u8().set(b, Number(dst)); return b.length; },
     stat: (name, nlen) => BigInt(drive.stat(driveName(text(name, nlen), folder))),
@@ -237,7 +237,7 @@ if (isMainThread) {
       if (step) applyKeys(Number(frame) * step / 1000);
     },
     input_open: (block) => { inputBlock = block >>> 0; applyKeys(0); }, // SW_KEYS writes here; otherwise readings stay empty
-    win32_input_open: () => {}, // the same for a Windows desktop title (its sessions come from SW_SESSION)
+    win32_input_open: () => {}, // the same for a Windows desktop app (its sessions come from SW_SESSION)
     console_open: (ring) => parentPort.postMessage({ console: ring >>> 0 }), // a machine's console (rt/microvm-x64): the main thread writes standard input there
     // a machine's network (rt/microvm-x64/net.c): the main thread writes the frames for the guest there, and takes those it sends
     net_open: (ring) => parentPort.postMessage({ net: ring >>> 0 }),
@@ -246,7 +246,7 @@ if (isMainThread) {
     ...imageFiles,
   };
   if (kernel) Object.assign(host, processImports(kernel, { pid, memory: () => memory, module, ask: (m) => parentPort.postMessage(m), end: () => process.exit(0),
-    // where a program's module is: a title image's (its config), or beside the program in SW_ROOT
+    // where a program's module is: an app image's (its config), or beside the program in SW_ROOT
     program: (name) => {
       const p = name.replace(/^c:\//i, '');
       if (programs) return programs['/' + p] ? { blob: programs['/' + p] } : null;

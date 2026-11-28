@@ -2,14 +2,14 @@
 // user32 for Windows desktop titles: window classes, one top-level window (the host shows its client area),
 // and the messages Windows sends a window as it is created, sized, shown and closed, delivered by calling the
 // title's own window procedure. Input (rt/input.c's events) becomes keyboard and mouse messages for the window
-// that has the focus, as Windows posts them; a title may read DirectInput instead.
+// that has the focus, as Windows posts them; an app may read DirectInput instead.
 #include "win32.h"
 #include "../input.h"
 
 enum { WM_CREATE = 1, WM_DESTROY = 2, WM_MOVE = 3, WM_SIZE = 5, WM_ACTIVATE = 6, WM_SETFOCUS = 7, WM_PAINT = 0xF, WM_CLOSE = 0x10, WM_QUIT = 0x12,
        WM_ERASEBKGND = 0x14, WM_SHOWWINDOW = 0x18, WM_ACTIVATEAPP = 0x1C, WM_GETMINMAXINFO = 0x24, WM_WINDOWPOSCHANGING = 0x46,
        WM_WINDOWPOSCHANGED = 0x47, WM_NCCREATE = 0x81, WM_NCDESTROY = 0x82, WM_NCCALCSIZE = 0x83, WM_NCACTIVATE = 0x86 };
-static s32 SCREEN_W = 1024, SCREEN_H = 768;   // the desktop: what the oracle's has, until a title changes the display mode
+static s32 SCREEN_W = 1024, SCREEN_H = 768;   // the desktop: what the oracle's has, until an app changes the display mode
 // a captioned window's frame, as Windows XP's classic theme (and Wine) draws it: 3 px each side, a 26 px caption
 enum { FRAME = 3, CAPTION = 26 };
 

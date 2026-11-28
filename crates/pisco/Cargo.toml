@@ -4,7 +4,7 @@ name = "pisco"
 version = "0.1.0"
 edition = "2021"
 license = "GPL-2.0-or-later"
-description = "Builds, runs and inspects PISCO title images (docs/images.md)"
+description = "Builds, runs and inspects PISCO app images (docs/images.md)"
 [dependencies]
 sha2 = "0.10"
 toml = { version = "0.8", default-features = false, features = ["parse"] }

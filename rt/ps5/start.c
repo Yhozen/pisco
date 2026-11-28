@@ -121,7 +121,7 @@ static void load(const ModuleDef *m) {
 static Ps5Thread main_thread;
 int main(int argc, char **argv) {
   const char *e = getenv("SW_TRACE"); rt_trace = e ? atoi(e) : 0;
-  if (rt_module_count != 1) rt_fatal("a PS5 title is one executable");
+  if (rt_module_count != 1) rt_fatal("a PS5 app is one executable");
   const ModuleDef *m = &rt_modules[0];
   load(m);
   import_fn = calloc(import_count ? import_count : 1, sizeof *import_fn);

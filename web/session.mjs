@@ -36,8 +36,8 @@ export function sessionSteps(session) {
   if (bad) throw new Error(`session: a step cannot contain ';' (${bad})`);
   return steps.join(';');
 }
-// What else a session sets for the runtime: `"random": ["aee69d51", ...]`, the values the title's random source
-// (rand_s) answers first (SW_RANDOM): the ones a Wine run of the title got, so that its random world is that run's
+// What else a session sets for the runtime: `"random": ["aee69d51", ...]`, the values the app's random source
+// (rand_s) answers first (SW_RANDOM): the ones a Wine run of the app got, so that its random world is that run's
 export function sessionEnv(session) {
   checkSession(session);
   const env = {};

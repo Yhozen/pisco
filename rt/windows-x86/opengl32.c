@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-// OpenGL 1.1 for Windows desktop titles (opengl32.dll, with GL_ARB_multitexture, GL_EXT_compiled_vertex_array,
+// OpenGL 1.1 for Windows desktop apps (opengl32.dll, with GL_ARB_multitexture, GL_EXT_compiled_vertex_array,
 // GL_EXT_texture_env_add and WGL_EXT_swap_control), on the GPU ring's explicit records (rt/d3d12_cmd.h), as
 // Direct3D 9 is (d3d9_gpu.c): no OpenGL is underneath. One context draws into the window it was made current
 // with; SwapBuffers presents it. The fixed-function stages are WGSL from gl_ffp.c.
@@ -805,7 +805,7 @@ IMP(opengl32, glPixelZoom) { gl.zoom_x = argf(c, 0); gl.zoom_y = argf(c, 1); }
 IMP(opengl32, glPixelTransferf) { if ((u32)ARG(0) != 0x0D1C && argf(c, 1) != ((u32)ARG(0) >= 0x0D14 && (u32)ARG(0) <= 0x0D1B && ((u32)ARG(0) & 1) == 0 ? 1.0f : 0.0f)) UNSURE_ONCE("OpenGL: pixel transfer 0x%x", (u32)ARG(0)); }
 IMP(opengl32, glPixelTransferi) { if ((u32)ARG(0) <= 0x0D11 && ARG(1)) UNSURE_ONCE("OpenGL: pixel transfer 0x%x = %u", (u32)ARG(0), (u32)ARG(1)); }
 // glDrawPixels: the pixels as a texture, drawn as a rectangle from the raster position, the zoom its size; through
-// the per-fragment operations of the state (alpha test and blending off here: what titles draw a background with)
+// the per-fragment operations of the state (alpha test and blending off here: what apps draw a background with)
 static u32 pix_tex, pix_w, pix_h;
 IMP(opengl32, glDrawPixels) { // (width, height, format, type, pixels)
   u32 w = (u32)ARG(0), h = (u32)ARG(1);
@@ -934,8 +934,8 @@ static void gl_session_shot(const char *name, u32 frame) {
   u8 *p = rt_gpu_rec_begin(GPU_R_MARK, (u32)n); memcpy(p, text, (size_t)n); rt_gpu_rec_end();
 }
 
-// ---- the rest of OpenGL 1.1 and wgl: a title looks every function up; these say so once if called, and do nothing ----
-// (each is the same: a title that calls one learns once, in the log, that it was not done)
+// ---- the rest of OpenGL 1.1 and wgl: an app looks every function up; these say so once if called, and do nothing ----
+// (each is the same: an app that calls one learns once, in the log, that it was not done)
 static void stub(const char *name) { com_unsure("OpenGL: %s is not done", name); }
 IMP(opengl32, glAccum) { static int t; if (!t++) stub("glAccum"); RET(0); }
 IMP(opengl32, glBitmap) { static int t; if (!t++) stub("glBitmap"); RET(0); }

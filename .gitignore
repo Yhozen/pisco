@@ -1,6 +1,6 @@
 target/
 out/
-# built test titles (rebuilt from their sources)
+# built test apps (rebuilt from their sources)
 fixtures/*/target/
 fixtures/**/*.exe
 fixtures/**/*.dll

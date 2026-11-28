@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 # setup-toolchain.sh [step...]: installs what the builds and tests need, outside the repository.
 # Steps (default: all of them); a step whose result exists is skipped:
-#   wasi   wasi-sdk 34 in ~/tools                          tools/build-title.sh
+#   wasi   wasi-sdk 34 in ~/tools                          tools/build-app.sh
 #   mingw  llvm-mingw 20261117 in ~/tools                  fixtures cxx, dll, doom, hello32, x87
 #   rust   the Windows targets of the Rust fixtures
 #   naga   naga-cli (cargo install)                        tools/shader-prep.mjs, checks of generated WGSL
@@ -18,12 +18,12 @@
 #                                                          source, checked by sha256; needs cc and make)
 #   linux-headers  the Linux kernel's headers (Alpine 3.20's linux-headers 6.6 and, for <drm/...>, its libdrm-dev, each
 #          checked by sha256) in ~/tools/linux-headers-6.6-r0      tools/build-fastfetch.sh, tools/build-neofetch.sh
-#   musl   musl 1.2.5 in ~/tools/musl-1.2.5                 fixtures/linux-hello, tools/build-fastfetch.sh: Linux titles are
+#   musl   musl 1.2.5 in ~/tools/musl-1.2.5                 fixtures/linux-hello, tools/build-fastfetch.sh: Linux apps are
 #                                                          linked statically with it (built from its source, checked
 #                                                          by sha256; needs gcc and make)
 #   kernel  says which of the tools a kernel build needs are missing (gcc, make, flex, bison, bc, libelf's headers:
 #          system packages, so nothing is fetched)            tools/build-linux.sh
-#   qemu   says whether QEMU is there (a system package too)  tools/oracle-qemu: the Linux title's oracle
+#   qemu   says whether QEMU is there (a system package too)  tools/oracle-qemu: the Linux app's oracle
 # Environment: TOOLS (default ~/tools), DEPS (default ~/scratch/deps)
 set -euo pipefail
 root=$(cd "$(dirname "$0")/.." && pwd); T=${TOOLS:-$HOME/tools}; D=${DEPS:-$HOME/scratch/deps}; mkdir -p "$T" "$D"

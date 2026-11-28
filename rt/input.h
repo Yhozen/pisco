@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-// rt/input.c: the one input state of a Windows desktop title (both desktop runtimes) and the session player.
+// rt/input.c: the one input state of a Windows desktop app (both desktop runtimes) and the session player.
 #pragma once
 #include "rt.h"
 // ---- the one input state DirectInput and user32 (GetAsyncKeyState) read ----
@@ -26,7 +26,7 @@ extern int input_mouse_exclusive;
 const InputEvent *input_event(u32 number);              // null when it is too old to have been kept
 
 // ---- the session player (input.c; the host's SW_SESSION) ----
-// Plays the steps of a session script that are due on the title's clock: called once a frame, after the frame was
+// Plays the steps of a session script that are due on the app's clock: called once a frame, after the frame was
 // presented. When the script ends it logs "session done" and the process exits with code 0.
 void session_frame(u32 frame);
 // What a `shot` step does besides marking the time: each runtime that presents frames says (rt_session_shot: the

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-// A 32-bit title for MMX, as the games of 2000 to 2005 used it (Quake III's engines, Miles' mixer): every
+// A 32-bit app for MMX, as the games of 2000 to 2005 used it (Quake III's engines, Miles' mixer): every
 // operation on 64-bit registers, with values that reach the edges (wrap-around, saturation, sign), the moves
 // between MMX, general registers and memory, EMMS before x87 code again, and the SSE instructions that work on
 // MMX registers (pshufw, pinsrw, pextrw, pmovmskb, pavgb, pminub, pmaxsw, psadbw, pmulhuw). Written in

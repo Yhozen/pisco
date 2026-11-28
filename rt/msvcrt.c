@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-// msvcrt.dll and shell32's CommandLineToArgvW for lifted titles; also the process's exit and the virtual CPU's
+// msvcrt.dll and shell32's CommandLineToArgvW for lifted apps; also the process's exit and the virtual CPU's
 // identity. Guest pointers are runtime pointers in wasm32, so most string functions call wasi-libc directly.
 #include <ctype.h>
 #include <errno.h>
@@ -47,7 +47,7 @@ static u64 stream_new(int fd) {
   pthread_mutex_unlock(&stream_lock);
   return 0;
 }
-// a stream is a host descriptor (the standard ones) or a file of the title's file system
+// a stream is a host descriptor (the standard ones) or a file of the app's file system
 static int swrite(Stream *s, const void *p, u32 n) {
   if (!s->vf) return rt_file_write(s->fd, p, n);
   if (s->append) *vfs_pos(s->vf) = vfs_size(s->vf);
@@ -288,7 +288,7 @@ IMP(msvcrt, longjmp) { rt_fatal("longjmp is not implemented yet (from 0x%llx)", 
 #endif
 
 // ---- memory ----
-IMP(msvcrt, malloc) { RET((uptr)calloc(1, ARG(0) ? ARG(0) : 1)); } // zeroed, as fresh pages from the system are: titles that read memory they never wrote see what they would natively
+IMP(msvcrt, malloc) { RET((uptr)calloc(1, ARG(0) ? ARG(0) : 1)); } // zeroed, as fresh pages from the system are: apps that read memory they never wrote see what they would natively
 IMP(msvcrt, calloc) { RET((uptr)calloc(ARG(0) ? ARG(0) : 1, ARG(1) ? ARG(1) : 1)); }
 IMP(msvcrt, realloc) { RET((uptr)realloc((void *)GP(ARG(0)), ARG(1))); }
 IMP(msvcrt, free) { free((void *)GP(ARG(0))); }
@@ -463,7 +463,7 @@ IMP(shell32, CommandLineToArgvW) {
 
 
 // ---- the rest of the C math library (DA / FA / DRET / FRET in rt.h: the argument and result registers of each width) ----
-// (written out: tools/build-title.sh finds runtime functions by their IMP lines)
+// (written out: tools/build-app.sh finds runtime functions by their IMP lines)
 IMP(msvcrt, sin) { DRET(sin(DA(0))); }
 IMP(msvcrt, sinf) { FRET(sinf(FA(0))); }
 IMP(msvcrt, cos) { DRET(cos(DA(0))); }

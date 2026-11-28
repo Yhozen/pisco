@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-// The machine's port devices: a 16550 serial port at 0x3f8 on the IOAPIC's pin 4: its output is the title's
+// The machine's port devices: a 16550 serial port at 0x3f8 on the IOAPIC's pin 4: its output is the app's
 // standard output, its input what the host writes in the console ring (keys typed in a terminal or the page, or
 // a pipe), an exit port at 0xf4 as QEMU's isa-debug-exit (a byte written there ends the machine
 // with that status), the CMOS clock (ports 0x70 and 0x71: the virtual clock's date, from 2005-01-01 12:00 UTC as

@@ -1,9 +1,9 @@
 # The recipe for Narbacular Drop (2005, DigiPen): `pisco build recipes/narbacular-drop --source <installer>` makes its
-# image (docs/images.md). tools/build-title.sh reads [cpu], [registry] and [dll] of it too (RECIPE=...).
+# image (docs/images.md). tools/build-app.sh reads [cpu], [registry] and [dll] of it too (RECIPE=...).
 schema = 1
 name = "narbacular-drop"
 from = "base/windows-x86:1"
-libraries = ["d3d9", "dinput8", "fmod3"]   # checked against the title's imports
+libraries = ["d3d9", "dinput8", "fmod3"]   # checked against the app's imports
 
 [about]
 display_name = "Narbacular Drop"

@@ -2,7 +2,7 @@
 // The Direct3D 9 shader translator (rt/windows-x86/d3d9_sm.c), built natively: shaders assembled here token by token
 // cover every opcode, register type, modifier and form of flow control it takes, for each shader model from 1.1 to
 // 2.x; each one's WGSL is written to <out dir>/<name>.wgsl for naga (tests/gfx/d3d9-sm.sh). Shaders it must refuse
-// are checked to be refused. With files of captured bytecode (a title's shaders, from the oracle: never stored in
+// are checked to be refused. With files of captured bytecode (an app's shaders, from the oracle: never stored in
 // the repository) as further arguments, those are translated too.
 //   d3d9-sm <out dir> [bytecode files...]
 #include "d3d9_sm.h"

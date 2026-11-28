@@ -1,7 +1,7 @@
 #!/bin/bash
 # SPDX-License-Identifier: GPL-2.0-or-later
 # fixtures/doom/build.sh: our console Doom. Fetches doomgeneric (pinned) and Freedoom into out/doom, builds
-#   out/doom/game/doom.exe   the title (x86-64 PE, llvm-mingw), with freedoom1.wad and shaders/ beside it
+#   out/doom/game/doom.exe   the app (x86-64 PE, llvm-mingw), with freedoom1.wad and shaders/ beside it
 #   out/doom/native/doom     the same doomgeneric for Linux, printing the same frame hashes (the reference)
 # Environment: MINGW (llvm-mingw folder), DXC (dxc command, default ~/winsdk/dxc/dxc-docker or ~/tools/dxc/dxc), OUT (default out/doom)
 set -euo pipefail
@@ -9,7 +9,7 @@ here=$(cd "$(dirname "$0")" && pwd); root=$(cd "$here/../.." && pwd)
 out=${OUT:-$root/out/doom}; mkdir -p "$out"
 MINGW=${MINGW:-$HOME/tools/llvm-mingw-20261117-ucrt-ubuntu-22.04-x86_64}
 DXC=${DXC:-$([ -x "$HOME/winsdk/dxc/dxc-docker" ] && echo "$HOME/winsdk/dxc/dxc-docker" || echo "$HOME/tools/dxc/dxc")}   # tools/setup-toolchain.sh dxc
-# the reference is built by clang too: the title's compiler family, so both read Doom's undefined behaviour alike
+# the reference is built by clang too: the app's compiler family, so both read Doom's undefined behaviour alike
 NCC=${NCC:-$(command -v clang || echo /usr/lib64/llvm20/bin/clang)}
 DG_COMMIT=e257a09527062bfb986b6e5e0780839b6cbd5b71
 FREEDOOM=https://github.com/freedoom/freedoom/releases/download/v0.13.0/freedoom-0.13.0.zip
@@ -42,7 +42,7 @@ for d in d3d12_xs:D3D12XboxCreateDevice gameinput:GameInputCreate xaudio2_9:XAud
   dll=${d%%:*}; { echo "LIBRARY $dll.dll"; echo EXPORTS; for f in ${d#*:}; do echo "$f"; done; } > "$gen/$dll.def"
   "$B/llvm-dlltool" -m i386:x86-64 -d "$gen/$dll.def" -l "$gen/lib$dll.a"
 done
-# the title
+# the app
 obj=$out/obj; mkdir -p "$obj" "$out/game"
 CF="-O2 -w -DFEATURE_SOUND -DNORMALUNIX=0 -I$src -I$gen -I$here"
 for f in $DOOM_SRC; do echo "$f"; done | xargs -P "$(nproc)" -I{} "$B/x86_64-w64-mingw32-clang" $CF -c "$src/{}.c" -o "$obj/{}.o"

@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
-# base/xbox-series:1, what an Xbox Series title (the GDK's console build) is built FROM (docs/images.md): the core
+# base/xbox-series:1, what an Xbox Series app (the GDK's console build) is built FROM (docs/images.md): the core
 # runtime, what it shares with Windows x64 (rt/gdk/, the title's window among it) and the console's own libraries
-# (rt/xbox-series/: kernelx, XMem, D3D12.X's additions, XG, DirectStorage). Its title's drives are the game's folder.
+# (rt/xbox-series/: kernelx, XMem, D3D12.X's additions, XG, DirectStorage). Its app's drives are the game's folder.
 name = "base/xbox-series"
 version = 1
 platform = "xbox-series"

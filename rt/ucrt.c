@@ -207,7 +207,7 @@ IMP(ucrtbase, ___mb_cur_max_func) { RET(1); }
 IMP(ucrtbase, _lock_locales) {}
 IMP(ucrtbase, _unlock_locales) {}
 // (stream, &base, &ptr, &count): the stream's buffer as the C++ runtime peeks at it. Ours has no buffer the
-// title can see: an empty one, so basic_filebuf goes through fgetc / fputc / fread / fwrite.
+// app can see: an empty one, so basic_filebuf goes through fgetc / fputc / fread / fwrite.
 IMP(ucrtbase, _get_stream_buffer_pointers) {
   static u64 cells; if (!cells) cells = (uptr)calloc(4, 8); // a null pointer and a zero count to point at
   if (ARG(1)) MP(ARG(1)) = cells; if (ARG(2)) MP(ARG(2)) = cells + 8; if (ARG(3)) MP(ARG(3)) = cells + 16;
@@ -257,8 +257,8 @@ IMP(ucrtbase, _dclass) { RET((u16)fp_class(fpclassify(DA(0)))); }
 IMP(ucrtbase, _ldclass) { RET((u16)fp_class(fpclassify(DA(0)))); }
 IMP(ucrtbase, _fdclass) { RET((u16)fp_class(fpclassify(FA(0)))); }
 
-// ---- rand_s: the title's random numbers never come from the host, so that a run can be repeated and set against
-// Wine's. SW_RANDOM gives the first values (hex, separated by commas: the ones Wine's log shows a title got,
+// ---- rand_s: the app's random numbers never come from the host, so that a run can be repeated and set against
+// Wine's. SW_RANDOM gives the first values (hex, separated by commas: the ones Wine's log shows an app got,
 // docs/desire.md); after them, a generator seeded by SW_SEED (decimal or 0x hex, default 1). ----
 static pthread_mutex_t rand_lock = PTHREAD_MUTEX_INITIALIZER;
 u32 rt_random32(void) {
@@ -279,7 +279,7 @@ u32 rt_random32(void) {
 }
 IMP(ucrtbase, rand_s) { if (!ARG(0)) { RET(22); return; } M32(ARG(0)) = rt_random32(); RET(0); } // EINVAL without a pointer
 
-// ---- the rest of what Microsoft's msvcp140 and a title's start-up reach ----
+// ---- the rest of what Microsoft's msvcp140 and an app's start-up reach ----
 IMP(ucrtbase, _register_thread_local_exe_atexit_callback) {} // thread-local destructors at exit: there is one thread, and the process ends
 IMP(ucrtbase, _c_exit) {}
 IMP(ucrtbase, _seh_filter_dll) { RET(0); } // EXCEPTION_CONTINUE_SEARCH

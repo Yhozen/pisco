@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-// Direct3D 9's fixed-function pipeline as WGSL shaders. A title that creates no shaders still draws through
+// Direct3D 9's fixed-function pipeline as WGSL shaders. An app that creates no shaders still draws through
 // two programs Direct3D makes up from its state: this file's functions write them, one vertex stage and one
 // fragment stage, each a pure function of a small key (no globals, no guest memory), so they are also built
 // natively and their output is checked with naga (tests/gfx/d3d9-ffp.sh).
@@ -50,7 +50,7 @@ typedef struct FfpFragmentKey {
 enum { FFP_TEXTURE_NONE = 0, FFP_TEXTURE_2D = 2, FFP_TEXTURE_3D = 3 };   // GPU_BIND_TEXTURE_2D / _3D
 
 // ---- the uniform block: this structure is the WGSL `U` (and `Light`) the shaders declare, member for member.
-// Matrices are Direct3D's, row by row, as a title hands them over: WGSL reads 16 floats as columns, so the
+// Matrices are Direct3D's, row by row, as an app hands them over: WGSL reads 16 floats as columns, so the
 // shader's matrix is the transpose and `m * v` there is Direct3D's `v x m`.
 typedef struct FfpLight {
   float diffuse[4], specular[4], ambient[4];

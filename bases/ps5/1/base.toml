@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
-# base/ps5:1, what a PS5 title is built FROM (docs/images.md): one native PS5 executable (an ELF of type 0xFE10, as the
+# base/ps5:1, what a PS5 app is built FROM (docs/images.md): one native PS5 executable (an ELF of type 0xFE10, as the
 # open ps5-payload-sdk and ps5-native-tool make homebrew), the parts of the core that imitate no system (the lifted
 # functions' table, the virtual CPU with AVX2 and FMA, memory, the clock), the GPU ring and the mixer, and the PS5
 # runtime (rt/ps5/: the start of the process, libkernel, the C library, VideoOut, Pad, AudioOut).

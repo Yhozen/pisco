@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
-# Linux itself as a title (docs/linux.md): the kernel tools/build-linux.sh builds from kernel.org's source, lifted with
+# Linux itself as an app (docs/linux.md): the kernel tools/build-linux.sh builds from kernel.org's source, lifted with
 # the busybox of its initramfs into one module, on the machine rt/microvm-x64 imitates. /init's programs print what
 # they print on QEMU (traces/programs.txt). No sha256: built on this machine from checked sources, the files'
 # bytes depend on the compiler's.

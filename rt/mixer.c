@@ -5,7 +5,7 @@
 // clock (microseconds since it started, low / high word) at frame 0 of the ring: a recording made in the browser
 // places the sound by it (web/browser/main.js).
 // With the host's clock a thread mixes on wall-clock time a little ahead of now, so sound advances in real time
-// even with no listener. With a virtual clock the title's thread mixes, each time the clock moves, exactly up to
+// even with no listener. With a virtual clock the app's thread mixes, each time the clock moves, exactly up to
 // the clock: a run gives the same sound every time, however fast the host is. Under SW_AUDIO_WAV the host writes
 // those frames to a file too (Node: a 32-bit float WAV).
 #include <time.h>

@@ -1,6 +1,6 @@
 # The recipe for Desire (DESI:Re v0.1, 2026, satokunDayo; a maze escape on its own C++20 / Direct3D 12 engine):
 # `pisco build recipes/desire --source DESI-Re-v0.1-Windows-x64.zip --input redist=<folder>` makes its image
-# (docs/images.md). What is known of the title: docs/desire.md.
+# (docs/images.md). What is known of the app: docs/desire.md.
 schema = 1
 name = "desire"
 from = "base/windows-x64:1"
@@ -19,7 +19,7 @@ sha256 = "98e6f722bdf5d6395e61742b45d2600cf2d2689ef79da3a1c79096cf8d7ff634"
 where = "https://satokundayo.itch.io/desire (free): DESI-Re-v0.1-Windows-x64.zip"
 
 [[input]]
-# Microsoft's C++ runtime, which the title is built against (/MD, MSVC 14.38) and the zip leaves to the system: the
+# Microsoft's C++ runtime, which the app is built against (/MD, MSVC 14.38) and the zip leaves to the system: the
 # user's copy of the x64 redistributable (14.38 or later), beside the exe, lifted with it as for the samples
 id = "redist"
 kind = "folder"

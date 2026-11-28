@@ -4,7 +4,7 @@
 # and test several times faster than a small VM, and a saved snapshot with the toolchains, the builds and pisco's
 # caches warm makes a new one ready in seconds. Needs the `boat` CLI, signed in (boat login, or BOAT_DEV_API_KEY).
 #   boat.sh bake [name]           a new sandbox from nothing: this working tree, the toolchains, the builds
-#                                 and the Linux titles' roots (tools/build-*.sh), then a saved snapshot <name>
+#                                 and the Linux apps' roots (tools/build-*.sh), then a saved snapshot <name>
 #                                 (default pisco-dev). Prints how long each part took
 #   boat.sh new [name]            a sandbox from the snapshot, with this working tree on it; prints its id
 #   boat.sh sync <id>             this working tree (tracked and new files, not ignored ones) onto it, in ~/pisco

@@ -8,7 +8,7 @@
 //   into a 32-bit top-down DIB section first filled with grey 0x40), and the game's 256 characters drawn as the
 //   game draws them (TextOutA at 32,64 aligned TA_CENTER | TA_BOTTOM, white on magenta, into a 64x64 DIB section
 //   filled with magenta).
-// Build and run (32-bit, in the title's prefix):
+// Build and run (32-bit, in the app's prefix):
 //   $MINGW/bin/i686-w64-mingw32-clang tools/oracle-wine/gdiprobe.c -o out/caps32/gdiprobe.exe -lgdi32 -luser32
 //   tools/oracle-wine/oracle.sh run narbacular-drop out/caps32/gdiprobe.exe | tr -d '\r' > out/oracle/narbacular-drop/gdiprobe.txt
 // The output holds glyph pixels of the fonts Wine picked (the host's): it stays under out/.

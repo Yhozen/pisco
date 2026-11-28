@@ -372,8 +372,8 @@ IMP(d3d9, IDirect3DDevice9_UpdateTexture) {
   RET(D3D_OK);
 }
 // GetRenderTargetData(render target, system-memory surface of its size and format): the target's pixels into the
-// surface, read back from the GPU (the title waits for them). With Node's null back end, which has no pixels, they
-// are the bytes the runtime holds for the target (what the title wrote, or zeros).
+// surface, read back from the GPU (the app waits for them). With Node's null back end, which has no pixels, they
+// are the bytes the runtime holds for the target (what the app wrote, or zeros).
 IMP(d3d9, IDirect3DDevice9_GetRenderTargetData) {
   STAT(device_GetRenderTargetData); Surface9 *a = (Surface9 *)GP(ARG(1)), *b = (Surface9 *)GP(ARG(2));
   if (!a || !b || a->o.kind != K_SURFACE || b->o.kind != K_SURFACE || !(a->desc.usage & USAGE_RENDERTARGET) || b->desc.pool != POOL_SYSTEMMEM
@@ -467,7 +467,7 @@ IMP(d3d9, IDirect3DDevice9_CreateVertexDeclaration) {
   v->count = n + 1; v->elements = malloc((n + 1) * sizeof *e); memcpy(v->elements, e, (n + 1) * sizeof *e);
   M32(out) = (u32)(uptr)v; RET(D3D_OK);
 }
-// The declaration an FVF code stands for, made once a code and kept by the device (SetFVF binds it; a title that
+// The declaration an FVF code stands for, made once a code and kept by the device (SetFVF binds it; an app that
 // asks GetVertexDeclaration afterwards gets it, as from the oracle). The layout is the documented one: position
 // (with its blend weights, the last of them indices if the code says so), normal, point size, diffuse, specular,
 // then the texture coordinate sets, each 1 to 4 floats.
@@ -495,7 +495,7 @@ Declaration9 *d3d9_fvf_declaration(Device9 *d, u32 fvf) {
   #undef ADD
   e[n++] = (Element9){0xFF, 0, 17, 0, 0, 0};   // D3DDECL_END
   Declaration9 *v = (Declaration9 *)GP(com_new("d3d9", &IDirect3DVertexDeclaration9_interface, sizeof(Declaration9)));
-  v->o.kind = K_DECLARATION; v->o.device = d; v->o.held = 1;   // the device's own: no reference of the title's until it asks
+  v->o.kind = K_DECLARATION; v->o.device = d; v->o.held = 1;   // the device's own: no reference of the app's until it asks
   v->count = n; v->fvf = fvf; v->elements = malloc(n * sizeof *e); memcpy(v->elements, e, n * sizeof *e);
   v->next_fvf = d->fvf_declarations; d->fvf_declarations = v;
   return v;
@@ -573,7 +573,7 @@ IMP(d3d9, IDirect3DPixelShader9_Release) { STAT(pixelshader_Release); RET(d3d9_r
 IMP(d3d9, IDirect3DPixelShader9_GetDevice) { STAT(pixelshader_GetDevice); RET(get_device(c, SELF)); }
 IMP(d3d9, IDirect3DPixelShader9_GetFunction) { STAT(pixelshader_GetFunction); RET(get_function(c, (Shader9 *)SELF)); }
 
-// ---- the buffers of the UP draws: the device's own, invisible to the title (no reference of its changes), grown
+// ---- the buffers of the UP draws: the device's own, invisible to the app (no reference of its changes), grown
 // as needed and written whole for each draw (a DISCARD: the back end may hand out new storage)
 Buffer9 *d3d9_up_buffer(Device9 *d, int which, const void *src, u32 bytes, u32 format) {
   Buffer9 *b = d->up[which];

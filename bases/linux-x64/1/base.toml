@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
-# base/linux-x64:1, what a Linux x86-64 title is built FROM (docs/images.md): one statically linked ELF, the parts of
+# base/linux-x64:1, what a Linux x86-64 app is built FROM (docs/images.md): one statically linked ELF, the parts of
 # the core that imitate no system (the lifted functions' table, the virtual CPU, memory, the clock) and the Linux
 # runtime (rt/linux-x64/: the start of a process, its system calls, the files it finds).
 name = "base/linux-x64"

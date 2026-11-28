@@ -1,7 +1,7 @@
 #!/bin/bash
 # SPDX-License-Identifier: GPL-2.0-or-later
 # build-neofetch.sh [out dir, default out/neofetch]: a small Linux for neofetch (docs/neofetch.md), in <out>/root, the
-# root of the title (recipes/neofetch):
+# root of the app (recipes/neofetch):
 #   bin/bash       bash 5.2.37 (GPL-3.0-or-later), static, no readline, no job control
 #   bin/busybox    busybox 1.36.1 (GPL-2.0-only), static, its default configuration but no `tc` (tools/build-busybox.sh);
 #                  every applet in bin/

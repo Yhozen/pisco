@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-// kernel32's file functions over the title's file system (vfs.c), and the standard handles.
+// kernel32's file functions over the app's file system (vfs.c), and the standard handles.
 #include <ctype.h>
 #include "rt.h"
 #include "vfs.h"
@@ -9,7 +9,7 @@ int rt_file_read(int fd, void *p, u32 n);
 #define INVALID 0xFFFFFFFFFFFFFFFFull
 #define ATTR_DIR 0x10
 #define ATTR_NORMAL 0x80
-static const u64 FT = 133000000000000000ull; // a fixed time for the title's folder
+static const u64 FT = 133000000000000000ull; // a fixed time for the app's folder
 
 void rt_file_closed(Object *o) {
   if (!o->vf) return;
@@ -49,7 +49,7 @@ static u64 open_file(Cpu *c, const char *name, u32 access, u32 disposition, u32 
   o->delete_on_close = (flags & 0x04000000) != 0; // FILE_FLAG_DELETE_ON_CLOSE
   SET_LAST_ERROR(err);
   static int files = -1; if (files < 0) { const char *e = getenv("SW_FILES"); files = e && *e == '1'; }
-  if (files) rt_log("file %s", name);   // SW_FILES=1: every file a title opens, to set against Wine's +file trace
+  if (files) rt_log("file %s", name);   // SW_FILES=1: every file an app opens, to set against Wine's +file trace
   return rt_handle_new(o);
 }
 IMP(kernel32, CreateFileW) { char *n = name_w(ARG(0)); RET(open_file(c, n, (u32)ARG(1), (u32)ARG(4), (u32)ARG(5))); free(n); }

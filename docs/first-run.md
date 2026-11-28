@@ -1,9 +1,9 @@
-# First run of a console title on the Xbox Series runtime (its goal: Minecraft)
+# First run of a console app on the Xbox Series runtime (its goal: Minecraft)
 
 
-This is one runtime's first run of a real title: the Xbox Series runtime, whose goal is the Xbox Series build of
-Minecraft ([plan.md](plan.md)). Titles of the other runtimes are built from recipes (`pisco build`, [images.md](images.md)).
-The title's files stay outside this repository (e.g. `~/games/minecraft`, the unpacked package: the folder with
+This is one runtime's first run of a real app: the Xbox Series runtime, whose goal is the Xbox Series build of
+Minecraft ([plan.md](plan.md)). Apps of the other runtimes are built from recipes (`pisco build`, [images.md](images.md)).
+The app's files stay outside this repository (e.g. `~/games/minecraft`, the unpacked package: the folder with
 `Minecraft.Windows.exe` and `MicrosoftGame.config`). Nothing below writes into that folder.
 
 ## 1. Census (minutes, nothing runs)
@@ -21,16 +21,16 @@ It prints:
 - **shaders**: console shader containers found in the folder, programs per stage (does it use NGG / mesh
   shaders? geometry shaders?), the RDNA2 instructions they use. This sizes the WebGPU back end.
 
-Also check `docs/memory.md`: the title's address-space needs decide wasm32 or wasm64.
+Also check `docs/memory.md`: the app's address-space needs decide wasm32 or wasm64.
 
 ## 2. Build and run headless
 
 ```sh
-BASE=xbox-series SPLIT=32 JOBS=$(nproc) OPT=-O2 tools/build-title.sh ~/games/minecraft/Minecraft.Windows.exe out/mc
-SW_TRACE=1 node web/run-node.mjs out/mc/title.wasm ~/games/minecraft/Minecraft.Windows.exe
+BASE=xbox-series SPLIT=32 JOBS=$(nproc) OPT=-O2 tools/build-app.sh ~/games/minecraft/Minecraft.Windows.exe out/mc
+SW_TRACE=1 node web/run-node.mjs out/mc/app.wasm ~/games/minecraft/Minecraft.Windows.exe
 ```
 
-A big title takes ~10 minutes to compile the first time; later builds only recompile the parts that changed.
+A big app takes ~10 minutes to compile the first time; later builds only recompile the parts that changed.
 Expect it to stop early: at an instruction not lifted, an import whose stub answer is wrong, or the first
 D3D12.X call (there is no graphics device yet). `SW_STRICT=1` stops at the first unimplemented import instead
 of stubbing it, `SW_TRACE=2` logs every import call.
@@ -38,7 +38,7 @@ of stubbing it, `SW_TRACE=2` logs every import call.
 ## 3. In Chrome
 
 ```sh
-node tools/run-chrome.mjs out/mc/title.wasm ~/games/minecraft/Minecraft.Windows.exe
+node tools/run-chrome.mjs out/mc/app.wasm ~/games/minecraft/Minecraft.Windows.exe
 ```
 
 ## What to bring back from a run

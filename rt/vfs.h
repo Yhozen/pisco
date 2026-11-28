@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-// The title's file system (vfs.c). Paths are guest paths (UTF-8); errors are Win32 error codes.
+// The app's file system (vfs.c). Paths are guest paths (UTF-8); errors are Win32 error codes.
 #pragma once
 typedef struct VFile VFile;
 VFile *vfs_open(const char *path, u32 access, u32 disposition, u32 *err); // *err may be 183 on success

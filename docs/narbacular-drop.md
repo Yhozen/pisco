@@ -1,4 +1,4 @@
-# Narbacular Drop: the first Windows PC title (2026-11-25)
+# Narbacular Drop: the first Windows PC app (2026-11-25)
 
 What the game is made of and what it asks Windows for, measured before any code was written for it. The plan
 these facts feed is in [status.md](status.md); how the measurements are taken is in
@@ -49,7 +49,7 @@ same screens on every run, from a freshly made prefix.
   `GetFontUnicodeRanges`, and all of `usp10.dll` (Uniscribe). D3DX falls back to plain GDI when `usp10.dll`
   is missing.
 - **Text is drawn.** The game renders 256 characters with `TextOutA` into a bitmap at start (a font of its own
-  making: height 60, no face name, `NONANTIALIASED_QUALITY`), and D3DX's font draws the level's title and its
+  making: height 60, no face name, `NONANTIALIASED_QUALITY`), and D3DX's font draws the level's app and its
   hint with `ExtTextOutW`, one glyph at a time (fonts of height 24 and 48, no face name, `ANTIALIASED_QUALITY`).
   So gdi32 text has to be real, not a stub: see [the second part of M4](#text-gdi-draws-glyphs-m4-the-second-part).
 - **Exceptions:** none raised by the game in this session. x86 exception dispatch can wait.
@@ -94,7 +94,7 @@ relative motion; the keyboard foreground and non-exclusive. user32 is asked for 
 
 ## What the lifter makes of it (M1)
 
-`target/release/lifter "<the exe>" out/nd/title.c --split 16`, 2026-11-24:
+`target/release/lifter "<the exe>" out/nd/app.c --split 16`, 2026-11-24:
 
 | | `Narbacular Drop.exe` |
 |---|---|
@@ -112,8 +112,8 @@ DLL as shipped is not liftable; a recipe has to unpack it or leave it out.
 ## Where it gets to in our runtime (M2)
 
 ```sh
-RECIPE=recipes/narbacular-drop/recipe.toml SPLIT=16 OPT=-O1 tools/build-title.sh "<folder>/Narbacular Drop.exe" out/nd
-SW_STRICT=1 SW_TRACE=2 SW_SESSION_STEPS='wait 0' node web/run-node.mjs out/nd/title.wasm "<folder>/Narbacular Drop.exe" > out/nd.run.log
+RECIPE=recipes/narbacular-drop/recipe.toml SPLIT=16 OPT=-O1 tools/build-app.sh "<folder>/Narbacular Drop.exe" out/nd
+SW_STRICT=1 SW_TRACE=2 SW_SESSION_STEPS='wait 0' node web/run-node.mjs out/nd/app.wasm "<folder>/Narbacular Drop.exe" > out/nd.run.log
 python3 tools/oracle-wine/trace-diff.py recipes/narbacular-drop/traces/start.txt out/nd.run.log --until Direct3DCreate9
 ```
 
@@ -135,7 +135,7 @@ performance counter, five calls Wine never showed.
 
 ```sh
 S=recipes/narbacular-drop/sessions/menu-to-level.json
-SW_STRICT=1 SW_CLOCK=16667 SW_D3D9_STATS=1 SW_D3D9_FRAMES=1 SW_SESSION=$S node web/run-node.mjs out/nd/title.wasm "<folder>/Narbacular Drop.exe" > out/nd.session.log
+SW_STRICT=1 SW_CLOCK=16667 SW_D3D9_STATS=1 SW_D3D9_FRAMES=1 SW_SESSION=$S node web/run-node.mjs out/nd/app.wasm "<folder>/Narbacular Drop.exe" > out/nd.session.log
 python3 tools/oracle-wine/d3d9-compare.py out/oracle/narbacular-drop/d3d9/wine.log out/nd.session.log
 ```
 
@@ -171,9 +171,9 @@ The differences, all of them:
   different lengths do.
 - **Uniscribe.** Wine has `usp10.dll`, so D3DX lays text out with `ScriptShape` / `ScriptPlace` there and with
   `GetCharacterPlacementA` here (12,838 calls), as the census decided.
-- **Reference counting and `QueryInterface`.** Wine's trace shows its own along with the title's
+- **Reference counting and `QueryInterface`.** Wine's trace shows its own along with the app's
   (`GetDirect3D` and `CreateTexture` query interfaces inside Wine; `GetSurfaceLevel` and `GetRenderTarget` call
-  `AddRef` inside Wine): our counts are the title's calls only. `surface_LockRect` likewise: 297 of Wine's 338
+  `AddRef` inside Wine): our counts are the app's calls only. `surface_LockRect` likewise: 297 of Wine's 338
   are `texture_2d_LockRect` passing through.
 - **The CPU.** The recipe's virtual CPU has no MMX; the oracle's has (one more `IsProcessorFeaturePresent` here).
 
@@ -187,7 +187,7 @@ takes `D24X8`.
 ## Pixels: Direct3D 9 on WebGPU (M4, the first part)
 
 ```sh
-SW_STRICT=1 SW_CLOCK=16667 SW_SESSION=$S node tools/run-chrome.mjs out/nd/title.wasm "<folder>/Narbacular Drop.exe"   # out/nd/shots/<checkpoint>.png
+SW_STRICT=1 SW_CLOCK=16667 SW_SESSION=$S node tools/run-chrome.mjs out/nd/app.wasm "<folder>/Narbacular Drop.exe"   # out/nd/shots/<checkpoint>.png
 python3 tools/oracle-wine/shot-compare.py --table out/nd/shots out/oracle/narbacular-drop/d3d9                       # tests/run.sh ndgfx does both
 ```
 
@@ -239,9 +239,9 @@ channel differs by more than 16:
   conversion of the JPEG files). With D3DX's processor-specific code turned off in the oracle
   ([`tools/oracle-wine/README.md`](../tools/oracle-wine/README.md)) the largest difference left is 1, on 9 to 24 %
   of the pixels, in both directions: the two rasterisers' rounding.
-- **The menu** is a lit corridor with flickering torches, a swinging lantern, the title, four lines of text (they
-  are textures of the game's own, not GDI's) and the game's cursor. Ours is the same picture, with the title, the
-  text and the cursor at the same pixels (the title's letters, opaque, are within one level on 94 % of the box
+- **The menu** is a lit corridor with flickering torches, a swinging lantern, the app, four lines of text (they
+  are textures of the game's own, not GDI's) and the game's cursor. Ours is the same picture, with the app, the
+  text and the cursor at the same pixels (the app's letters, opaque, are within one level on 94 % of the box
   around them); the corridor, and what is blended over it, differs by its lighting at the moment of the shot. Two
   runs of Wine differ from each other by more than ours differs from either.
 - **The level** (through a grate, three scenes a frame: two portal views into textures, then the screen) is the
@@ -281,7 +281,7 @@ tests/run.sh gdi                                             # font.c natively a
 | the game, at start | `CreateFontA` height 60, weight 0, no face name, `NONANTIALIASED_QUALITY` | Liberation Sans, 54 pixels an em | 256 characters, each with `TextOutA` centred on the bottom of a 64x64 DIB section, white on magenta, then copied into a texture of its own |
 | D3DX, at start | `CreateFontIndirectA` height 24, weight 400, `DEFAULT_CHARSET`, `ANTIALIASED_QUALITY`, face `""` | Liberation Sans, 21 pixels an em | the level's hint, 63 characters, 28 glyphs |
 | D3DX, at start | the same, height 48, italic | Liberation Sans Italic, 43 | nothing in this session |
-| D3DX, in the level | the same, height 48 | Liberation Sans, 43 | the level's title, *Polishing Up*, 11 glyphs |
+| D3DX, in the level | the same, height 48 | Liberation Sans, 43 | the level's app, *Polishing Up*, 11 glyphs |
 
 D3DX draws each glyph by itself: `ExtTextOutW(ETO_GLYPH_INDEX | ETO_OPAQUE)` of one glyph index at (0, 0) into a
 32-bit DIB section, white on black with an opaque background, then `GetCharABCWidthsI` for its box, then copies
@@ -302,7 +302,7 @@ kerns as Wine's does when asked).
 **How** (`rt/windows-x86/font.c`, used by `gdi32.c`): every face name becomes Liberation Sans 2.1.5 (regular or
 italic, SIL Open Font License, `rt/windows-x86/fonts/`), the face and version Wine gives the game on the oracle's
 machine; no game file is read. The two font files are built into the module with C23's `#embed` (0.8 MB more for
-a Windows desktop title): no file for a host to provide, and the build stays a function of the repository. Their
+a Windows desktop app): no file for a host to provide, and the build stays a function of the repository. Their
 outlines are read and rasterised with stb_truetype (`rt/windows-x86/third_party/`). What Wine does was measured with
 `tools/oracle-wine/gdiprobe.c` (each of the four fonts: the face chosen, `TEXTMETRICW`, kerning, Unicode ranges,
 glyph indices, ABC widths, advances, `GetCharacterPlacementA` of the session's two texts with and without
@@ -344,13 +344,13 @@ folds Wine's `texture_2d_LockRect` passing through its own `surface_LockRect`):
 
 A level frame now makes D3DX's 9 text draws (three texts in each of three scenes) with Wine's `GetLevelDesc` and
 `NOOVERWRITE` locks. The 6 frames of Wine's and 16 of ours left over differ by a light or a particle vertex buffer
-(frames of different lengths: Wine's clock is the wall's), and the frame in which D3DX makes the title's glyph
+(frames of different lengths: Wine's clock is the wall's), and the frame in which D3DX makes the app's glyph
 texture differs by one draw of the scene's.
 
 **On the screen** (`tests/run.sh ndgfx`; the session has two checkpoints more for this, `level-title` 2.5 s
 and `level-hint` 9 s after the last click, and the oracle's `plain` screenshots were taken again with it): the
-title and the hint are where Wine has them, in its colours. Of the text's pixels in Wine's shot (white, or green)
-1,787 of 1,789 are text in ours too for the title, 2,517 of 2,591 for the hint; ours has more (2,243 and 3,027):
+app and the hint are where Wine has them, in its colours. Of the text's pixels in Wine's shot (white, or green)
+1,787 of 1,789 are text in ours too for the app, 2,517 of 2,591 for the hint; ours has more (2,243 and 3,027):
 its glyphs are a little bolder, Wine's being hinted narrower. Mean difference of each channel, and the share of
 pixels over 16:
 
@@ -362,7 +362,7 @@ pixels over 16:
 
 Two runs of Wine differ by 1.04 0.50 0.26 (0.11 %) in the hint's box, and by 1.14 0.71 0.59 (0.40 %) in a box of
 the same size just below it, where we differ by 1.90 1.47 1.29 (1.19 %): what is left in the text's box is the
-glyphs' edges (hinting). The title fades in and out, so its numbers also depend on the moment. The still
+glyphs' edges (hinting). The app fades in and out, so its numbers also depend on the moment. The still
 screens stay within 0.11 of Wine's. The menu shows none of this text (its words are the game's textures); where
 the game shows the 256 characters it draws at start, none of the session's screenshots tells.
 
@@ -370,9 +370,9 @@ the game shows the 256 characters it draws at start, none of the session's scree
 Node or in Chrome, depending on what the heap held: the player, starting the level, attaches the camera to
 itself only if a pointer it sets a few instructions later is already non-zero (`0x41d9cb` tests `[this+0x1e4]`,
 `0x41da5e` sets it); in a fresh, zeroed block the camera is not attached, and the frame then reads another
-entity's float as a pointer. Under Wine the game plays on: the block held something non-zero there. A 32-bit title's
+entity's float as a pointer. Under Wine the game plays on: the block held something non-zero there. A 32-bit app's
 `HeapAlloc` (and the growth of a `HeapReAlloc`) without `HEAP_ZERO_MEMORY` now fills small blocks with `0xCD`,
-the same on every host (`rt/kernel32.c`); stb_truetype's memory comes from a pool of `font.c`'s, not the title's
+the same on every host (`rt/kernel32.c`); stb_truetype's memory comes from a pool of `font.c`'s, not the app's
 heap.
 
 ## Played: input, sound and saves (M5)
@@ -381,7 +381,7 @@ heap.
 tools/oracle-wine/oracle.sh sound start                       # the oracle's sound device (start does it too)
 O=tools/oracle-wine/oracle.sh; S=recipes/narbacular-drop/sessions/level1-portals.json
 ORACLE_RUN=out/oracle/narbacular-drop/portals TRACE=+snoop $O start narbacular-drop "$EXE" && $O play narbacular-drop $S; $O stop narbacular-drop
-SW_CLOCK=16667 SW_FMOD_TRACE=1 SW_AUDIO_WAV=out/nd.play.wav SW_SESSION=$S node web/run-node.mjs out/nd/title.wasm "<folder>/Narbacular Drop.exe" > out/nd.play.log
+SW_CLOCK=16667 SW_FMOD_TRACE=1 SW_AUDIO_WAV=out/nd.play.wav SW_SESSION=$S node web/run-node.mjs out/nd/app.wasm "<folder>/Narbacular Drop.exe" > out/nd.play.log
 python3 tools/oracle-wine/fsound-compare.py out/oracle/narbacular-drop/portals/wine.log out/nd.play.log
 python3 tools/oracle-wine/audio-compare.py out/nd.play.wav out/oracle/narbacular-drop/portals/wine-audio.wav
 tests/run.sh ndplay                                           # all of it, Node and Chrome; recipes/narbacular-drop/video.sh: the video
@@ -401,7 +401,7 @@ factored out of `rt/gdk/xaudio2.c` into `rt/mixer.c` (the same ring and AudioWor
 read through the game's own file functions (called with `rt_guest_call` when a sound is loaded or opened, the whole
 file at once) and decoded by `rt/windows-x86/audio_decode.c`: WAV (every one in `File.ore` is PCM, so ADPCM is not there),
 Ogg Vorbis (stb_vorbis) and MP3 (minimp3), both vendored unchanged. Short looping streams are decoded once and shared
-(20 torches play the same Ogg file); the music is decoded as it plays. Under the virtual clock the title's own thread
+(20 torches play the same Ogg file); the music is decoded as it plays. Under the virtual clock the app's own thread
 mixes, exactly up to the clock each time it moves, so the sound of a run is a function of the run: two runs of the
 portal session give the same samples, and `SW_AUDIO_WAV=<file>` makes Node write them out.
 
@@ -421,7 +421,7 @@ numbers of frames, and the game starts torch pops and footsteps at random times 
 |---|---|---|
 | FSOUND calls, Wine / here | 71,917 / 65,617 | 51,626 / 68,232 |
 | functions called | the same 28 | the same 29 (`SetPan` too) |
-| calls that are not per frame: the same from the start, with the same results (handles included) | the first 177 (start-up, the title music, 20 torch loops), up to the game's first random choice of a sound | the first 177 |
+| calls that are not per frame: the same from the start, with the same results (handles included) | the first 177 (start-up, the app music, 20 torch loops), up to the game's first random choice of a sound | the first 177 |
 | events with a counterpart on the other side | 796 of Wine's 869, of our 813 | 895 of Wine's 979, of our 907 |
 | per frame, by phase (still screens / menu / level): `SetVolume`, `SetVolumeAbsolute`, `Listener_SetCurrent` | 0 / 20.03 / 4.08; 1.76 / 1.00 / 2.00; 0 / 0 / 3 under Wine, 0 / 20.02 / 4.05; 1.74 / 1.00 / 2.00; 0 / 0 / 3 here | the same to 0.2 |
 | sounds started, by family, Wine / here | footsteps 53 / 47, torch pops 23 / 21, every other sound the same (torch loops 30, music 2, lava 1, crate 1, run 1) | footsteps 63 / 56, torch pops 23 / 21, runs 2 / 3; a floor button pressed and released under Wine only (where the princess lands after the portal differs a little); every other sound the same |
@@ -431,10 +431,10 @@ numbers of frames, and the game starts torch pops and footsteps at random times 
 correlate at 0.84, and the first level, where the music at volume 128 is most of what is heard, is -22.2 dB here and
 -21.8 dB under Wine.
 
-**Input from the page.** In the browser a Windows desktop title's keyboard and mouse go into a ring of events the
+**Input from the page.** In the browser a Windows desktop app's keyboard and mouse go into a ring of events the
 runtime drains whenever DirectInput reads (`rt/input.c`, `web/browser/main.js`): keys as DirectInput scan
 codes (the full table), the mouse as relative motion under Pointer Lock (a click on the canvas takes the pointer;
-Escape gives it back, as browsers do, and reaches the title as its Escape key), buttons and the wheel. The session
+Escape gives it back, as browsers do, and reaches the app as its Escape key), buttons and the wheel. The session
 player feeds the same state; the console's GameInput path (Doom) is untouched.
 
 **The sessions.** `level1-portals.json`: menu-to-level's steps into the first level, then look down at the cage's
@@ -468,16 +468,16 @@ come out a little differently: menu-to-level's last two checkpoints were recorde
 (`traces/menu-to-level.txt`: 9 and 1,337 Direct3D calls apart).
 
 **What the game writes.** Only on Quit: `system.opt` beside its exe (20 bytes: two flags, the effects and music
-volumes as floats, a word). The title's own folder now has a writable top layer that the host keeps (`rt/vfs.c`,
+volumes as floats, a word). The app's own folder now has a writable top layer that the host keeps (`rt/vfs.c`,
 `vfs_writable_game`, set by the Windows desktop profile): in Node in `SW_SAVES/@game/` (S:\ stays at the folder's
 top, as for Doom), in the browser in OPFS beside S:\'s files. `tests/run.sh ndplay` quits once and starts again: the
 file is Wine's to the byte, and the second run (Node), or a second page in the same browser profile (Chrome), reads it.
 
 **A video with sound** (`recipes/narbacular-drop/video.sh`, to `out/nd/video.mp4`): the portal session recorded in
 headless Chrome through `tools/serve.mjs --capture`. Under the virtual clock the page places each presented frame
-and the sound by the title's clock (the mixer's ring says where its first frame is on that clock), so the 108 s of
+and the sound by the app's clock (the mixer's ring says where its first frame is on that clock), so the 108 s of
 game play as 108 s of video, in sync, although SwiftShader took 6 minutes to draw them. The audio track (ffmpeg's
-volumedetect): mean -26.4 dB, peak -2.5 dB; -35.9 dB over the first 15 s (the title music fading in, as the game
+volumedetect): mean -26.4 dB, peak -2.5 dB; -35.9 dB over the first 15 s (the app music fading in, as the game
 fades it), -22.0 dB in the level.
 
 ## Its image (M6)

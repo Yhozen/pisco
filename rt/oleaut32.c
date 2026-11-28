@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-// oleaut32, for titles of every runtime: BSTRs (a 4-byte length in bytes before the characters, a final zero), the
-// VARIANTs code initialises and clears, GetErrorInfo. Old titles import these by ordinal.
+// oleaut32, for apps of every runtime: BSTRs (a 4-byte length in bytes before the characters, a final zero), the
+// VARIANTs code initialises and clears, GetErrorInfo. Old apps import these by ordinal.
 #include "rt.h"
 
 static u64 bstr_new(const wchar16 *s, u32 chars) {

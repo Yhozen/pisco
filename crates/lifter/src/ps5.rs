@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-//! A PS5 title: a native executable of the PlayStation 5 (ELF, type 0xFE10, "SCE dynamic executable"), as the open
-//! ps5-payload-sdk and ps5-native-tool make one. Its loadable segments are the "sections", as for a Linux title;
+//! A PS5 app: a native executable of the PlayStation 5 (ELF, type 0xFE10, "SCE dynamic executable"), as the open
+//! ps5-payload-sdk and ps5-native-tool make one. Its loadable segments are the "sections", as for a Linux app;
 //! like a PE it is position-independent (relative relocations) and imports functions, here from system libraries
 //! (PRX) by NID: an 11-character name the PS5 derives from the function's name (AnyPS5's tools/nid_names.py says
 //! how). ps5_nids.txt gives the names of the NIDs the runtime answers for (rt/ps5/); an import the table does not

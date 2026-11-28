@@ -1,10 +1,10 @@
 # The recipe for Tag: The Power of Paint (2008, DigiPen; Direct3D 9): `pisco build recipes/tag --source <installer>`
-# makes its image (docs/images.md). What is known of the title so far: docs/tag.md (milestone T0 of the plan). The
+# makes its image (docs/images.md). What is known of the app so far: docs/tag.md (milestone T0 of the plan). The
 # image runs with D3DX lifted beside it and the runtime's FMOD Ex (milestones T1 to T6 of the plan).
 schema = 1
 name = "tag"
 from = "base/windows-x86:1"
-libraries = ["d3d9", "dinput8", "fmodex"]   # checked against the title's imports
+libraries = ["d3d9", "dinput8", "fmodex"]   # checked against the app's imports
 
 [about]
 display_name = "Tag: The Power of Paint"
@@ -25,7 +25,7 @@ app = 'C:\Program Files\Tag'
 [[extract]]
 kind = "cab"
 # Microsoft's D3DX, which the installer leaves to DXSETUP: taken out of its cabinet into system32, as DXSETUP puts
-# it there. The title's shaders are compiled at run time by this DLL's HLSL compiler (docs/tag.md)
+# it there. The app's shaders are compiled at run time by this DLL's HLSL compiler (docs/tag.md)
 from = 'C:\Program Files\Tag\DirectX\AUG2007_d3dx9_35_x86.cab'
 files = ["d3dx9_35.dll"]
 to = 'C:\WINDOWS\system32'

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // d3d9caps: prints the D3DCAPS9 of the default adapter's HAL device, one field a line, so our Direct3D 9 can
-// answer GetDeviceCaps as the oracle does. Build and run (32-bit, as the titles are):
+// answer GetDeviceCaps as the oracle does. Build and run (32-bit, as the apps are):
 //   $MINGW/bin/i686-w64-mingw32-clang tools/oracle-wine/d3d9caps.c -o out/d3d9caps.exe -ld3d9
 //   tools/oracle-wine/oracle.sh start <title> 'Z:\...\out\d3d9caps.exe'      (its output is in the run folder's wine.log)
 #include <d3d9.h>

@@ -1,16 +1,16 @@
-# Linux, the kernel as a title (2026-11-27)
+# Linux, the kernel as an app (2026-11-27)
 
 The plan to run Linux itself: a real [Linux](https://kernel.org) kernel (6.18.65, GPL-2.0-only), built from its
-source with our own configuration, lifted ahead of time like any other title, on a runtime that imitates a small
+source with our own configuration, lifted ahead of time like any other app, on a runtime that imitates a small
 x86-64 machine (`rt/microvm-x64`, `base/microvm-x64`). The Linux x64 runtime ([fastfetch.md](fastfetch.md)) imitates the
 kernel one system call at a time; here `fork`, signals, pipes and files are the kernel's own work. Why this route,
-what was measured before taking it and how the machine is designed: [research/kernel-as-a-title.md](research/kernel-as-a-title.md).
+what was measured before taking it and how the machine is designed: [research/kernel-as-an-app.md](research/kernel-as-an-app.md).
 
 **So far (K4) Linux runs, lifted, with its programs, as an image, and can be typed into.** The kernel and the initramfs's busybox, lifted into one
 module, boot on the machine in Node and run `/init` to its end: pipes, a shell in a shell, awk, a 4 MiB file written
 and hashed, a child killed, a signal handled, ten programs executed. They print the 15 lines they print on QEMU,
 the same on every run, in 2.5 s from the start of Node to the exit port. `fork`, `exec`, signals, pipes and files
-are the kernel's own work. `pisco build recipes/linux` makes it an image like any other title's, and with `/bin/sh`
+are the kernel's own work. `pisco build recipes/linux` makes it an image like any other app's, and with `/bin/sh`
 as its first program its shell can be typed into, in a terminal or in the page. The machine was first checked on `fixtures/microvm-hello`, a kernel of about 300 lines
 that does what Linux asks of it, and prints what QEMU prints.
 
@@ -87,13 +87,13 @@ tools/oracle-qemu/oracle.sh run linux                     # QEMU: the boot log, 
 tools/oracle-qemu/oracle.sh programs linux                # only the programs' lines of that run
 tools/census.sh out/linux/vmlinux                         # what the lifter does not lift yet (it knows a kernel)
 PROGRAMS="out/linux/root/busybox out/linux/root/hello" SPLIT=16 \
-  tools/build-title.sh out/linux/vmlinux out/linux/wasm   # Linux and its programs lifted into one module (minutes the first time)
-(cd out/linux && SW_INITRD=initramfs.cpio SW_CMDLINE="$(cat ../../recipes/linux/cmdline)" node ../../web/run-node.mjs wasm/title.wasm vmlinux)
+  tools/build-app.sh out/linux/vmlinux out/linux/wasm   # Linux and its programs lifted into one module (minutes the first time)
+(cd out/linux && SW_INITRD=initramfs.cpio SW_CMDLINE="$(cat ../../recipes/linux/cmdline)" node ../../web/run-node.mjs wasm/app.wasm vmlinux)
 fixtures/microvm-hello/build.sh out/microvm-hello         # the machine's test kernel
-tools/build-title.sh out/microvm-hello/hello out/microvm-hello/wasm      # lifted (base/microvm-x64, from OS=microvm)
-node web/run-node.mjs out/microvm-hello/wasm/title.wasm out/microvm-hello/hello   # its serial port, in Node
-node tools/run-chrome.mjs out/microvm-hello/wasm/title.wasm out/microvm-hello/hello   # the same in headless Chrome
-target/release/lifter out/linux/vmlinux out/linux/census/title.c --split 16 --machine   # the same, by hand
+tools/build-app.sh out/microvm-hello/hello out/microvm-hello/wasm      # lifted (base/microvm-x64, from OS=microvm)
+node web/run-node.mjs out/microvm-hello/wasm/app.wasm out/microvm-hello/hello   # its serial port, in Node
+node tools/run-chrome.mjs out/microvm-hello/wasm/app.wasm out/microvm-hello/hello   # the same in headless Chrome
+target/release/lifter out/linux/vmlinux out/linux/census/app.c --split 16 --machine   # the same, by hand
 ```
 
 `tests/run.sh kernel` checks the kernel: the lifter must read `vmlinux`; on QEMU the programs must print
@@ -110,7 +110,7 @@ prints, and does under QEMU too when QEMU is there; `tests/run.sh chrome` runs i
   fault can come back through, and this kernel on the hardware the machine will have. All three are in the research
   page, with their numbers.
 - **The lifter reads a kernel** (`--machine`): an image above 4 GiB that stays at its link addresses (`OS=microvm`
-  in `title.env`), whose code is what its sections say is code. A kernel's executable segment holds its read-only
+  in `app.env`), whose code is what its sections say is code. A kernel's executable segment holds its read-only
   data too, and taking that for code made 52,729 instructions of strings.
 - **Operands the 64-bit emitters took for general registers.** `mov cr3, rax` was lifted as a write to RBX, and
   `mov ax, ds` as a read of RBX. In a program a segment register now reads as its selector and takes a write
@@ -139,7 +139,7 @@ prints, and does under QEMU too when QEMU is there; `tests/run.sh chrome` runs i
   task's stack, and the boot task went on there with nothing noticed. Labels now reach to the next function, and a
   call in a machine's image checks that it comes back with the stack it was made with.
 - **Shared code made safe for it**: `rt/cpu.h`'s helpers store through `MW` forms, and `f80_load` and `f80_store`
-  take the CPU state, for every title; `rt_cpuid` and `rt_rdtsc` in `rt/core.c` are weak, so a machine has its own.
+  take the CPU state, for every app; `rt_cpuid` and `rt_rdtsc` in `rt/core.c` are weak, so a machine has its own.
 - **Linux's census with the machine mode**: 602,001 instructions, 56 not lifted (`xsave` and `fxsave` forms,
   `cmpxchg16b`, `lkgs`, a few AVX-512 and AMX ones, string I/O).
 
@@ -168,7 +168,7 @@ CPU's name and features, the TSC at 1 GHz, the MSRs the machine leaves at 0 (it 
 
 ## What it took (K3)
 
-- **The programs in the kernel's module**: `lifter --program <elf>` (`PROGRAMS` for `tools/build-title.sh`) lifts
+- **The programs in the kernel's module**: `lifter --program <elf>` (`PROGRAMS` for `tools/build-app.sh`) lifts
   static programs with a machine's image, at their own addresses, which are where the kernel loads them. One
   module, 15,310 functions; the kernel finds a program's code by address when it returns to user mode.
 - **A program's own `longjmp`**: no hook of setjmp and longjmp in a machine (the Linux runtime's are for programs
@@ -270,14 +270,14 @@ Disk (/): 3.57 MiB / 118.45 MiB (3%) - rootfs
 bash is GPL-3.0-or-later and cannot be linked into the GPL-2.0-only kernel's module, so it is a module of its own:
 
 - **A wasm side module**: the lifted program compiled position-independent (`-fPIC`) and linked by `wasm-ld -shared`
-  (the `dylink.0` convention). It imports the title's memory, its function table, its C stack pointer, the machine's
+  (the `dylink.0` convention). It imports the app's memory, its function table, its C stack pointer, the machine's
   functions (`mmu_read`, `rt_poll`, `rt_syscall_m`...) and compiler-rt's, and two of its data's addresses; it exports
   its `ProgramDef`.
 - **Loaded by the host** (`web/side.mjs`, in Node and the page's worker), as a dynamic linker loads a library: its
   memory taken from the machine (`rt_side_alloc`), its functions added to the table, its relocations applied, then
   registered with the machine (`rt_program_register`); from there it is found by its code pages like any program.
 - **`pisco build`**: `[hints.pisco] modules = ["/bash"]` makes it a layer of the image, named in the config's `side`; the
-  title's module exports what the side modules import (`pisco` reads their import sections).
+  app's module exports what the side modules import (`pisco` reads their import sections).
 - `/init` runs bash as it runs on QEMU, in Node and in headless Chrome.
 
 ## What it took (K10, K11): programs lifted when they first run
@@ -292,7 +292,7 @@ own (`tools/build-side.sh`: the lifter, wasi-sdk, `wasm-ld -shared`), caches it 
 needs no file.)
 
 An image from memory has no symbols, so the lifter now also takes a function's address from an immediate (`mov
-$f, %eax`, as musl's start does for `libc_start_main_stage2`). A machine's title therefore exports whatever a lifted program may import
+$f, %eax`, as musl's start does for `libc_start_main_stage2`). A machine's app therefore exports whatever a lifted program may import
 (`rt/microvm-x64/side-exports.txt`), not only what the programs of its build import.
 
 `/init` runs `/bin/proc` (`fixtures/linux-proc`), which is in the initramfs but in no recipe list: it is lifted in
@@ -322,7 +322,7 @@ module of its own, and print what they print on QEMU.
   (`--entry`).
 - **The same addresses each time**: `norandmaps` on the kernel's command line places the loader and the program
   where they were the last time, so the images, and the lift cache's keys, are the same from one run to the next.
-- **The x87's maths** (`expm1`, `log2`... which the lifter emits for `f2xm1` or `fyl2x`) is exported by the title for
+- **The x87's maths** (`expm1`, `log2`... which the lifter emits for `f2xm1` or `fyl2x`) is exported by the app for
   such a module too (`rt/microvm-x64/side-exports.txt`): musl's maths has x87 code.
 
 The loader (669 KB) lifts in about a minute and busybox (803 KB) in two, on four cores; from the cache, nothing.

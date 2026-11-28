@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // XMem: the console's memory allocator, its GPU-visible region and its physical pages.
-// Behaviour follows XCL's findings on retail titles (github.com/ivall/xcl, GPL-2.0).
+// Behaviour follows XCL's findings on retail apps (github.com/ivall/xcl, GPL-2.0).
 #include "../gdk/gdk.h"
 
 static u64 xmem_align(u64 attrs) {
@@ -13,7 +13,7 @@ static u64 xmem_align(u64 attrs) {
 // ---- graphics memory: the console's GPU-visible region, from 16 GiB up (XMemAlloc / XMemVirtualAlloc with a
 // graphics memory type, D3D12.X descriptor heaps and buffers). wasm32 keeps only the low 32 bits of a guest
 // address, so a block of the region is ordinary linear memory whose address carries a tag above bit 32: the
-// title sees an address in the region, every access lands in the block. Tags 4..7 are XCL's four 4 GiB
+// app sees an address in the region, every access lands in the block. Tags 4..7 are XCL's four 4 GiB
 // windows (window = address >> 32 & 3); window 3 is the coherent one readback and upload buffers use.
 // Blocks come from arenas, first fit in 64 KiB units, so consecutive allocations are adjacent and freed
 // neighbours merge, as on the console.

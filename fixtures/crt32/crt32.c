@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-// A 32-bit title that leans on msvcrt.dll and kernel32's interlocked lists the way the DLLs of old Windows games do:
+// A 32-bit app that leans on msvcrt.dll and kernel32's interlocked lists the way the DLLs of old Windows games do:
 // the C math functions (cdecl: doubles on the stack, the result on the x87 stack) and the "_CI" ones (on the x87
 // stack both ways), sprintf with doubles and 64-bit integers among 32-bit arguments, strtod, _setjmp3 / longjmp, and
 // the SList functions on an 8-byte header. It prints one line per check;

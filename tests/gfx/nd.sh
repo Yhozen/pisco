@@ -10,7 +10,7 @@
 #   ORACLE  the oracle's screenshots. Default: out/oracle/narbacular-drop/plain if it is there (Wine with D3DX's
 #           processor-specific code turned off, as our virtual CPU makes it run: tools/oracle-wine/README.md;
 #           MEAN defaults to 0.5 of 255), else out/oracle/narbacular-drop/d3d9 (MEAN defaults to 3).
-# Needs out/nd/title.wasm (tests/run.sh nd builds it). Environment: ND (the installed game's folder), TIMEOUT
+# Needs out/nd/app.wasm (tests/run.sh nd builds it). Environment: ND (the installed game's folder), TIMEOUT
 # (seconds, default 1500).
 set -uo pipefail
 root=$(cd "$(dirname "$0")/../.." && pwd); cd "$root"
@@ -19,10 +19,10 @@ session=recipes/narbacular-drop/sessions/menu-to-level.json
 if [ -n "${ORACLE:-}" ]; then oracle=$ORACLE; mean=${MEAN:-3}
 elif [ -f out/oracle/narbacular-drop/plain/menu.png ]; then oracle=out/oracle/narbacular-drop/plain; mean=${MEAN:-0.5}
 else oracle=out/oracle/narbacular-drop/d3d9; mean=${MEAN:-3}; fi
-[ -f out/nd/title.wasm ] || { echo "out/nd/title.wasm is not built (tests/run.sh nd)"; exit 1; }
+[ -f out/nd/app.wasm ] || { echo "out/nd/app.wasm is not built (tests/run.sh nd)"; exit 1; }
 rm -rf out/nd/shots
 start=$(date +%s)
-TIMEOUT=${TIMEOUT:-1500} SW_STRICT=1 SW_CLOCK=16667 SW_SESSION=$session node tools/run-chrome.mjs out/nd/title.wasm "$ND/Narbacular Drop.exe" > out/nd.chrome.log 2>&1; code=$?
+TIMEOUT=${TIMEOUT:-1500} SW_STRICT=1 SW_CLOCK=16667 SW_SESSION=$session node tools/run-chrome.mjs out/nd/app.wasm "$ND/Narbacular Drop.exe" > out/nd.chrome.log 2>&1; code=$?
 took=$(( $(date +%s) - start ))
 [ $code = 0 ] || { echo "the session ended with exit code $code:"; grep -v '^pisco:   ' out/nd.chrome.log | tail -4 | cut -c1-300; exit 1; }
 grep -q '^pisco: session done' out/nd.chrome.log || { echo "the session did not reach its end:"; tail -3 out/nd.chrome.log | cut -c1-300; exit 1; }

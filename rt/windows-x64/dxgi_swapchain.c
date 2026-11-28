@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-// DXGI for Windows desktop titles: the factory, and swap chains whose back buffers are textures of the D3D12 front
+// DXGI for Windows desktop apps: the factory, and swap chains whose back buffers are textures of the D3D12 front
 // end (rt/gdk/d3d12.c).
 #include "input.h"
 #include "../gdk/d3d12.h"
@@ -41,7 +41,7 @@ IMP(dxgi, Factory_CreateSwapChainForHwnd) { // (device: the queue, window, desc1
   M64(ARG(6)) = rt_dxgi_swapchain(ARG(1), ARG(3), 1920, 1080); RET(S_OK);
 }
 
-// ---- DXGI swap chains (PC titles): back buffers are textures of the queue's device; Present presents the
+// ---- DXGI swap chains (PC apps): back buffers are textures of the queue's device; Present presents the
 // current one through the same path as PresentX, then the next buffer is current ----
 typedef struct { u64 vtbl; u32 magic; s32 refs; u32 count, index, w, h, format, flags, console; u64 frames; u64 buffers[16]; } SwapChain;
 #define SMAGIC 0x53574150u
@@ -95,7 +95,7 @@ IMP(dxgi, SwapChain_Present) {
   rt_gpu_present(d3d12_id_of(self->buffers[self->index]), ++self->frames, interval); self->index = (self->index + 1) % self->count;
   static s64 exit_after = -1; if (exit_after < 0) { const char *e = getenv("SW_EXIT_FRAMES"); exit_after = e ? atoll(e) : 0; }
   if (exit_after && self->frames >= (u64)exit_after) { rt_log("exit after %llu frames (SW_EXIT_FRAMES)", (unsigned long long)self->frames); rt_exit_process(0); }
-  // a desktop title's session plays on (rt/input.c); on a virtual clock (SW_CLOCK) a frame is its time, nothing waits
+  // a desktop app's session plays on (rt/input.c); on a virtual clock (SW_CLOCK) a frame is its time, nothing waits
   input_poll();
   session_frame((u32)self->frames);
   if (rt_clock_virtual()) { rt_clock_advance_frame(); RET(S_OK); return; }

@@ -39,8 +39,8 @@ fi
 rm -rf "$src" "$build"; mkdir -p "$src" "$build"
 tar -xJf "$tar" -C "$src" --strip-components=1 --no-same-owner
 
-# 3. configure: the same target flags as the runtime (tools/build-title.sh), so the objects link into a
-#    shared-memory title.wasm. Pthreads come from wasi-libc (wasm32-wasip1-threads): FFmpeg uses them for its
+# 3. configure: the same target flags as the runtime (tools/build-app.sh), so the objects link into a
+#    shared-memory app.wasm. Pthreads come from wasi-libc (wasm32-wasip1-threads): FFmpeg uses them for its
 #    one-time init (ff_thread_once) and locks, so decoders may be opened from several runtime threads; the
 #    wrapper still asks each decoder for one thread (no frame threads are spawned).
 # No source patches are needed for 7.1.5 with wasi-sdk 34: configure's probes find most of wasi-libc's gaps by

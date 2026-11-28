@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // The files the runtime makes up: /proc and /sys as a program reads them to learn about the machine, the devices
 // of /dev a program opens without thinking, and the files of /etc every system has. They say what the machine
-// is: a Linux x86-64 system imitated in WebAssembly, with the virtual CPU the lifter gives every title.
+// is: a Linux x86-64 system imitated in WebAssembly, with the virtual CPU the lifter gives every app.
 #include <stdarg.h>
 #include "linux.h"
 
@@ -51,7 +51,7 @@ static void g_self_maps(Buf *b) {
     put(b, "%08llx-%08llx r-xp %08llx 00:01 1 %s\n", a, e, m->sections[i].off & ~4095ull, linux_exe); }
 }
 static void g_os_release(Buf *b) { put(b, "NAME=\"PISCO\"\nID=pisco\nPRETTY_NAME=\"PISCO (Linux x86-64 imitated in WebAssembly)\"\nVERSION_ID=\"1\"\nHOME_URL=\"https://github.com/Yhozen/series-web\"\n"); }
-// the login shell: the first of bash and sh the file system has (a title with no shell names none)
+// the login shell: the first of bash and sh the file system has (an app with no shell names none)
 static const char *login_shell(void) {
   static const char *const shells[] = { "/bin/bash", "/bin/sh" };
   for (unsigned i = 0; i < 2; i++) { Node n; if (!fs_lookup(shells[i], &n, 1)) { free(n.data); if (n.type == N_FILE) return shells[i]; } }
@@ -118,7 +118,7 @@ void fs_generated_list(const char *abs, char **out, u32 *len) {
   for (unsigned i = 0; i < MADE; i++) if (!strncmp(abs, made[i].path, l) && made[i].path[l] == '/') {
     const char *name = made[i].path + l + 1; size_t k = strcspn(name, "/"); int dir = name[k] == '/';
     char line[300]; int w = snprintf(line, sizeof line, "%.*s%s\n", (int)k, name, dir ? "/" : "");
-    // once each, and not a name the title's folder already has
+    // once each, and not a name the app's folder already has
     int seen = 0;
     for (const char *p = *out; p && *p;) { const char *q = strchr(p, '\n'); size_t pl = q ? (size_t)(q - p) : strlen(p); size_t bare = pl && p[pl - 1] == '/' ? pl - 1 : pl;
       if (bare == k && !strncmp(p, name, k)) { seen = 1; break; } if (!q) break; p = q + 1; }

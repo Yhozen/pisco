@@ -3,7 +3,7 @@
 # tests/gfx/d3d9-sm.sh [bytecode files...]: Direct3D 9's shader translator (rt/windows-x86/d3d9_sm.c), built natively.
 # tests/gfx/d3d9-sm.c assembles shaders that cover each opcode, register, modifier and form of flow control of
 # shader models 1.1 to 2.x (vertex and pixel) and translates them; every WGSL file must pass naga's validation, and
-# the shaders it must refuse are refused. Bytecode files given (a title's shaders captured under Wine, kept in
+# the shaders it must refuse are refused. Bytecode files given (an app's shaders captured under Wine, kept in
 # out/, never in the repository) are translated and validated too.
 set -euo pipefail
 root=$(cd "$(dirname "$0")/../.." && pwd); out=$root/out/sm; rm -rf "$out"; mkdir -p "$out"

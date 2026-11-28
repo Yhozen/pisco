@@ -1,11 +1,11 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 # usage: snoop-compare.py WINE_LOG OUR_LOG --dll NAME [--frame FUNCTION] [--events NAME,NAME...] [--context N]
-# Sets the calls a title made into one DLL under Wine against the ones it made in our runtime, for a DLL our
+# Sets the calls an app made into one DLL under Wine against the ones it made in our runtime, for a DLL our
 # runtime answers itself (FMOD Ex for Tag: --dll fmodex --frame '?update@System@FMOD@@QAG?AW4FMOD_RESULT@@XZ').
-#   WINE_LOG  a WINEDEBUG=+snoop log with the title's own copy of the DLL (it prints each call's arguments on its
+#   WINE_LOG  a WINEDEBUG=+snoop log with the app's own copy of the DLL (it prints each call's arguments on its
 #             RET line the first time and on its CALL line after that, the result and the caller every time)
 #   OUR_LOG   a run with SW_TRACE_DLL=NAME (rt/process.c: "snoop: RET  Name(arguments) retval=R ret=CALLER")
-# A call is its function, the address it was called from and its result: arguments hold the title's pointers and
+# A call is its function, the address it was called from and its result: arguments hold the app's pointers and
 # handles, which differ between the two runs. Wine's clock is the wall's and ours is virtual, so per-frame calls
 # repeat a different number of times in a phase; what is compared:
 #   1. the longest common start of the two sequences, with the calls just past it; with --events, of the calls to
