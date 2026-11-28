@@ -423,6 +423,21 @@ fn table_bound_by_branch(insns: &BTreeMap<u64, Instruction>, load: &Instruction,
     }
     None
 }
+/// The bound of a table whose index was copied through memory the compare does not name (GCC at -O2 with the index
+/// spilt twice: `cmp dword [rsp-0x1c],5; ja default; mov r10,[rsp-8]; movsxd r10,[rbx+r10*4]`): the `cmp X,N` and
+/// `ja` / `jae` that guard the load, a few instructions before it. A bound too large is safe: every entry must land
+/// in code, or the table is not taken.
+fn guard_bound(prev: &[&Instruction], load_ip: u64) -> Option<u64> {
+    let at = prev.iter().position(|i| i.ip() == load_ip)?;
+    for k in at + 1..(at + 6).min(prev.len()) {
+        let j = prev[k];
+        if !matches!(j.mnemonic(), Mnemonic::Ja | Mnemonic::Jae) { if j.flow_control() != FlowControl::Next { return None; } continue; }
+        let c = prev.get(k + 1)?;
+        if c.mnemonic() != Mnemonic::Cmp || !is_imm(c.op_kind(1)) || c.immediate(1) >= 4096 { return None; }
+        return Some(if j.mnemonic() == Mnemonic::Jae { c.immediate(1) } else { c.immediate(1) + 1 });
+    }
+    None
+}
 /// A `switch` of code that is not position-independent (a static Linux program): `jmp [I*8+T]`, T a table of
 /// absolute addresses in data. Bounded by the `cmp I,N; ja` before it, else read while the entries land between the
 /// function's start and the next function a symbol names.
@@ -545,7 +560,8 @@ fn jump_table_nth(img: &Image, insns: &BTreeMap<u64, Instruction>, jmp: &Instruc
             }
         }
     }
-    let bound = bound.or_else(|| sim_at(load.ip(), index)).or_else(|| table_bound(&prev, load.ip(), index)).or_else(|| table_bound_by_branch(insns, &load, index));
+    let bound = bound.or_else(|| sim_at(load.ip(), index)).or_else(|| table_bound(&prev, load.ip(), index)).or_else(|| table_bound_by_branch(insns, &load, index))
+        .or_else(|| guard_bound(&prev, load.ip()));
     if bound.is_none() && std::env::var_os("LIFTER_DEBUG").is_some() { eprintln!("table without bound: jmp at 0x{:x}, load at 0x{:x}", jmp.ip(), load.ip()); }
     let bound = Some(bound?); // a table with no bound is not trusted: its end is unknown
     // a target may be in another part of the function (GCC's .cold): any code will do

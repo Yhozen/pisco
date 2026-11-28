@@ -323,6 +323,10 @@ reasoning and the measurements: [research/kernel-as-an-app.md](research/kernel-a
   on the machine is 2 to 3 times flat memory, most of it the TLB check on every access (a lifter fix); a lifted
   x86-64 program runs as a task of unkernel's kernel with forks at 0.12 ms against 9; native hosts run the image's
   own kernel under KVM or FEX, and the GPU ring stays the one GPU contract.
+- **Research, tabc with PISCO** ([research/tabc-pisco.md](research/tabc-pisco.md), `tools/tabc-pisco`): tabc 1.0.0
+  with an amd64 image's programs lifted and run as tasks of its own kernel (`kw_run` patched to ask PISCO first),
+  programs met for the first time lifted on the host by tabc's supervisor. Against tabc on the same machine and
+  browser: compute 1.4 to 4 times faster, processes and memory about level, cold start about level.
 - **Next**: the network in the page.
 
 ## Known limits

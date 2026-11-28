@@ -21,7 +21,26 @@ then measures the result against tabc as released, on the same machine and brows
 
 ## Short answer
 
-TODO
+- **Docker in a tab, faster, with PISCO in tabc.** `tabc run alpine:3.24.4` runs the amd64 image: busybox, musl's
+  loader and every other program of it run as lifted wasm, as tasks of tabc's own kernel, with tabc's kernel
+  emulator (kwemu) left for tabc's init. One binary patch of the kernel (`kw_run` asks PISCO first), about 400
+  lines changed in tabc, and PISCO's runtime ([How it works](#how-it-works)).
+- **Against tabc as released**, same machine, browser and flags, median of 5 (below):
+  - compute 1.4 to 4.8 times faster: awk 1.11 s against 1.56, gzip 0.93 against 3.72, the compiled benchmark
+    1.76 against 3.08 (float 4.8 times, memory 2.6, bytes 1.8, sort 1.2); sha256sum level (0.12 against 0.11);
+    one loss, call-heavy code (fib: 72 ms against 53);
+  - cold start level: 1.07 s to the first output against 0.94 (1.00 for the same tabc built from source);
+  - processes slower in a 50-process loop (fork 0.03 s against 0.01, exec 0.17 against 0.11), level or faster after
+    the first few (500 execs: 0.76 s against 1.06): the first ones wait for V8 to compile the lifted code they meet;
+  - memory level: 592 MiB for an idle container against 557.
+- **Against what an amd64 image costs on tabc today** (qemu-user inside the guest): 15 to 260 times faster on every
+  workload, and a cold start 1.3 times faster.
+- **Any amd64 image, not only what was lifted before.** A program met for the first time is lifted by tabc's
+  supervisor on the host, once, and kept by its sha256: `busybox:musl` (never lifted) ran after 166 s of lifting.
+  Then in 1 s, like every later run. `apk add` drives five more libraries through it, libcrypto and libssl among
+  them, and they compute what the host's do; apk's own TLS check still fails ([What it took](#what-it-took)).
+- **Limits** ([below](#limits)): one CPU (tabc's default is two), arm64's signal frames, a program lifted on its first
+  run makes that run wait.
 
 ## How it works
 
@@ -86,7 +105,44 @@ The method of [tabc-poc.md](tabc-poc.md#method), with two sides more:
 
 ## The numbers
 
-TODO
+Median (best) of 5, seconds unless marked. Raw results: `out/tabc-poc/results/tabc-{arm64,src,pisco}.json`;
+`tabc-x86` and `native` from [tabc-poc.md](tabc-poc.md) (the same VM and Chrome, a day earlier).
+
+| | native | tabc arm64 (release) | tabc arm64 (source) | tabc amd64 (qemu-user) | **tabc with PISCO (amd64)** |
+|---|---|---|---|---|---|
+| `echo hi`, first output | 0.02 | 0.94 (0.92) | 1.00 (0.97) | 1.37 | **1.07 (1.04)** |
+| awk | 0.09 | 1.56 (1.53) | 1.67 (1.54) | 20.93 | **1.11 (1.10)** |
+| sha256sum, 4 MiB | 0.02 | 0.11 (0.11) | 0.11 (0.11) | 1.82 | **0.12 (0.12)** |
+| gzip | 0.18 | 3.72 (3.63) | 3.73 (3.64) | 13.71 | **0.93 (0.91)** |
+| 50 forks | 0.01 | 0.01 (0.01) | 0.01 (0.01) | 7.77 | **0.03 (0.03)** |
+| 50 fork + exec | 0.02 | 0.11 (0.11) | 0.11 (0.11) | 38.94 | **0.17 (0.14)** |
+| compiled benchmark, all five | 0.77 | 3.08 (2.99) | 3.05 (2.95) | 39.32 | **1.76 (1.70)** |
+| idle container, MiB PSS | | 557 (556) | 543 (542) | 555 | **592 (591)** |
+
+| compiled benchmark, ms | native | tabc arm64 (release) | tabc amd64 (qemu-user) | **tabc with PISCO** |
+|---|---|---|---|---|
+| calls, fib(32) | 8 | 53 (52) | 1,387 | **72 (71)** |
+| bytes, FNV of 64 MB | 140 | 423 (414) | 1,127 | **236 (233)** |
+| sort, heapsort of 2M u32 | 387 | 1,146 (1,047) | 7,050 | **994 (937)** |
+| float, 4x4 transform | 37 | 626 (613) | 27,485 | **130 (129)** |
+| memory, 20M random loads | 188 | 838 (823) | 1,856 | **317 (316)** |
+
+The checksums are the same on every side. PISCO's Linux of [tabc-poc.md](tabc-poc.md) (the lifted kernel) for
+comparison: awk 2.50, gzip 2.24, the benchmark 4.66, 50 forks 0.43, cold start 4.22, 1,041 MiB.
+
+**Processes, 500 of each** (one container each, the same session): fork 0.17 s with PISCO against 0.14 for tabc,
+fork + exec 0.76 against 1.06. In 50, PISCO's first processes pay for the lifted code V8 compiles when it is first
+called (busybox's and musl's start, the fork and exec paths): about 0.1 s of the 50.
+
+**Cold start**, from one supervisor log: the page connected at 0.46 s, the kernel booted and PISCO's runtime up at
+0.64 s, the container's program started at 0.64 s; then 0.4 s of tabc's init (the overlay, the image's first
+lookups) and the first program. busybox and musl were compiled while the kernel booted. Stock tabc's log has the
+same phases (0.47 s, 0.60 s, then 0.41 s).
+
+**Where tabc's emulator still wins**: call-heavy code. Every `call`, `ret`, `push` and `pop` of lifted code goes
+through the software TLB ([microvm-speed.md](microvm-speed.md), experiment 1: the TLB check is 55 to 90% of lifted
+code's overhead over flat memory). Fewer checks for stack accesses, in the lifter, is the next speed-up, and it
+would help every row.
 
 ## What it took
 
@@ -104,6 +160,28 @@ Most of the night went to three places where the first version lost, each found 
 3. **System calls the translation lacked.** `rt_sigsuspend` was missing, so `sleep 1 & wait` spun on ENOSYS and the
    child never ran. The table now has 221 calls, with `poll`, `select`, `pause` and `alarm` turned into the
    calls arm64 has, and epoll's packed x86-64 events converted.
+
+Then what other programs need. `busybox:musl` (a static-PIE busybox, never lifted before) was lifted on the host
+on its first run and ran. `apk add` on `alpine:3.24.4` reaches much further than busybox, through apk, libapk, zlib,
+libssl and libcrypto, all lifted on their first run (13.6 minutes on this VM for the five, libcrypto alone 7.5),
+and showed five gaps, each fixed:
+
+4. **Libraries above 2^47.** The guest's own mmap layout is aarch64's, top-down from near 2^48, where x86-64 code
+   never is (the lifter found almost nothing of libcrypto there). The bottom-up layout above puts them below.
+5. **Jump tables the lifter missed** (`crates/lifter`): a table's base set by a `lea` on another path than the
+   closest one before the load (GCC: a loop's table, an error path's `lea` of the same register in between) is now
+   tried among the function's `lea`s of that register; a table whose index was copied through two stack slots is
+   bounded by the `cmp`/`ja` that guards its load. libcrypto: 92 tables recovered, 13 left without a bound.
+6. **Functions only the loader names**: a library's `DT_INIT` and `DT_FINI` (zlib's `.fini` ran at exit), and more
+   than 4,096 dynamic symbols (libcrypto has about 5,800): the runtime now tells the lifter of up to 16,384, sent
+   in the request's body.
+7. **CPUID said PCLMULQDQ**, which the lifter does not lift. libcrypto's GHASH took that path; now OpenSSL takes
+   its portable one.
+
+With those, the lifted libcrypto and libssl compute what the host's do (SHA-256, SHA-1, MD5, AES-CBC, ChaCha20,
+byte for byte), and Alpine's `openssl s_client` completes a verified TLS 1.3 handshake with dl-cdn.alpinelinux.org
+from the tab. `apk add` itself still fails: its own fetch code reports the same server's certificate as not trusted
+(not found yet).
 
 And from the experiment it grew out of ([microvm-speed.md](microvm-speed.md), experiment 2): programs that are
 position-independent and dynamically linked (Alpine's busybox on musl's loader, both lifted, at the addresses

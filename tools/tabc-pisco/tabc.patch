@@ -75,10 +75,10 @@ index 40994df..2a32836 100644
  // under its root, a layer's file name, and the name a layer has while
 diff --git a/internal/supervisor/pisco.go b/internal/supervisor/pisco.go
 new file mode 100644
-index 0000000..5c64fc0
+index 0000000..33cb8fe
 --- /dev/null
 +++ b/internal/supervisor/pisco.go
-@@ -0,0 +1,194 @@
+@@ -0,0 +1,225 @@
 +package supervisor
 +
 +// PISCO: an amd64 image's programs run as lifted wasm, ahead-of-time
@@ -87,11 +87,13 @@ index 0000000..5c64fc0
 +//
 +//	pisco/index.json        the programs this image's containers have
 +//	                        run before, by the sha256 of each program's
-+//	                        image, so the page compiles them while the
-+//	                        kernel boots
++//	                        image; those most of them ran are compiled
++//	                        while the kernel boots
 +//	pisco/lifted/<sha>.wasm one of them
-+//	pisco/lift?sha=&fns=    POST: a program met for the first time, its
-+//	                        image as the body. Lifted here, on the host
++//	pisco/lift?sha=&len=    POST: a program met for the first time: its
++//	                        image (len bytes), then the addresses of the
++//	                        functions its dynamic symbols name (u64s, the
++//	                        lifter's entries). Lifted here, on the host
 +//	                        (TABC_PISCO_LIFT, the lifter and wasi-sdk),
 +//	                        once: kept by its sha256 for every image
 +//	pisco/<file>            PISCO's runtime and loader, from the share
@@ -101,6 +103,7 @@ index 0000000..5c64fc0
 +
 +import (
 +	"crypto/sha256"
++	"encoding/binary"
 +	"encoding/hex"
 +	"encoding/json"
 +	"fmt"
@@ -108,10 +111,10 @@ index 0000000..5c64fc0
 +	"net/http"
 +	"os"
 +	"os/exec"
++	"strconv"
 +
 +	"path/filepath"
 +	"regexp"
-+	"sort"
 +	"strings"
 +	"sync"
 +	"time"
@@ -123,18 +126,22 @@ index 0000000..5c64fc0
 +	lift  string // the script that lifts one program
 +	logf  func(string, ...any)
 +	mu    sync.Mutex
++	seen  map[string]bool // the programs this container ran
 +	share func(w http.ResponseWriter, r *http.Request, name string)
 +}
 +
 +var shaPattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
-+var fnsPattern = regexp.MustCompile(`^[0-9a-f,]*$`)
 +
 +func newPisco(layers []string, logf func(string, ...any), share func(http.ResponseWriter, *http.Request, string)) *piscoServer {
 +	base, err := os.UserCacheDir()
 +	if err != nil {
 +		base = os.TempDir()
 +	}
-+	h := sha256.Sum256([]byte(strings.Join(layers, "\n")))
++	names := make([]string, len(layers)) // (a layer's file is named by its digest: the key is the image's, wherever the cache is)
++	for i, l := range layers {
++		names[i] = filepath.Base(l)
++	}
++	h := sha256.Sum256([]byte(strings.Join(names, "\n")))
 +	return &piscoServer{
 +		dir:   filepath.Join(base, "tabc", "pisco"),
 +		key:   hex.EncodeToString(h[:16]),
@@ -149,44 +156,66 @@ index 0000000..5c64fc0
 +	return filepath.Join(p.dir, "lifted", sha+".wasm")
 +}
 +
-+// remember adds a program to this image's list.
++// imageRecord is what this image's containers ran: how many containers
++// asked for the index, and how many of them ran each program.
++type imageRecord struct {
++	Runs     int            `json:"runs"`
++	Programs map[string]int `json:"programs"`
++}
++
++func (p *piscoServer) load() imageRecord {
++	r := imageRecord{Programs: map[string]int{}}
++	if data, err := os.ReadFile(p.record()); err == nil {
++		json.Unmarshal(data, &r)
++	}
++	if r.Programs == nil {
++		r.Programs = map[string]int{}
++	}
++	return r
++}
++
++func (p *piscoServer) save(r imageRecord) {
++	data, _ := json.Marshal(r)
++	os.MkdirAll(filepath.Dir(p.record()), 0o755)
++	os.WriteFile(p.record(), data, 0o644)
++}
++
++// remember counts a program once for this container.
 +func (p *piscoServer) remember(sha string) {
 +	p.mu.Lock()
 +	defer p.mu.Unlock()
-+	known := map[string]bool{}
-+	if data, err := os.ReadFile(p.record()); err == nil {
-+		var list []string
-+		if json.Unmarshal(data, &list) == nil {
-+			for _, s := range list {
-+				known[s] = true
-+			}
-+		}
++	if p.seen == nil {
++		p.seen = map[string]bool{}
 +	}
-+	if known[sha] {
++	if p.seen[sha] {
 +		return
 +	}
-+	known[sha] = true
-+	list := make([]string, 0, len(known))
-+	for s := range known {
-+		list = append(list, s)
-+	}
-+	sort.Strings(list)
-+	data, _ := json.Marshal(list)
-+	os.MkdirAll(filepath.Dir(p.record()), 0o755)
-+	os.WriteFile(p.record(), data, 0o644)
++	p.seen[sha] = true
++	r := p.load()
++	r.Programs[sha]++
++	p.save(r)
 +}
 +
 +func (p *piscoServer) serve(w http.ResponseWriter, r *http.Request, rest string) {
 +	switch {
 +	case rest == "index.json":
-+		index := map[string]string{}
-+		if data, err := os.ReadFile(p.record()); err == nil {
-+			var list []string
-+			json.Unmarshal(data, &list)
-+			for _, sha := range list {
-+				if _, err := os.Stat(p.module(sha)); err == nil {
-+					index[sha] = sha + ".wasm"
-+				}
++		// every program this image's containers ran, and whether to compile it
++		// while the kernel boots: those most of them ran (the shell, musl's
++		// loader). The others are compiled when they are first met.
++		p.mu.Lock()
++		r := p.load()
++		runs := r.Runs
++		r.Runs++
++		p.save(r)
++		p.mu.Unlock()
++		type entry struct {
++			File  string `json:"file"`
++			Eager bool   `json:"eager"`
++		}
++		index := map[string]entry{}
++		for sha, n := range r.Programs {
++			if _, err := os.Stat(p.module(sha)); err == nil {
++				index[sha] = entry{sha + ".wasm", 2*n >= runs}
 +			}
 +		}
 +		writeJSON(w, index)
@@ -206,15 +235,21 @@ index 0000000..5c64fc0
 +}
 +
 +func (p *piscoServer) serveLift(w http.ResponseWriter, r *http.Request) {
-+	sha, fns := r.URL.Query().Get("sha"), r.URL.Query().Get("fns")
-+	if !shaPattern.MatchString(sha) || !fnsPattern.MatchString(fns) {
++	sha := r.URL.Query().Get("sha")
++	size, err := strconv.Atoi(r.URL.Query().Get("len"))
++	if !shaPattern.MatchString(sha) || err != nil || size < 0 {
 +		http.Error(w, "bad request", http.StatusBadRequest)
 +		return
 +	}
-+	image, err := io.ReadAll(io.LimitReader(r.Body, 256<<20))
-+	if err != nil {
-+		http.Error(w, err.Error(), http.StatusBadRequest)
++	body, err := io.ReadAll(io.LimitReader(r.Body, 512<<20))
++	if err != nil || len(body) < size || (len(body)-size)%8 != 0 {
++		http.Error(w, "bad request", http.StatusBadRequest)
 +		return
++	}
++	image, entries := body[:size], body[size:]
++	var fns []string
++	for k := 0; k+8 <= len(entries); k += 8 {
++		fns = append(fns, strconv.FormatUint(binary.LittleEndian.Uint64(entries[k:]), 16))
 +	}
 +	if got := sha256.Sum256(image); hex.EncodeToString(got[:]) != sha {
 +		http.Error(w, "the image is not the one named", http.StatusBadRequest)
@@ -235,7 +270,7 @@ index 0000000..5c64fc0
 +
 +var liftLock sync.Mutex
 +
-+func (p *piscoServer) liftOne(sha string, image []byte, fns, out string) error {
++func (p *piscoServer) liftOne(sha string, image []byte, fns []string, out string) error {
 +	if p.lift == "" {
 +		return fmt.Errorf("a program no one has lifted (sha256 %s), and no TABC_PISCO_LIFT to lift it", sha[:16])
 +	}
@@ -251,11 +286,7 @@ index 0000000..5c64fc0
 +	}
 +	defer os.Remove(elf)
 +	args := []string{elf, "p_" + sha[:16], out}
-+	for _, f := range strings.Split(fns, ",") {
-+		if f != "" {
-+			args = append(args, f)
-+		}
-+	}
++	args = append(args, fns...)
 +	p.logf("pisco: lifting a program met for the first time (%d bytes, sha256 %s)", len(image), sha[:16])
 +	start := time.Now()
 +	cmd := exec.Command(p.lift, args...)
@@ -368,10 +399,10 @@ index 4f2793f..6f15d45 100644
    setStatus(State.WAITING, "created");
 diff --git a/page/pisco.js b/page/pisco.js
 new file mode 100644
-index 0000000..217562f
+index 0000000..5fd01d9
 --- /dev/null
 +++ b/page/pisco.js
-@@ -0,0 +1,157 @@
+@@ -0,0 +1,162 @@
 +// PISCO in tabc's guest: an amd64 image's programs run as lifted wasm (PISCO's lifter: x86-64 to C to wasm, ahead
 +// of time), as ordinary tasks of the same unkernel kernel, instead of under an emulator.
 +//
@@ -415,8 +446,12 @@ index 0000000..217562f
 +  ]);
 +  trampoline = new WebAssembly.Instance(tramp, { js: { tab: ttab } });
 +  const modules = new Map();
-+  for (const [sha, file] of Object.entries(index)) modules.set(sha, compile(new URL(`lifted/${file}`, BASE)));
-+  log(`runtime and ${modules.size} lifted programs fetching (${ms()})`);
++  // those most of this image's containers ran are compiled now; the others when they are first met
++  for (const [sha, { file, eager }] of Object.entries(index)) {
++    const url = new URL(`lifted/${file}`, BASE);
++    if (eager) { const p = compile(url); modules.set(sha, () => p); } else modules.set(sha, () => compile(url));
++  }
++  log(`runtime fetched; ${[...Object.values(index)].filter((e) => e.eager).length} of ${modules.size} lifted programs compiling (${ms()})`);
 +  return { runtime, loader, modules };
 +})() : null;
 +
@@ -486,12 +521,13 @@ index 0000000..217562f
 +  // a program's module, by its image's sha256: loaded once; a second task that meets it meanwhile waits for it
 +  const loading = new Map();
 +  const load = async (sha, image, entries) => {
-+    let pending = modules.get(sha);
++    let pending = modules.get(sha)?.();
 +    if (!pending) {
 +      // met for the first time: the supervisor lifts it on the host (once; kept by its sha256)
 +      log(`lifting a program met for the first time (${image.length} bytes, sha256 ${sha.slice(0, 16)}): once, on the host`);
 +      const t = performance.now();
-+      const r = await fetch(new URL(`lift?sha=${sha}&fns=${entries}`, BASE), { method: "POST", body: image });
++      const body = new Uint8Array(image.length + entries.length); body.set(image); body.set(entries, image.length);
++      const r = await fetch(new URL(`lift?sha=${sha}&len=${image.length}`, BASE), { method: "POST", body });
 +      if (!r.ok) { log(`could not lift it: ${await r.text()}`); return 0; }
 +      pending = WebAssembly.compile(await r.arrayBuffer());
 +      log(`lifted it in ${((performance.now() - t) / 1000).toFixed(1)} s`);
@@ -503,7 +539,7 @@ index 0000000..217562f
 +  const programImage = new WebAssembly.Suspending(async (addr, len, fns, nfns) => {
 +    // (what the runtime hands over is read before the first await: another task may run while this one waits)
 +    const image = new Uint8Array(kmem.buffer, addr, len).slice();
-+    const entries = [...new BigUint64Array(kmem.buffer.slice(fns, fns + 8 * nfns))].map((v) => v.toString(16)).join(",");
++    const entries = new Uint8Array(kmem.buffer.slice(fns, fns + 8 * nfns));   // (the functions its dynamic symbols name: u64s)
 +    const sha = hex(await crypto.subtle.digest("SHA-256", image));
 +    if (!loading.has(sha)) loading.set(sha, load(sha, image, entries).catch((e) => { log(`${sha.slice(0, 16)}: ${e}`); return 0; }));
 +    return loading.get(sha);

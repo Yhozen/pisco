@@ -196,10 +196,11 @@ static u64 off_of(const u8 *ph, unsigned phnum, u64 va) {
     if (t == 1 && va >= v && va < v + fs) return off + (va - v); }
   return ~0ull;
 }
-static u64 fns[4096]; static unsigned n_fns;
+enum { MAX_FNS = 16384 };
+static u64 fns[MAX_FNS]; static unsigned n_fns;
 static void dynamic_functions(const u8 *img, u64 size, const u8 *ph, unsigned phnum, u64 bias, u64 symtab, u64 strtab) {
   u64 so = symtab ? off_of(ph, phnum, symtab) : ~0ull; if (so == ~0ull || strtab <= symtab) return;
-  for (u64 k = 0; k < (strtab - symtab) / 24 && so + 24 * (k + 1) <= size && n_fns < 4096; k++) {
+  for (u64 k = 0; k < (strtab - symtab) / 24 && so + 24 * (k + 1) <= size && n_fns < MAX_FNS; k++) {
     u8 info = img[so + 24 * k + 4]; u16 shndx; u64 value; memcpy(&shndx, img + so + 24 * k + 6, 2); memcpy(&value, img + so + 24 * k + 8, 8);
     if ((info & 15) == 2 && shndx && value) fns[n_fns++] = bias + value;
   }
@@ -211,7 +212,8 @@ static void relocate(u8 *img, u64 size, const u8 *ph, unsigned phnum, u64 bias, 
   u64 rela = 0, relasz = 0, relr = 0, relrsz = 0, jmprel = 0, pltsz = 0, symtab = 0, strtab = 0;
   for (u64 k = 0; k + 16 <= dynsz; k += 16) { u64 tag, v; memcpy(&tag, img + dyn + k, 8); memcpy(&v, img + dyn + k + 8, 8);
     if (tag == 0) break; if (tag == 7) rela = v; if (tag == 8) relasz = v; if (tag == 35) relrsz = v; if (tag == 36) relr = v;
-    if (tag == 23) jmprel = v; if (tag == 2) pltsz = v; if (tag == 6) symtab = v; if (tag == 5) strtab = v; }
+    if (tag == 23) jmprel = v; if (tag == 2) pltsz = v; if (tag == 6) symtab = v; if (tag == 5) strtab = v;
+    if ((tag == 12 || tag == 13) && v && n_fns < MAX_FNS) fns[n_fns++] = bias + v; }   // DT_INIT, DT_FINI: the loader calls them
   dynamic_functions(img, size, ph, phnum, bias, symtab, strtab);
   if (!apply) return;
   u64 so = symtab ? off_of(ph, phnum, symtab) : ~0ull;
@@ -295,7 +297,7 @@ static int ask_host(Cpu *c, u64 pc) {
   for (unsigned i = 0; i < phnum; i++) { u32 t; u64 off, va, fs; memcpy(&t, ph + 56 * i, 4); memcpy(&off, ph + 56 * i + 8, 8); memcpy(&va, ph + 56 * i + 16, 8); memcpy(&fs, ph + 56 * i + 32, 8);
     if (t == 1 && fs && !user_read(c, va + bias, img + off, (unsigned)fs, 1)) { free(img); return 0; } }
   n_fns = 0; relocate(img, size, ph, (unsigned)phnum, bias, apply);
-  if (n_fns < 4096) fns[n_fns++] = pc;
+  if (n_fns < MAX_FNS) fns[n_fns++] = pc;
   u64 po; memcpy(&po, h + 32, 8); u8 *p = img + po; u16 pn; memcpy(&pn, h + 56, 2);
   if (po + 56u * pn <= size) for (unsigned i = 0; i < pn; i++) {
     u32 t; memcpy(&t, p + 56 * i, 4);
@@ -554,7 +556,7 @@ void rt_cpuid(Cpu *c) {
   switch (leaf) {   // rt/microvm-x64/apic.c's CPU, as a program sees it
   case 0: a = 0x16; b = 0x756E6547; d = 0x49656E69; cx = 0x6C65746E; break;
   case 1: a = 0x000906EA; b = 0x00010800;
-    cx = 1u << 0 | 1u << 1 | 1u << 9 | 1u << 13 | 1u << 19 | 1u << 20 | 1u << 23;
+    cx = 1u << 0 | 1u << 9 | 1u << 13 | 1u << 19 | 1u << 20 | 1u << 23;   // (no PCLMULQDQ: the lifter has no carry-less multiply)
     d = 1u << 0 | 1u << 4 | 1u << 5 | 1u << 6 | 1u << 8 | 1u << 11 | 1u << 13 | 1u << 15 | 1u << 16 | 1u << 19 | 1u << 23 | 1u << 24 | 1u << 25 | 1u << 26; break;
   case 0x80000000: a = 0x80000008; break;
   case 0x80000001: cx = 1u << 0; d = 1u << 11 | 1u << 20 | 1u << 29; break;
