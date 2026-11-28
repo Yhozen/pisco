@@ -14,7 +14,8 @@
 //   there (OPFS: what apps stored) and use it again next time, with PORT=<n> for the same origin (OPFS is per origin);
 //   SCREENSHOT=<out.png> the page as it is when the app ends (an app that prints: its text, in the page's colours);
 //   TYPE=<text> typed into the page as key presses after TYPE_AT seconds (default 5), a newline as Enter (a machine's
-//   console, rt/microvm-x64)
+//   console, rt/microvm-x64); STATES=<folder> the server keeps machines' state files there (tools/serve.mjs --states,
+//   web/browser/state.js); END_ON=<regex> end (and take SCREENSHOT) when a line of the page's console matches it
 import { spawn } from 'node:child_process'; import path from 'node:path'; import fs from 'node:fs'; import os from 'node:os';
 import { sessionEnv, sessionSteps } from '../web/session.mjs';
 import { isImageDir } from '../web/image.mjs';
@@ -26,7 +27,7 @@ const capture = process.env.CAPTURE ? path.resolve(process.env.CAPTURE) : null;
 const dirs = image ? [image] : [path.dirname(path.resolve(wasm)), path.dirname(path.resolve(exe))];
 const shots = image ? `${image}-shots` : path.join(path.dirname(path.resolve(wasm)), 'shots');
 const server = spawn(process.execPath, [path.join(root, 'tools/serve.mjs'), port, path.join(root, 'web'), ...dirs, ...(capture ? ['--capture', capture] : []),
-  '--shots', shots], { stdio: 'inherit' });
+  '--shots', shots, ...(process.env.STATES ? ['--states', process.env.STATES] : [])], { stdio: 'inherit' });
 // the runtime's settings for the page: every SW_* of the environment (SW_TRACE has its own, older, page option), the session as its steps
 const settings = Object.entries(process.env).filter(([k]) => k.startsWith('SW_') && k !== 'SW_TRACE' && k !== 'SW_SESSION');
 if (process.env.SW_SESSION) {
@@ -59,7 +60,7 @@ ws.onmessage = (e) => {
   const m = JSON.parse(e.data);
   if (m.method === 'Runtime.consoleAPICalled') {
     const s = m.params.args.map((a) => a.value ?? a.description ?? '').join(' ');
-    const x = s.match(/^pisco exit (-?\d+)$/);
+    const x = s.match(/^pisco exit (-?\d+)$/) || (process.env.END_ON && new RegExp(process.env.END_ON).test(s) && (console.log(s), [s, '0']));
     if (x && process.env.SCREENSHOT) { shotId = ++id; exitCode = +x[1]; ws.send(JSON.stringify({ id: shotId, method: 'Page.captureScreenshot', params: { format: 'png', captureBeyondViewport: true } })); }
     else if (x) done(+x[1]); else console.log(s);
   }

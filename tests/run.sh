@@ -426,6 +426,7 @@ for s in ${*:-build layout spec store node bench win32 linux microvm avx ffp glf
   microvm) if command -v gcc > /dev/null && [ "$(uname -m)" = x86_64 ]; then step microvm microvm; else echo "skip  microvm: it needs gcc for x86-64 (fixtures/microvm-hello/build.sh)"; fi ;;
   kernel) if [ -f out/linux/vmlinux ]; then LINES_SHOWN=2 step kernel kernel; else echo "skip  kernel: out/linux is not built (tools/build-linux.sh)"; fi ;;
   net)    if [ -f out/linux/vmlinux ]; then LINES_SHOWN=3 step net net; else echo "skip  net: out/linux is not built (tools/build-linux.sh)"; fi ;;
+  snapshot) if [ -f out/npm/node_modules/agentfs-sdk/dist/index_node.js ]; then LINES_SHOWN=2 step snapshot tests/snapshot.sh; else echo "skip  snapshot: no AgentFS SDK in out/npm (tools/setup-agentfs.sh)"; fi ;;
   chrome) LINES_SHOWN=6 step chrome chrome ;;
   nd)     if [ -f "$ND/Narbacular Drop.exe" ]; then LINES_SHOWN=3 step nd nd; else echo "skip  nd: the game is not installed (ND=$ND)"; fi ;;
   ffp)    if command -v naga > /dev/null; then step ffp tests/gfx/d3d9-ffp.sh; else echo "skip  ffp: naga is not installed (tools/setup-toolchain.sh naga)"; fi ;;

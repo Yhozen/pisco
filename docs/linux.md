@@ -372,6 +372,47 @@ Two things the network brought out, which were not the network's:
 and `wget` a page from a web server on the host's loopback. The page has no network yet: it needs a host that
 terminates the frames there (unkernel's own does it through a Wisp server over a WebSocket).
 
+## What it took (S0): the machine's state as one file
+
+A running machine is snapshotted into one file, an [AgentFS](https://github.com/tursodatabase/agentfs) database
+(SQLite), and goes on from it in another process: in Node, in the page, or one after the other. Why this design, and
+what unkernel and AgentFS taught: [research/state-as-a-file.md](research/state-as-a-file.md).
+
+- **All the machine is in the module's memory**: its RAM, its registers (`Cpu`, `Machine`), the APIC, the 16550, virtio's
+  queues, the disk's bytes, the runtime's own heap. What is not is the host stack of each kernel task (JSPI). A snapshot
+  is taken where those hold nothing the guest's stacks do not (`rt/microvm-x64/snapshot.c`): at a poll at a function's
+  start, or at a halt, once no task waits in a fault's handler (each level says whether a fresh host stack could go
+  back where it returns: `resumable`).
+- **Going on** (`rt_restore`): the memory is put back into a new instance of the same module, its programs' modules
+  loaded first as they were (bash: the same table slots, the same addresses). Every host stack is dropped. The CPU
+  goes on where the snapshot was taken, and every other task starts afresh on a new host stack when it is switched to,
+  as a task never run does, entering the code after `__switch_to_asm`'s stack switch, its registers and return
+  addresses on its kernel stack. The clock goes on from the machine's time.
+- **The lifter** makes the instruction after a `hlt` an entry of lifted code, as it already did for return addresses,
+  the instructions after `syscall`s and loops' heads.
+- **The file** (`web/state.mjs`): `/machine/snapshots/<id>.json` (where the CPU goes on, the memory's size, its 64 KiB
+  chunks by sha256, the console's last screen, the host that took it, its parent), `/machine/chunks/<sha256>` (each
+  chunk gzipped, chunks of zeros left out, one file per chunk however many snapshots hold it), `machine:head` in the
+  key-value store, and a log of every snapshot and restore (`tool_calls`: `agentfs timeline <file>`). It is written
+  through `agentfs-sdk`: Turso's engine in Node, Turso's wasm build in the page, the file in OPFS.
+- **Hosts**: Node with `SW_STATE=<file>` goes on from the file's last snapshot, and Ctrl-] in a terminal takes one and
+  ends the run. The page keeps `pisco-<image>.db` in OPFS, with a panel to take a snapshot, go back to any snapshot,
+  push the file to the server or pull one from it (`tools/serve.mjs --states <dir>`, the folder Node's runs read), and
+  download or open the file. With `SW_STATE_URL` (Node) or `&turso=<url>` (the page) the file is a replica of a
+  database in Turso's cloud; that is wired but not checked yet.
+
+```sh
+tools/setup-agentfs.sh                                   # out/npm: agentfs-sdk, Turso's engines, the page's bundle
+SW_STATE=out/states/pisco-linux.db SW_CMDLINE="$(cat recipes/linux/cmdline) rdinit=/bin/sh" target/release/pisco run out/images/linux
+                                                         # a shell; Ctrl-] keeps it in the file; the same again goes on from it
+node tools/serve.mjs 8000 web out/images/linux --states out/states   # the page: its panel pushes and pulls that same file
+# http://127.0.0.1:8000/browser/index.html?image=/files/0/&SW_CMDLINE=console%3DttyS0%20rdinit%3D/bin/sh&pull=1
+```
+
+`tests/run.sh snapshot` checks it: the test kernel snapshotted in ring 3 goes on to its end in another process, as an
+unbroken run prints it, and a Linux shell's file in its tmpfs, its variable, its working folder and a counter in the
+background all go on in a second process.
+
 ## Limits
 
 - In the page only programs lifted when the image is built run; in Node any program or library is lifted when its
@@ -388,6 +429,9 @@ terminates the frames there (unkernel's own does it through a Wisp server over a
 - One CPU. The network only in Node, IPv4 only, and of UDP only DHCP and DNS (unkernel's stack has no more). The
   disk's writes stay in memory: the file it was read from does not change.
 - Only what was lifted before the kernel starts can run: here the kernel and busybox.
+- Snapshots: none of a machine with a network (its peers' connections are the host's), none after a program was
+  lifted while the machine ran (its module is not in the image). A snapshot holds the whole memory but its zeros; the
+  kernel's caches are not dropped first.
 
 ## Progress
 
@@ -408,3 +452,4 @@ terminates the frames there (unkernel's own does it through a Wisp server over a
 | K12 | a distribution's program, position-independent and dynamically linked: Alpine's busybox on musl's loader | done |
 | K13 | libraries: one a program is linked against, one it opens (`dlopen`), each lifted when its code is first met | done |
 | K14 | a network: virtio's network device, unkernel's network stack in Node; a lease, a name and a page fetched | done |
+| S0 | the machine's state as one file: a running Linux snapshotted into an AgentFS database and gone on from it in another process, Node or the page | done (a proof of concept) |

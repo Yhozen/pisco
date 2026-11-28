@@ -250,6 +250,8 @@ static void enter(Cpu *c, u64 pc) {
   uart_flush();
   rt_fatal("machine: the CPU goes on at 0x%llx, which is no lifted function and no return address", pc);
 }
+int machine_enterable_kernel(u64 pc) { return find(fn_addrs, fn_count, pc) >= 0 || find(rt_resume_at, rt_resume_count, pc) >= 0; }
+int machine_is_function(Cpu *c, u64 pc) { Code k = code_of(c, pc); return find(k.fn_addrs, k.fn_count, pc) >= 0; }
 // an indirect call or jump: a function's start, or a return address in one (a program's longjmp jumps to the
 // return address of its setjmp): then what was running is abandoned and the code is entered there, in the loop
 // that runs it (the innermost level's, or the task's root)
@@ -304,6 +306,29 @@ void rt_switch(Cpu *c, u64 rsp, u64 next) {
   if (dead) co_dead = me;
   host_co_switch(me->id, to->id, start, dead);
   rt_sp_set(me->sp); me->parked = 0; co_cur = me; reap();
+}
+
+// ---- snapshots (snapshot.c) ----
+// A parked task's host stack holds only what its guest stack holds too: it was left in __switch_to_asm, and the
+// address it goes on at, its registers and every return address are on the kernel's stack. What a host stack
+// started afresh could not do again is a level's way back into the code that raised it (a fault, retried at an
+// instruction nothing else enters): a snapshot waits until no task has one.
+int machine_resumable(void) {
+  for (int i = 0; i < n_co; i++) {
+    if (tasks[i]->free) continue;
+    for (Level *l = tasks[i]->levels; l; l = l->prev) if (!l->resumable) return 0;
+  }
+  return 1;
+}
+// a snapshot goes on: no host stack of before is there. Every task but this one is found by its kernel stack
+// pointer when it is switched to, as a task never run is: a new host stack that enters the code after the switch
+void machine_restart(u64 pc) {
+  for (int i = 0; i < n_co; i++) { Co *t = tasks[i]; if (t->cstack) free(t->cstack); t->cstack = 0; t->free = 1; t->parked = 0; t->levels = 0; }
+  co_dead = 0; machine_programs_forget();
+  Co *co = co_new(); co->started = 1; co_cur = co;   // (on the module's own C stack, as the boot task)
+  co->root_pc = pc;
+  root_loop(&cpu, co);
+  __builtin_unreachable();
 }
 
 // ---- the start ----

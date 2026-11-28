@@ -1082,6 +1082,8 @@ fn decode_func(img: &Image, entry: u64, entries: &BTreeSet<u64>) -> (Func, BTree
                 }
                 // a machine's task switch (__switch_to_asm's load of the next task's stack): a new task starts after it
                 if is_switch(img, &ins) { f.leaders.insert(next); f.rets.insert(next); }
+                // a machine's halt: a snapshot taken while the CPU waits there goes on after it (rt/microvm-x64/snapshot.c)
+                if img.machine && ins.mnemonic() == Mnemonic::Hlt && img.is_code(next) { f.leaders.insert(next); f.rets.insert(next); }
                 // a machine's jump back: an interrupt is taken on it (rt/cpu.h POLL), and the code goes on at its target,
                 // where the kernel may also send it back later (after a signal's handler): a return address
                 if img.machine && matches!(ins.flow_control(), FlowControl::UnconditionalBranch | FlowControl::ConditionalBranch) && ins.op0_kind() == OpKind::NearBranch64 && ins.near_branch_target() <= ip {

@@ -96,6 +96,7 @@ typedef struct Level {
   jmp_buf loop;        // the loop that runs its handler, entered again at loop_pc when the handler goes elsewhere
   volatile u64 loop_pc;
   u64 want_rip, alt_rip; int want_cpl;
+  int resumable;       // its handler can come back to want_rip on a host stack started afresh (a snapshot's: snapshot.c)
   struct Level *prev;
 } Level;
 typedef struct Co {
@@ -111,3 +112,12 @@ extern Co *co_cur;
 void run_level(Cpu *c, Level *l, u64 pc) __attribute__((noreturn));
 void machine_programs_forget(void);   // the address space changed: which program runs is found again
 extern const u64 rt_machine_entry, rt_machine_pgt;
+int machine_enterable_kernel(u64 pc);   // the kernel's lifted code can be entered there: a function, or a return address
+int machine_is_function(Cpu *c, u64 pc);   // a lifted function starts there (in the address space that runs)
+int machine_resumable(void);          // every task's host stack could be started afresh from the guest's own stack
+void machine_restart(u64 pc) __attribute__((noreturn));   // the tasks' host stacks dropped; the CPU goes on at pc
+
+// ---- snapshots (snapshot.c): the machine's state is its memory, taken where no host stack holds any of it ----
+int machine_snapshot_wanted(void);
+void machine_snapshot(Cpu *c, u64 pc);   // at a safe point (a poll at a function's start, a halt): pc is where it goes on
+void apic_clock_restored(void);          // the host's clock goes on from the machine's

@@ -17,6 +17,7 @@
 import { startBackend } from '../gpu/backend.js';
 import { fetchImage, blobPath } from '../image.mjs';
 import { createKernel } from '../kernel.mjs';
+import { openPageState } from './state.js';
 const q = new URLSearchParams(location.search);
 const status = document.getElementById('status'), out = document.getElementById('out'), canvas = document.getElementById('screen');
 const bus = new BroadcastChannel('pisco');
@@ -24,6 +25,9 @@ const workers = [];
 let line = '';
 const POOL = 32; // guest threads come from workers the page starts ahead of time (see worker.js)
 let ctl, boot, memory, device, dir, drive = null, folder = null;
+// a machine's state (web/browser/state.js): its snapshot word, its console ring, what its console printed last
+let stateUI = null, snapWord = 0, consoleAt = 0, screen = '', snapshotOn = q.get('snapshot_on');
+const requestSnapshot = () => { if (!snapWord || !memory) return false; Atomics.store(new Int32Array(memory.buffer, snapWord, 1), 0, 1); if (consoleAt) Atomics.notify(new Int32Array(memory.buffer, consoleAt, 1), 0); return true; };
 // ---- the app's text: a terminal. Lines of cells, a cursor that moves (CR, LF as CR LF, BS, TAB, and the CSI
 // sequences for the cursor, erasing and the SGR colours: 16, 256 and 24-bit, bold, dim, italic, underline, reverse).
 // What it does not know (other escapes, OSC) is left out. A Linux app is told how wide it is (SW_TTY, below). ----
@@ -198,6 +202,7 @@ function startInput(addr) {
 }
 // ---- a machine's console (rt/microvm-x64/devices.c): the keys typed, as a terminal sends them, into its ring ----
 function startConsole(addr) {
+  consoleAt = addr;
   const u32 = new Uint32Array(memory.buffer, addr, 4), i32 = new Int32Array(memory.buffer, addr, 4), data = new Uint8Array(memory.buffer, addr + 16, u32[2]);
   const put = (s) => { for (const b of new TextEncoder().encode(s)) { if (u32[0] - Atomics.load(u32, 1) >= u32[2]) break; data[u32[0] % u32[2]] = b; Atomics.store(u32, 0, u32[0] + 1); } Atomics.notify(i32, 0); };
   const seq = { Enter: '\r', Backspace: '\x7f', Tab: '\t', Escape: '\x1b', ArrowUp: '\x1b[A', ArrowDown: '\x1b[B', ArrowRight: '\x1b[C', ArrowLeft: '\x1b[D',
@@ -270,6 +275,8 @@ bus.onmessage = (e) => {
   const m = e.data;
   if (m.out !== undefined) {
     print(m.out); line += m.out;
+    screen = (screen + m.out).slice(-65536);
+    if (snapshotOn && screen.includes(snapshotOn) && requestSnapshot()) snapshotOn = null;
     const parts = line.split('\n'); line = parts.pop(); for (const l of parts) console.log(l);
   }
   if (m.refill !== undefined) startPooled(m.refill);
@@ -334,6 +341,15 @@ else {
   const kernel = WebAssembly.Module.exports(module).some((e) => e.name === 'rt_fork_resume') ? createKernel() : null, programs = image?.config.programs || null;
   // a machine's programs in modules of their own (rt/microvm-x64): fetched here, loaded by the worker (web/side.mjs)
   const side = image?.config.side ? await Promise.all(Object.entries(image.config.side).map(async ([n, d]) => [n, await (await fetch(image.url + blobPath(d))).arrayBuffer()])) : [];
+  // a machine's state: a snapshot to go on from, in the AgentFS file the page keeps in OPFS (&state=0: none)
+  let restore = null;
+  if (image && WebAssembly.Module.exports(module).some((e) => e.name === 'rt_snapshot_word') && q.get('state') !== '0') {
+    try {
+      stateUI = await openPageState({ q, image, log: (s) => console.log(s), request: requestSnapshot });
+      restore = await stateUI.restore();
+      if (restore) { screen = restore.screen || ''; print(screen); status.textContent = `going on from snapshot ${restore.id} (taken by ${restore.from})`; }
+    } catch (e) { log(`state: ${e.message} (no snapshots in this run)`); stateUI = null; }
+  }
   boot = { module, memory, dir, drive, folder, tids, args, env, store, t0: performance.timeOrigin, kernel, programs, side };
   for (let i = 0; i < POOL; i++) startPooled(i);
   const compiled = new Map();
@@ -342,6 +358,8 @@ else {
     const w = new Worker('worker.js', { type: 'module' }); workers.push(w);
     w.onmessage = async (e) => {
       const m = e.data, one = () => new Int32Array(new SharedArrayBuffer(4)).fill(1);
+      if (m.snapshotWord !== undefined) snapWord = m.snapshotWord;
+      if (m.snapshot && stateUI) stateUI.save({ ...m.snapshot, screen }).catch((err) => log(`state: ${err.message}`));
       if (m.fork) startProcess({ ...boot, module: m.fork.module, memory: m.fork.memory, pid: m.fork.pid, mode: 'fork', tids: one(), args: [], tid: 0, pool: { ctl, slot: -1 } });
       if (m.exec) {
         const mod = await moduleOf(m.exec.program.blob);
@@ -352,5 +370,5 @@ else {
     };
     w.postMessage(data);
   };
-  startProcess({ ...boot, tid: 0, pid: 1, mode: 'start', pool: { ctl, slot: -1 } });
+  startProcess({ ...boot, tid: 0, pid: 1, mode: 'start', pool: { ctl, slot: -1 }, restore, snapshots: !!stateUI });
 }

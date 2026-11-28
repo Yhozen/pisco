@@ -14,7 +14,7 @@ module's functions, memory and table ([web/side.mjs](../../web/side.mjs)).
 
 ## `host` functions
 
-34 functions, by the runtime that imports them (a module imports only its base's).
+35 functions, by the runtime that imports them (a module imports only its base's).
 
 | Function | Signature (C) | Imported by | Means |
 |---|---|---|---|
@@ -46,6 +46,7 @@ module's functions, memory and table ([web/side.mjs](../../web/side.mjs)).
 | `proc_wait` | `s32 host_proc_wait(s32 pid, u32 nohang, u32 *code)` | linux-x64 | the child that ended (0: none yet with nohang; -ECHILD) |
 | `program_image` | `int host_program_image(u32 image, u32 len, u32 fns, u32 n_fns)` | microvm-x64 | the machine met code no program it has holds: the program's image, read from memory, and its functions' addresses (u64s); the host may lift it into a module of its own and load it (web/lift.mjs); 1 when it did |
 | `read_file` | `u32 host_read_file(const char *name, u32 name_len, u64 offset, u64 len, u64 dst)` | core | from the app's folder |
+| `snapshot` | `s32 host_snapshot(u64 pc)` | microvm-x64 | the machine's memory, as it is now, kept; it goes on at pc |
 | `stat` | `s64 host_stat(const char *name, u32 len)` | linux-x64, microvm-x64, core | size, -1 missing, -2 directory |
 | `store_info` | `s64 host_store_info(u32 index, char *name, u32 cap)` | core | size of stored file `index` and its path, -1 after the last |
 | `store_read` | `void host_store_read(u32 index, void *dst)` | core | the bytes of stored file `index` |
@@ -94,6 +95,7 @@ of one run; **debug** is for finding a fault and may change at any time; **tool*
 | `SW_FDS` | process | the open descriptors an execve passes on |
 | `SW_FILES` | debug | every file the app opens |
 | `SW_FMOD_TRACE` | debug | every FMOD call, to set against Wine's +snoop |
+| `SW_FRESH` | run | Node, with SW_STATE: `1`, boot instead of going on from a snapshot |
 | `SW_GL_STATS` | debug | OpenGL's calls between checkpoints |
 | `SW_GPU_TRACE` | debug | the null GPU back end: every record |
 | `SW_GPU_TRACE_FRAME` | debug | the null GPU back end: the records of this frame |
@@ -114,6 +116,11 @@ of one run; **debug** is for finding a fault and may change at any time; **tool*
 | `SW_SESSION` | run | a session to play ([sessions.md](sessions.md)): the host turns it into SW_SESSION_STEPS |
 | `SW_SESSION_STEPS` | run | the steps of a session as the runtime's player reads them, separated by `;` |
 | `SW_SHOT_EVERY` | debug | the page saves every nth flip |
+| `SW_SNAPSHOT_AT` | run | Node, with SW_STATE: the snapshot to go on from, by its id (default: the last) |
+| `SW_SNAPSHOT_ON` | run | Node, with SW_STATE: a snapshot when the console prints this text, then the end of the run |
+| `SW_STATE` | run | Node: the machine's state file, an AgentFS database (web/state.mjs): the run goes on from its last snapshot, and Ctrl-] takes one |
+| `SW_STATE_TOKEN` | run | Node, with SW_STATE_URL: its auth token |
+| `SW_STATE_URL` | run | Node, with SW_STATE: a database in Turso's cloud the file is a replica of (pulled first, pushed after each snapshot) |
 | `SW_STRICT` | run | stop at the first call the runtime does not answer, instead of going on |
 | `SW_TRACE` | debug | trace system calls, the machine's events, side modules |
 | `SW_TRACE_DLL` | debug | trace the calls into these DLLs |

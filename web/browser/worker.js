@@ -5,6 +5,7 @@
 import { loadSide } from '../side.mjs';
 import { driveName } from '../image.mjs';
 import { processImports } from '../kernel.mjs';
+import { captureMemory, restoreMemory } from '../state.mjs';
 const bus = new BroadcastChannel('pisco');
 bus.onmessage = (e) => { if (e.data.stop) close(); };
 const kinds = ['trap', 'instruction not lifted', 'import not implemented', 'indirect call to unknown code', 'image does not fit', 'fatal'];
@@ -20,7 +21,7 @@ onmessage = (e) => {
   } else run(e.data);
 };
 function run(d) {
-  const { module, memory, dir, drive = null, folder = null, tids, tid, args, env, start, pool, store = [], t0 = 0, kernel = null, programs = null, side = [], pid = 1, mode = 'start' } = d;
+  const { module, memory, dir, drive = null, folder = null, tids, tid, args, env, start, pool, store = [], t0 = 0, kernel = null, programs = null, side = [], pid = 1, mode = 'start', restore = null, snapshots = false } = d;
   // one monotonic clock for every thread: each worker's performance.now() counts from its own start
   const clock = () => performance.timeOrigin + performance.now() - t0;
   const u8 = () => new Uint8Array(memory.buffer), dv = () => new DataView(memory.buffer);
@@ -128,6 +129,14 @@ function run(d) {
     // (a network needs a host that terminates its frames: Node only for now, web/net-node.mjs)
     host.net_open = () => bus.postMessage({ out: 'pisco: no network in the page yet (SW_NET is for Node)\n' });
     host.net_send = () => {};
+    // a snapshot (rt/microvm-x64/snapshot.c): the memory copied here, kept by the page (web/browser/state.js)
+    host.snapshot = (pc) => {
+      if (!snapshots) { bus.postMessage({ out: 'pisco: no snapshot: this page keeps no state (&state=0)\n' }); return 0; }
+      const t = performance.now(), cap = captureMemory(memory);
+      console.log(`snapshot at 0x${BigInt.asUintN(64, pc).toString(16)}: ${cap.chunks.length} chunks of ${cap.pages} wasm pages copied in ${(performance.now() - t).toFixed(0)} ms`);
+      postMessage({ snapshot: { pc: pc.toString(), pages: cap.pages, chunks: cap.chunks, side: side.map(([n]) => n) } }, cap.chunks.map((c) => c.data.buffer));
+      return 1;
+    };
     const parked = new Map();
     host.co_switch = new WebAssembly.Suspending((from, to, begin, dead) => {
       const mine = new Promise((resolve) => { if (!dead) parked.set(from, resolve); });   // (a task that died is never resumed: its stack is dropped)
@@ -140,7 +149,14 @@ function run(d) {
   if (machine) {
     coEntry = WebAssembly.promising(instance.exports.rt_co_entry);
     for (const [n, bytes] of side) loadSide(bytes, instance, memory, n);   // its programs in modules of their own
-    WebAssembly.promising(instance.exports._start)().then(() => exit(0), (err) => { bus.postMessage({ out: `pisco: ${err && err.stack || err}\n` }); exit(123); });
+    if (instance.exports.rt_snapshot_word) postMessage({ snapshotWord: instance.exports.rt_snapshot_word() });
+    // a snapshot goes on: its programs' modules were loaded as they were (the same table slots and memory), then its memory
+    const go = restore ? (async () => {
+      if (restore.side.join() !== side.map(([n]) => n).join()) throw new Error(`the snapshot's programs (${restore.side}) are not this image's`);
+      restoreMemory(memory, restore.pages, restore.chunks);
+      return WebAssembly.promising(instance.exports.rt_restore)(BigInt(restore.pc));
+    }) : () => WebAssembly.promising(instance.exports._start)();
+    go().then(() => exit(0), (err) => { bus.postMessage({ out: `pisco: ${err && err.stack || err}\n` }); exit(123); });
     return;
   }
   try {

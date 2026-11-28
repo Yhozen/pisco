@@ -16,7 +16,12 @@ static u32 timer_initial, timer_divide, ldr, dfr = ~0u, esr, icr_lo, icr_hi;
 static u64 timer_deadline = ~0ull, timer_period, tsc_deadline;
 
 int mc_paced;
-static u64 host_ns(void) { static u64 t0; struct timespec t; clock_gettime(CLOCK_MONOTONIC, &t); u64 v = (u64)t.tv_sec * 1000000000ull + (u64)t.tv_nsec; if (!t0) t0 = v; return v - t0; }
+static u64 t0;
+static u64 host_raw(void) { struct timespec t; clock_gettime(CLOCK_MONOTONIC, &t); return (u64)t.tv_sec * 1000000000ull + (u64)t.tv_nsec; }
+static u64 host_ns(void) { u64 v = host_raw(); if (!t0) t0 = v; return v - t0; }
+// a snapshot goes on, on another host (or later): its clock counts from the machine's time, not from that host's start
+// (modulo 2^64: the new host's clock may be behind the machine's, a process that started a second ago)
+void apic_clock_restored(void) { u64 v = host_raw(); t0 = v - mc.now; if (!t0) t0 = ~0ull; }
 u64 rt_rdtsc(void) {
   if (mc_paced) { u64 h = host_ns(); if (h > mc.now) mc.now = h; return mc.now; }   // someone types: the host's time
   int used = CHUNK - mc_budget; if (used < 0) used = 0; if (used > CHUNK) used = CHUNK; return mc.now + (u64)used * POLL_NS;
@@ -129,6 +134,7 @@ void apic_write(u32 r, u32 v) {
 
 // lifted code polled: the clock moves on, and an interrupt that is due and allowed is taken here
 void rt_poll(Cpu *c, u64 ip) {
+  if (__builtin_expect(machine_snapshot_wanted(), 0) && machine_is_function(c, ip)) machine_snapshot(c, ip);
   mc.now = rt_rdtsc(); mc_budget = CHUNK;
   apic_tick(); console_poll(); net_poll();
   if (!(mc_rflags & RFLAGS_IF)) return;
@@ -144,6 +150,7 @@ void rt_hlt(Cpu *c, u64 next) {
   uart_flush();
   volatile u32 *bell = net_bell();
   for (;;) {
+    if (__builtin_expect(machine_snapshot_wanted(), 0) && machine_enterable_kernel(next)) machine_snapshot(c, next);
     u32 rung = bell ? *bell : 0;
     mc.now = rt_rdtsc(); mc_budget = CHUNK; apic_tick(); console_poll(); net_poll();
     int v = (mc_rflags & RFLAGS_IF) ? apic_pending() : -1;

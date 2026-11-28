@@ -36,7 +36,10 @@ void cpu_deliver(Cpu *c, u32 vector, int has_err, u32 err, u64 rip, u64 want) {
   if (old_cpl != 0) mc.seg[S_SS] = 0;
   if (type == 0xE) mc_rflags &= ~RFLAGS_IF;   // an interrupt gate
   mc_rflags &= ~0x14100ull;                   // TF, NT, RF
-  Level l = { .want_rip = want, .alt_rip = rip, .want_cpl = old_cpl, .prev = co_cur->levels };
+  // an interrupt comes back to a poll or a halt (both entries of lifted code); an exception to the instruction that
+  // raised it, which a host stack started afresh can enter only when it is a function or a return address
+  int resumable = want >> 47 ? machine_enterable_kernel(want) : vector >= 32;
+  Level l = { .want_rip = want, .alt_rip = rip, .want_cpl = old_cpl, .resumable = resumable, .prev = co_cur->levels };
   co_cur->levels = &l;
   if (!setjmp(l.jb)) run_level(c, &l, handler);
   co_cur->levels = l.prev;
@@ -60,7 +63,7 @@ void cpu_resume_at(Cpu *c, u64 rip, int cpl) {
   // interrupt or a system call): the code there runs on top, and the code that waits goes on when the kernel comes
   // back to it (sigreturn). (A new program after execve runs on top too; its old frames go with the task.)
   if (cpl == 3 && l && l->want_cpl == 3) {
-    Level n = { .want_rip = ~0ull, .alt_rip = ~0ull, .want_cpl = -1, .prev = l };
+    Level n = { .want_rip = ~0ull, .alt_rip = ~0ull, .want_cpl = -1, .resumable = 1, .prev = l };
     co_cur->levels = &n;
     run_level(c, &n, rip);
   }
@@ -93,7 +96,7 @@ void rt_syscall_m(Cpu *c, u64 next, Flags *f) {
   R[RCX] = next; R[11] = flags_get64(f) | (mc_rflags & RFLAGS_SYS);
   mc.cpl = 0; mc.seg[S_CS] = (u16)((mc.star >> 32) & 0xFFFC); mc.seg[S_SS] = (u16)(((mc.star >> 32) & 0xFFFC) + 8);
   mc_rflags = ((mc_rflags & ~mc.fmask) & RFLAGS_SYS) | 2;
-  Level l = { .want_rip = next, .alt_rip = next, .want_cpl = 3, .prev = co_cur->levels };
+  Level l = { .want_rip = next, .alt_rip = next, .want_cpl = 3, .resumable = 1, .prev = co_cur->levels };   // (after a syscall: a return address)
   co_cur->levels = &l;
   if (!setjmp(l.jb)) run_level(c, &l, mc.lstar);
   co_cur->levels = l.prev;

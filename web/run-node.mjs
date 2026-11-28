@@ -5,7 +5,9 @@
 // Environment: SW_* variables reach the runtime (SW_TRACE, SW_STRICT, SW_CLOCK, ...); SW_SAVES, SW_SESSION and SW_AUDIO_WAV
 // are the host's too. SW_DUMP_RAW=<file> writes each presented frame as packed RGBA (ffmpeg: -f rawvideo -pix_fmt rgba);
 // SW_KEYS=<json> is a scripted keyboard ([[ms, code, keyCode, down], ...], times on the virtual clock, as tools/run-chrome.mjs);
-// SW_MAX_FRAMES is the runtime's (videoout). SW_ROOT=<folder> (a Linux app): the folder is the root of its file system and every program
+// SW_MAX_FRAMES is the runtime's (videoout). SW_STATE=<file> (a machine): its state, an AgentFS database (web/state.mjs): the run
+// goes on from its last snapshot when it has one, and Ctrl-] in a terminal takes one before the run ends (SW_SNAPSHOT_ON=<text>: when
+// the console prints that text, a snapshot, then the end; SW_SNAPSHOT_AT=<id>: another snapshot than the last; SW_FRESH=1: boot). SW_ROOT=<folder> (a Linux app): the folder is the root of its file system and every program
 // in it has its module beside it (bin/bash -> bin/bash.wasm), for execve; with SW_EXE=<path of the first program>.
 // The main thread only supervises: the app's threads (its main thread too) run in workers, so an exit
 // from any of them ends the process even while others are blocked.
@@ -18,6 +20,21 @@ import { isImageDir, openImageDir, driveName, blobPath } from './image.mjs';
 import { createKernel, processImports } from './kernel.mjs';
 import { loadSide } from './side.mjs';
 import { programImage } from './lift.mjs';
+import { captureMemory, restoreMemory, saveSnapshot, loadSnapshot, noteRestore, useBuffer } from './state.mjs';
+// the AgentFS SDK (npm agentfs-sdk, on Turso's engine): installed outside the repository by tools/setup-agentfs.sh.
+// With SW_STATE_URL (and SW_STATE_TOKEN), the file is a replica of a database in Turso's cloud: pulled first, pushed
+// after each snapshot (@tursodatabase/sync)
+const npm = process.env.PISCO_NPM || new URL('../out/npm/node_modules/', import.meta.url).href;
+let stateSync = null;
+const openState = async (file) => {
+  const sdk = await import(npm + 'agentfs-sdk/dist/index_node.js');
+  useBuffer((u8) => Buffer.from(u8.buffer, u8.byteOffset, u8.length));
+  if (!process.env.SW_STATE_URL) return sdk.AgentFS.open({ path: path.resolve(file) });
+  const { connect } = await import(npm + '@tursodatabase/sync/dist/promise.js');
+  stateSync = await connect({ path: path.resolve(file), url: process.env.SW_STATE_URL, authToken: process.env.SW_STATE_TOKEN, clientName: 'pisco-node' });
+  await stateSync.pull();
+  return sdk.AgentFS.openWith(stateSync);
+};
 
 const EXIT = new BroadcastChannel('pisco-exit');
 const GPU_OPEN = new BroadcastChannel('pisco-gpu'); // an app thread opened the GPU ring: the supervisor runs the null back end
@@ -50,7 +67,8 @@ if (isMainThread) {
   if (saves) walk(saves, '', 'pls');
   // the null GPU back end's account of the explicit records (Direct3D 9): a run in which any was inconsistent fails
   let gpu = null; const say = (s) => fs.writeSync(2, `pisco: ${s}\n`);
-  EXIT.onmessage = (e) => { const s = gpu?.summary(); if (s) say(s); process.exit(e.data || (gpu?.errors ? 119 : 0)); };
+  let saving = Promise.resolve();   // (a snapshot being written: the run ends after it)
+  EXIT.onmessage = (e) => { const s = gpu?.summary(); if (s) say(s); saving.then(() => afs && checkpoint()).then(() => process.exit(e.data || (gpu?.errors ? 119 : 0))); };
   // SW_SESSION=<session.json>: the runtime's session player gets its steps (rt/windows-x86/input.c)
   const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => k.startsWith('SW_')));
   // the image's settings for the runtime (its registry values: SW_REGISTRY), with the environment's after them
@@ -74,11 +92,48 @@ if (isMainThread) {
   // a machine's console (rt/microvm-x64/devices.c): standard input into its ring, a terminal's keys as they are typed
   // (raw; Ctrl-] ends the run), a pipe's bytes and then its end
   if (process.stdin.isTTY) env.SW_CONSOLE = 'tty';
+  // SW_STATE: the machine's state file (web/state.mjs). A snapshot in it is where the run goes on from
+  const stateFile = process.env.SW_STATE || null, afs = stateFile ? await openState(stateFile) : null;
+  let restore = null, machineWorker = null;
+  const stopAfter = new Int32Array(new SharedArrayBuffer(4));   // 1: the machine waits after its snapshot, and the run ends once it is kept
+  if (afs && process.env.SW_FRESH !== '1') {
+    const got = await loadSnapshot(afs, process.env.SW_SNAPSHOT_AT || null, { log: say });
+    if (got) {
+      const m = got.manifest, img = { digest: image?.digest };
+      if (image && m && (await import('./state.mjs').then((x) => x.readJSON(afs, '/machine/image.json')))?.digest !== img.digest) { say(`${stateFile} is the state of another image: SW_FRESH=1 boots this one`); process.exit(2); }
+      restore = { pc: m.pc, pages: m.pages, chunks: got.chunks, screen: m.screen, side: m.side, id: m.id };
+      await noteRestore(afs, m.id, `node ${process.version} on ${process.platform}`);
+    }
+  }
+  const takeSnapshot = (thenExit) => {
+    if (!machineWorker || !snapWord) return false;
+    if (thenExit) Atomics.store(stopAfter, 0, 1);
+    const w = new Int32Array(memory.buffer, snapWord, 1); Atomics.store(w, 0, 1);
+    if (consoleRing) Atomics.notify(new Int32Array(memory.buffer, consoleRing, 1), 0);   // (a halted machine wakes, as for a key)
+    net?.ring();
+    return true;
+  };
+  let snapWord = 0, consoleRing = 0;
+  // the file whole, its log written into it (one file to copy or push), before the run ends
+  const checkpoint = () => afs.getDatabase().prepare('PRAGMA wal_checkpoint(TRUNCATE)').all().catch((e) => say(`state: ${e.message}`));
+  const onSnapshot = (s) => { saving = saving.then(() => keep(s)); };
+  const keep = async (s) => {
+    try {
+      await saveSnapshot(afs, { ...s, host: `node ${process.version} on ${process.platform}`, image: image ? { digest: image.digest, name: image.config.name } : null }, { log: say });
+      if (stateSync) { await stateSync.push(); say(`pushed to ${process.env.SW_STATE_URL}`); }
+    } catch (e) { say(`snapshot: ${e.message}`); }
+    if (Atomics.load(stopAfter, 0)) { if (process.stdin.isTTY) process.stdin.setRawMode(false); say(`the machine's state is in ${stateFile}: SW_STATE=${stateFile} goes on from it`); await checkpoint(); process.exit(0); }
+  };
   const startConsole = (addr) => {
+    consoleRing = addr;
     const u32 = new Uint32Array(memory.buffer, addr, 4), i32 = new Int32Array(memory.buffer, addr, 4), data = new Uint8Array(memory.buffer, addr + 16, u32[2]);
     const put = (bytes) => { for (const b of bytes) { if (u32[0] - Atomics.load(u32, 1) >= u32[2]) break; data[u32[0] % u32[2]] = b; Atomics.store(u32, 0, u32[0] + 1); } Atomics.notify(i32, 0); net?.ring(); };
     if (process.stdin.isTTY) process.stdin.setRawMode(true);
-    process.stdin.on('data', (b) => { if (process.stdin.isTTY && b.includes(0x1d)) { process.stdin.setRawMode(false); process.exit(0); } put(b); });
+    process.stdin.removeAllListeners('data'); process.stdin.removeAllListeners('end');   // (a snapshot that goes on opens the console again)
+    process.stdin.on('data', (b) => {
+      if (process.stdin.isTTY && b.includes(0x1d)) { if (afs && takeSnapshot(true)) { fs.writeSync(2, '\r\npisco: a snapshot...\r\n'); return; } process.stdin.setRawMode(false); process.exit(0); }
+      put(b);
+    });
     process.stdin.on('end', () => { Atomics.store(u32, 3, 1); Atomics.notify(i32, 0); net?.ring(); });
   };
   // a machine's network (SW_NET=1; rt/microvm-x64/net.c): its frames through web/net-node.mjs, on this thread
@@ -87,9 +142,13 @@ if (isMainThread) {
   const startProcess = (data) => {
     const w = new Worker(new URL(import.meta.url), { workerData: { t0: performance.timeOrigin, dir, imageDir, folder, saves, store, kernel, programs, side, tid: 0, ...data },
       resourceLimits: { stackSizeMb: STACK_MB } });
+    if (data.pid === 1 && data.mode === 'start') machineWorker = w;
     w.on('error', (e) => { console.error(e); process.exit(121); });
     w.on('message', async (m) => {
       if (m.console !== undefined) startConsole(m.console);
+      if (m.snapshotWord !== undefined) snapWord = m.snapshotWord;
+      if (m.snapshot) onSnapshot(m.snapshot);
+      if (m.snapshotWanted) takeSnapshot(true);
       if (m.net !== undefined) startNetwork(m.net);
       if (m.frame) net?.send(m.frame);
       if (m.fork) startProcess({ module: m.fork.module, memory: m.fork.memory, pid: m.fork.pid, mode: 'fork', tids: new Int32Array(new SharedArrayBuffer(4)).fill(1), args: [], env });
@@ -101,9 +160,13 @@ if (isMainThread) {
       }
     });
   };
-  startProcess({ module, memory, tids, args, env, pid: 1, mode: 'start' });
+  startProcess({ module, memory, tids, args, env, pid: 1, mode: 'start', restore, stopAfter, snapshotOn: afs ? process.env.SW_SNAPSHOT_ON || null : null });
 } else {
-  const { module, memory, dir, imageDir, folder, tids, tid, args, env, saves, store, t0, kernel, programs, side = null, pid = 1, mode = 'start' } = workerData;
+  const { module, memory, dir, imageDir, folder, tids, tid, args, env, saves, store, t0, kernel, programs, side = null, pid = 1, mode = 'start', restore = null } = workerData;
+  let snapshotOn = workerData.snapshotOn || null;
+  // the console's last output (a machine's): kept with a snapshot, shown again where it goes on
+  let screen = restore?.screen || ''; const screenText = new TextDecoder();
+  const seen = (b) => { screen = (screen + screenText.decode(b, { stream: true })).slice(-65536); if (snapshotOn && screen.includes(snapshotOn)) { parentPort.postMessage({ snapshotWanted: true }); snapshotOn = null; } };
   // an app image: its drive, read from the layers (the main thread has checked their digests)
   const drive = imageDir ? (await openImageDir(imageDir, { verify: false, wasm: false })).drive : null;
   const clock = () => performance.timeOrigin + performance.now() - t0; // one monotonic clock for every thread
@@ -122,7 +185,7 @@ if (isMainThread) {
     fd_write: (fd, iovs, n, written) => {
       let total = 0;
       for (let i = 0; i < n; i++) { const p = dv().getUint32(iovs + 8 * i, true), len = dv().getUint32(iovs + 8 * i + 4, true);
-        if (fd === 1 || fd === 2) fs.writeSync(fd, new Uint8Array(memory.buffer, p, len).slice()); total += len; }
+        if (fd === 1 || fd === 2) { const b = new Uint8Array(memory.buffer, p, len).slice(); fs.writeSync(fd, b); if (fd === 1) seen(b); } total += len; }
       dv().setUint32(written, total, true); return fd === 1 || fd === 2 ? 0 : 8;
     },
     fd_read: (fd, iovs, n, read) => {
@@ -271,20 +334,37 @@ if (isMainThread) {
       return mine;
     });
   }
-  const missing = { fn: null };
-  if (machine) host.program_image = (addr, len, fns, n) => (missing.fn ? missing.fn(addr, len, fns, n) : 0);
+  const missing = { fn: null }; let lifted = 0, sideNames = [];
+  if (machine) host.program_image = (addr, len, fns, n) => { const r = missing.fn ? missing.fn(addr, len, fns, n) : 0; lifted += r ? 1 : 0; return r; };
+  // a snapshot (rt/microvm-x64/snapshot.c): the memory copied here, kept by the main thread (web/state.mjs)
+  if (machine) host.snapshot = (pc) => {
+    if (lifted) { fs.writeSync(2, 'pisco: no snapshot: a program was lifted in this run (its module is not in the image)\n'); return 0; }
+    const t = performance.now(), cap = captureMemory(memory);
+    fs.writeSync(2, `\r\npisco: snapshot at 0x${BigInt.asUintN(64, pc).toString(16)}: ${cap.chunks.length} of ${cap.pages} wasm pages' chunks copied in ${(performance.now() - t).toFixed(0)} ms\r\n`);
+    parentPort.postMessage({ snapshot: { pc: pc.toString(), pages: cap.pages, chunks: cap.chunks, screen, side: sideNames } }, cap.chunks.map((c) => c.data.buffer));
+    if (workerData.stopAfter && Atomics.load(workerData.stopAfter, 0)) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0);   // (the main thread ends the run once it is kept)
+    return 1;
+  };
   const instance = new WebAssembly.Instance(module, { env: { memory }, wasi_snapshot_preview1: wasi, wasi: { 'thread-spawn': spawn }, host });
   try {
     if (machine) {
       coEntry = WebAssembly.promising(instance.exports.rt_co_entry);
       // its programs in modules of their own: its image's (config.side), and SW_PROGRAMS's (<name>.wasm files here)
-      for (const [n, digest] of Object.entries(side || {})) loadSide(fs.readFileSync(path.join(imageDir, blobPath(digest))), instance, memory, n);
+      for (const [n, digest] of Object.entries(side || {})) { loadSide(fs.readFileSync(path.join(imageDir, blobPath(digest))), instance, memory, n); sideNames.push(n); }
       for (const f of (env.SW_PROGRAMS || '').split(/\s+/).filter(Boolean)) {
         const bytes = drive ? drive.read(driveName(f, folder), 0, Infinity) : fs.readFileSync(path.resolve(f));
-        loadSide(bytes, instance, memory, path.basename(f, '.wasm').replace(/[^A-Za-z0-9_]/g, '_').replace(/^(\d)/, '_$1'));
+        const n = path.basename(f, '.wasm').replace(/[^A-Za-z0-9_]/g, '_').replace(/^(\d)/, '_$1'); loadSide(bytes, instance, memory, n); sideNames.push(n);
       }
       // a program met when it first runs: lifted then, from its image in memory (web/lift.mjs)
       missing.fn = programImage({ instance, memory, log: (m) => fs.writeSync(2, `pisco: ${m}\n`) });
+      if (instance.exports.rt_snapshot_word) parentPort.postMessage({ snapshotWord: instance.exports.rt_snapshot_word() });
+      if (restore) {
+        // a snapshot goes on: its programs' modules loaded as they were (the same table slots and memory), then its memory
+        if (restore.side.join() !== sideNames.join()) throw new Error(`the snapshot's programs (${restore.side}) are not this run's (${sideNames})`);
+        restoreMemory(memory, restore.pages, restore.chunks); restore.chunks = null;
+        if (restore.screen) fs.writeSync(1, Buffer.from(restore.screen.slice(-4096)));
+        await WebAssembly.promising(instance.exports.rt_restore)(BigInt(restore.pc)); exit(0);
+      }
       await WebAssembly.promising(instance.exports._start)(); exit(0);
     }
     else if (tid === 0 && mode === 'fork') { instance.exports.rt_fork_resume(); exit(0); }

@@ -8,11 +8,16 @@
 // is saved as <dir>/<name>.png.
 // An extra dir that is an app image (web/image.mjs) is served as it is (index.json, blobs/...), and its C: drive, the
 // file layers stacked, below /files/<n>/c/ (with ?stat and ?list as for a folder).
+// With --states <dir>, /state/<name> is a machine's state file there (web/state.mjs): GET it, PUT it (the page pushes
+// the state it keeps in OPFS, and pulls one Node made: a stand-in for Turso's cloud). /npm/ is out/npm (the AgentFS SDK
+// bundled for the page: docs/linux.md, snapshots).
 import { isImageDir, openImageDir } from '../web/image.mjs';
 import http from 'node:http'; import fs from 'node:fs'; import path from 'node:path'; import zlib from 'node:zlib'; import { spawn } from 'node:child_process';
 const argv = process.argv.slice(2);
 const ci = argv.indexOf('--capture'); const captureOut = ci >= 0 ? argv.splice(ci, 2)[1] : null;
 const si = argv.indexOf('--shots'); const shotsDir = si >= 0 ? argv.splice(si, 2)[1] : null;
+const sti = argv.indexOf('--states'); const statesDir = sti >= 0 ? path.resolve(argv.splice(sti, 2)[1]) : null;
+const npmDir = path.resolve(path.dirname(new URL(import.meta.url).pathname), '../out/npm');
 const [port, root, ...extra] = argv;
 const types = { '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/javascript', '.wasm': 'application/wasm', '.json': 'application/json', '.wgsl': 'text/plain' };
 const FPS = 35; // Doom's tic rate; other apps get every 35th of a second
@@ -91,6 +96,19 @@ http.createServer(async (req, res) => {
     });
     return;
   }
+  const st = p.match(/^\/state\/([A-Za-z0-9_.-]{1,64})$/);
+  if (st) {
+    if (!statesDir) { res.writeHead(404, head).end('the server keeps no states (--states <dir>)'); return; }
+    const file = path.join(statesDir, st[1]);
+    if (req.method === 'PUT') {
+      const parts = []; req.on('data', (d) => parts.push(d));
+      req.on('end', () => { fs.mkdirSync(statesDir, { recursive: true }); fs.writeFileSync(file + '.part', Buffer.concat(parts)); for (const x of ['-wal', '-shm']) fs.rmSync(file + x, { force: true }); fs.renameSync(file + '.part', file); console.log(`serve: state ${st[1]} kept (${fs.statSync(file).size} bytes)`); res.writeHead(200, head).end('ok'); });
+      return;
+    }
+    fs.readFile(file, (err, data) => { if (err) res.writeHead(404, head).end(); else res.writeHead(200, { ...head, 'Content-Type': 'application/octet-stream', 'Content-Length': data.length }).end(data); });
+    return;
+  }
+  if (p.startsWith('/npm/')) { base = npmDir; p = p.slice(4); }
   const m = p.match(/^\/files\/(\d+)(\/.*)$/); if (m) { base = extra[+m[1]]; p = m[2]; }
   const image = m && /^\/c(\/|$)/.test(p) ? await imageOf(+m[1]).catch((e) => { console.error(`serve: ${e.message}`); return null; }) : null;
   if (image) {
