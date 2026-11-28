@@ -75,10 +75,10 @@ index 40994df..2a32836 100644
  // under its root, a layer's file name, and the name a layer has while
 diff --git a/internal/supervisor/pisco.go b/internal/supervisor/pisco.go
 new file mode 100644
-index 0000000..33cb8fe
+index 0000000..0475f9e
 --- /dev/null
 +++ b/internal/supervisor/pisco.go
-@@ -0,0 +1,225 @@
+@@ -0,0 +1,236 @@
 +package supervisor
 +
 +// PISCO: an amd64 image's programs run as lifted wasm, ahead-of-time
@@ -124,6 +124,7 @@ index 0000000..33cb8fe
 +	dir   string // the cache: lifted/<sha>.wasm, images/<key>.json
 +	key   string // this image: the hash of its layers' names
 +	lift  string // the script that lifts one program
++	tools string // what its lifts depend on besides the image (its --tools)
 +	logf  func(string, ...any)
 +	mu    sync.Mutex
 +	seen  map[string]bool // the programs this container ran
@@ -142,17 +143,27 @@ index 0000000..33cb8fe
 +		names[i] = filepath.Base(l)
 +	}
 +	h := sha256.Sum256([]byte(strings.Join(names, "\n")))
-+	return &piscoServer{
++	p := &piscoServer{
 +		dir:   filepath.Join(base, "tabc", "pisco"),
 +		key:   hex.EncodeToString(h[:16]),
 +		lift:  os.Getenv("TABC_PISCO_LIFT"),
 +		logf:  logf,
 +		share: share,
 +	}
++	// another lifter makes other modules: they are kept apart
++	if p.lift != "" {
++		if out, err := exec.Command(p.lift, "--tools").Output(); err == nil {
++			p.tools = strings.TrimSpace(string(out))
++		}
++	}
++	return p
 +}
 +
 +func (p *piscoServer) record() string { return filepath.Join(p.dir, "images", p.key+".json") }
 +func (p *piscoServer) module(sha string) string {
++	if p.tools != "" {
++		return filepath.Join(p.dir, "lifted", sha+"-"+p.tools+".wasm")
++	}
 +	return filepath.Join(p.dir, "lifted", sha+".wasm")
 +}
 +
@@ -215,12 +226,12 @@ index 0000000..33cb8fe
 +		index := map[string]entry{}
 +		for sha, n := range r.Programs {
 +			if _, err := os.Stat(p.module(sha)); err == nil {
-+				index[sha] = entry{sha + ".wasm", 2*n >= runs}
++				index[sha] = entry{filepath.Base(p.module(sha)), 2*n >= runs}
 +			}
 +		}
 +		writeJSON(w, index)
 +	case strings.HasPrefix(rest, "lifted/"):
-+		sha := strings.TrimSuffix(strings.TrimPrefix(rest, "lifted/"), ".wasm")
++		sha, _, _ := strings.Cut(strings.TrimSuffix(strings.TrimPrefix(rest, "lifted/"), ".wasm"), "-")
 +		if !shaPattern.MatchString(sha) {
 +			http.NotFound(w, r)
 +			return

@@ -54,7 +54,7 @@ enum { X_TAG = 13, X_FLAGS = 25, X_FP = 26, X_X87 = 27, X_GS = 28, X_PEND = 29, 
 
 typedef struct Ctx {
   Cpu cpu; jmp_buf exit, root; volatile u64 root_pc, exit_rip; volatile u32 exit_ev;
-  struct kw_cpu *kc; struct kw_regs *kr; u64 rflags; int budget_polls; int depth;
+  struct kw_cpu *kc; struct kw_regs *kr; u64 rflags; int budget_polls; int depth; int live_flags;
 } Ctx;
 static Ctx *cur;
 static const ProgramDef *progs[64]; static unsigned n_progs;
@@ -330,14 +330,16 @@ static const ProgramDef *program_at(Cpu *c, u64 pc) {
 }
 static int find(const u64 *v, unsigned n, u64 pc) { unsigned lo = 0, hi = n; while (lo < hi) { unsigned m = (lo + hi) / 2; if (v[m] < pc) lo = m + 1; else hi = m; } return lo < n && v[lo] == pc ? (int)lo : -1; }
 // where a poll may leave lifted code for the kernel (its budget, an interrupt) and come back to later: a function's
-// start only. A poll at a jump back may also be a return address, which the function can be entered at; but the
-// loop's state there (its flags: a carry kept from one turn to the next in libcrypto's bignum loops) is not what a
-// return from a call has, and re-entering there broke one TLS handshake in three. At a function's start nothing
-// but the registers is live.
+// start, or a jump back to a return address (a loop's head), which the function can be entered at. The loop's flags
+// are live there (a carry kept from one turn to the next in libcrypto's bignum loops): the poll hands them over
+// (rt_poll_f, GUEST_POLL_FLAGS in rt/cpu.h) and the function takes them back where it is entered (RESUME_FLAGS).
+// Without that, re-entering there broke one TLS handshake in three; without re-entering there, a function in a
+// long loop never returns, and V8 runs it in its first tier for ever (sort and fnv 1.5 times slower).
 static int enterable(u64 pc) {
   const ProgramDef *p = program_at(&cur->cpu, pc); if (!p) return 0;
-  return find(p->fn_addrs, p->fn_count, pc) >= 0;
+  return find(p->fn_addrs, p->fn_count, pc) >= 0 || find(p->resume_at, p->resume_count, pc) >= 0;
 }
+u64 mc_resume_flags;
 static void enter(Cpu *c, u64 pc) {
   const ProgramDef *p = program_at(c, pc); int i;
   if (!p) fatal(cur, pc, "no lifted program holds the code");
@@ -367,11 +369,24 @@ void rt_call(Cpu *c, u64 t) {
   x->depth++; fn(c); x->depth--;
 }
 void rt_dispatch(Cpu *c, u64 t) { rt_call(c, t); }
+// an indirect jump as a tail call (the lifter's LIFTER_MUSTTAIL=2): the function at t, or one that abandons what
+// runs and enters t from the run loop (a return address, or code no function starts at)
+static u64 abandon_pc;
+static void abandon(Cpu *c) { (void)c; cur->root_pc = abandon_pc; longjmp(cur->root, 1); }
+void (*rt_resolve(Cpu *c, u64 t))(Cpu *) {
+  CallSlot *s = &calls[((t >> 4) ^ (t >> 16)) & 4095];
+  if (s->pc == t && s->gen == calls_gen && s->pgd == cur_pgd) return s->fn;
+  const ProgramDef *p = program_at(c, t); int i;
+  if (p && (i = find(p->fn_addrs, p->fn_count, t)) >= 0) { *s = (CallSlot){ t, calls_gen, cur_pgd, p->fn_ptrs[i] }; return s->fn; }
+  abandon_pc = t; return abandon;
+}
 void rt_check_return(Cpu *c, u64 call, u64 next, u64 sp) { (void)call; (void)next; (void)sp; (void)c; }
 
 // ---- polls: the budget (instructions, as kwemu counts them; a poll stands for INSN_PER_POLL) and interrupts ----
 enum { POLLS = 4096, INSN_PER_POLL = 8 };
 static int polls_for(u64 budget) { u64 n = budget / INSN_PER_POLL; return n > POLLS ? POLLS : (int)n; }
+void rt_poll(Cpu *c, u64 ip);
+EXPORT("rt_poll_f") void rt_poll_f(Cpu *c, u64 ip, u64 rflags) { cur->rflags = rflags; cur->live_flags = 1; rt_poll(c, ip); cur->live_flags = 0; }
 void rt_poll(Cpu *c, u64 ip) {
   Ctx *x = cur; struct kw_cpu *kc = x->kc;
   u64 used = (u64)(x->budget_polls - mc_budget) * INSN_PER_POLL; if (used > kc->budget) used = kc->budget;
@@ -657,13 +672,14 @@ static u32 run_task(u64 cpu_, u64 regs_) {
   struct kw_cpu *kc = x->kc;
   if (!kc->budget) { store(c, x->kr, rip, rflags); return EV_BUDGET; }
   if (kc->irq_pending && *(volatile u32 *)(uptr)kc->irq_pending) { store(c, x->kr, rip, rflags); return EV_INTERRUPT; }
-  cur = x;
+  cur = x; x->live_flags = 0; x->depth = 0;
+  mc_resume_flags = rflags;   // (what the code entered at rip had: a loop's flags, kept by the poll that left it)
   x->budget_polls = mc_budget = polls_for(kc->budget);
   if (!x->budget_polls) x->budget_polls = mc_budget = 1;
   if (setjmp(x->exit)) {
     // what the polls since the last check used
     if (x->exit_ev != EV_BUDGET && x->exit_ev != EV_INTERRUPT) { u64 used = (u64)(x->budget_polls - mc_budget) * INSN_PER_POLL; if (used > kc->budget) used = kc->budget; kc->budget -= used; kc->icount += used; }
-    store(c, x->kr, x->exit_rip, x->exit_ev == EV_SYSCALL ? x->rflags : rflags);
+    store(c, x->kr, x->exit_rip, x->exit_ev == EV_SYSCALL || x->live_flags ? x->rflags : rflags);
     if (x->exit_ev == EV_ILLEGAL || x->exit_ev == EV_BREAKPOINT) { kc->ev.kind = x->exit_ev; kc->ev.addr = x->exit_rip; kc->ev.insn = 0; }
     kc->ev.kind = x->exit_ev;
     if (trace > 1) logf_("pisco: out at 0x%llx: event %u", x->exit_rip, x->exit_ev);

@@ -359,6 +359,19 @@ impl Func {
     }
 }
 
+/// A jump into another lifted function: a call that does not come back here. With LIFTER_MUSTTAIL set, a tail call
+/// (wasm's return_call), so that a chain of such jumps (an interpreter's handlers and its shared dispatch) does not
+/// grow the host's stack; otherwise a call and a return.
+/// LIFTER_MUSTTAIL=2: an indirect jump too (`jmp reg` with no table): the runtime finds the target's function
+/// (rt_resolve, which tabc-pisco's runtime has) and the jump is a tail call to it.
+fn musttail_indirect() -> bool {
+    static M: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *M.get_or_init(|| std::env::var("LIFTER_MUSTTAIL").map(|v| v == "2").unwrap_or(false))
+}
+fn tail_jump(t: u64) -> String {
+    static MUSTTAIL: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    if *MUSTTAIL.get_or_init(|| std::env::var_os("LIFTER_MUSTTAIL").is_some()) { format!("__attribute__((musttail)) return f_{t:x}(c);") } else { format!("f_{t:x}(c);return;") }
+}
 /// A near branch or call with its target in the instruction (far ones exist in 32-bit code).
 fn is_near(i: &Instruction) -> bool {
     matches!(i.op_kind(0), OpKind::NearBranch16 | OpKind::NearBranch32 | OpKind::NearBranch64)
@@ -409,6 +422,22 @@ fn table_bound(prev: &[&Instruction], load_ip: u64, index: Register) -> Option<u
 /// The bound comes from the `cmp I,N; ja` before it; without one, entries are read while they land in the function.
 /// The bound of a jump table whose block is reached by a branch from far away (GCC puts the table's block at the end
 /// of the function: `cmp I,N; jbe <block>` near its start): the compare before a conditional branch to the block.
+// whether the arithmetic flags may be read at t before all of them are written (a loop's carry, kept from one turn
+// to the next): the straight-line code from t, up to 64 instructions; anything else (a branch, a call) counts as a read
+fn flags_live_at(insns: &BTreeMap<u64, Instruction>, t: u64) -> bool {
+    use iced_x86::RflagsBits as R;
+    const ALL: u32 = R::OF | R::SF | R::ZF | R::AF | R::CF | R::PF;
+    let (mut at, mut written) = (t, 0u32);
+    for _ in 0..64 {
+        let Some(i) = insns.get(&at) else { return true };
+        if i.rflags_read() & ALL & !written != 0 { return true; }
+        written |= i.rflags_modified() & ALL;
+        if written == ALL { return false; }
+        if i.flow_control() != FlowControl::Next { return true; }
+        at = i.next_ip();
+    }
+    true
+}
 fn table_bound_by_branch(insns: &BTreeMap<u64, Instruction>, load: &Instruction, index: Register) -> Option<u64> {
     // the block's start: back from the load while the instruction before falls through to the next one
     let mut start = load.ip();
@@ -1446,7 +1475,7 @@ impl Emit<'_> {
             if f.insns.contains_key(&t) && f.leaders.contains(&t) && (t == entry || !cut.contains(&t)) {
                 format!("goto L_{t:x};")
             } else if entries.contains(&t) {
-                format!("f_{t:x}(c);return;")
+                tail_jump(t)
             } else {
                 format!("rt_call(c,0x{t:x}ull);return;") // no lifted code there: the runtime reports it if reached
             }
@@ -1627,12 +1656,12 @@ impl Emit<'_> {
                         if f.insns.contains_key(t) && f.leaders.contains(t) {
                             write!(s, "case 0x{t:x}ull:goto L_{t:x};").unwrap();
                         } else if entries.contains(t) {
-                            write!(s, "case 0x{t:x}ull:f_{t:x}(c);return;").unwrap();
+                            write!(s, "case 0x{t:x}ull:{}", tail_jump(*t)).unwrap();
                         } // else: no instruction starts there, the table was read too far; the runtime reports it if taken
                     }
                     s.push('}');
                 }
-                s.push_str("rt_call(c,t);return;}");
+                s.push_str(if self.img.machine && musttail_indirect() { "{void(*fn_)(Cpu*)=rt_resolve(c,t);__attribute__((musttail)) return fn_(c);}}" } else { "rt_call(c,t);return;}" });
                 s
             }
             _ if i.flow_control() == FlowControl::ConditionalBranch && i.condition_code() != ConditionCode::None => {
@@ -1831,7 +1860,7 @@ impl Emit<'_> {
             if f.insns.contains_key(&t) && f.leaders.contains(&t) && (t == entry || !cut.contains(&t)) {
                 format!("goto L_{t:x};")
             } else if entries.contains(&t) {
-                format!("f_{t:x}(c);return;")
+                tail_jump(t)
             } else {
                 format!("rt_call(c,0x{t:x}u);return;") // no lifted code there: the runtime reports it if reached
             }
@@ -1875,7 +1904,7 @@ impl Emit<'_> {
                 } else {
                     self.pointer_jumps.insert(ip); // a tail call through an import slot, a vtable, a function pointer
                 }
-                s.push_str("rt_call(c,t);return;}");
+                s.push_str(if self.img.machine && musttail_indirect() { "{void(*fn_)(Cpu*)=rt_resolve(c,t);__attribute__((musttail)) return fn_(c);}}" } else { "rt_call(c,t);return;}" });
                 s
             }
             M::Leave => "R[RSP]=(u32)R[RBP];R[RBP]=POP32();".into(),
@@ -2023,7 +2052,9 @@ impl Emit<'_> {
         } else if f.pads.is_empty() && self.img.elf {
             // a Linux app: entered at a return address when c->resume says so (rt/linux-x64/start.c, a forked process
             // and a longjmp go on from there)
-            let mut w = format!("void f_{entry:x}(Cpu*__restrict c){{Flags f={{0}};(void)f;if(__builtin_expect(c->resume!=0,0)){{u64 at=c->resume;c->resume=0;switch(at){{");
+            // (RESUME_FLAGS: a runtime that leaves lifted code at a loop's head, and enters it there again, gives the
+            // loop its flags back: rt/cpu.h, GUEST_POLL_FLAGS)
+            let mut w = format!("void f_{entry:x}(Cpu*__restrict c){{Flags f={{0}};(void)f;if(__builtin_expect(c->resume!=0,0)){{u64 at=c->resume;c->resume=0;RESUME_FLAGS();switch(at){{");
             for r in f.rets.iter().filter(|r| f.insns.contains_key(r) && f.leaders.contains(r)) {
                 write!(w, "case 0x{r:x}ull:goto L_{r:x};").unwrap();
             }
@@ -2070,7 +2101,7 @@ impl Emit<'_> {
                 let back = matches!(i.flow_control(), FlowControl::UnconditionalBranch | FlowControl::ConditionalBranch) && is_near(i) && i.near_branch_target() <= ip;
                 if back {
                     let t = i.near_branch_target();
-                    body = body.replace(&format!("goto L_{t:x};"), &format!("{{POLL(0x{t:x}ull);goto L_{t:x};}}"));
+                    body = body.replace(&format!("goto L_{t:x};"), &format!("{{{}(0x{t:x}ull);goto L_{t:x};}}", if flags_live_at(&f.insns, t) { "POLL_F" } else { "POLL" }));
                 }
                 body = format!("ip_=0x{ip:x}ull;{}{}", if ip == entry { format!("POLL(0x{ip:x}ull);") } else { String::new() }, machine_stores(&body));
             }
@@ -2084,7 +2115,7 @@ impl Emit<'_> {
             // fallthrough into code this function does not hold (another function's entry)
             if prev_next != 0 && !f.insns.contains_key(&prev_next) {
                 if entries.contains(&prev_next) {
-                    writeln!(s, "f_{prev_next:x}(c);return;").unwrap();
+                    writeln!(s, "{}", tail_jump(prev_next)).unwrap();
                 } else {
                     writeln!(s, "rt_trap(0x{prev_next:x}ull);").unwrap(); // runs off decoded code: not reached by real code
                 }

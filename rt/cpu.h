@@ -53,6 +53,7 @@ typedef struct Landing { void *jb; u64 entry_rsp; u64 resume; struct Landing *pr
 #define LANDING(body) _Static_assert(0, "lifted landing pads require setjmp.h")
 #endif
 typedef struct { u8 cf, zf, sf, of, pf, af, df; } Flags; // df: 32-bit code only (64-bit code assumes it clear)
+#define RESUME_FLAGS() ((void)0)   // (a machine whose runtime gives flags back at resume points redefines it)
 
 extern volatile u32 rt_last_pc;   // an app lifted with --trace-pc: the guest address of the block last entered
 struct Cpu; void rt_pc(struct Cpu *c, u32 pc);   // --trace-pc: each block calls it (rt_last_pc, a ring of the last blocks, SW_BREAK)
@@ -113,6 +114,7 @@ static TlbEntry *const tlb_ = mmu_k;
 void mmu_read(struct Cpu *c, TlbEntry *t, u64 a, unsigned n, u64 ip, void *out);
 void mmu_write(struct Cpu *c, TlbEntry *t, u64 a, unsigned n, u64 ip, const void *in);
 uptr mmu_ptr(struct Cpu *c, TlbEntry *t, u64 a, unsigned n, u64 ip);   // a host pointer for n bytes to write (atomics)
+void (*rt_resolve(struct Cpu *c, u64 t))(struct Cpu *);   // the lifted function at t, for a tail call (LIFTER_MUSTTAIL=2; tools/tabc-pisco)
 // n bytes at a: a hit when the entry holds the page of the access's last byte (one that crosses pages misses)
 #define MR(T, n, a) ({ u64 a_ = (u64)(a); TlbEntry *e_ = &tlb_[(a_ >> 12) & 4095]; T v_; \
   if (__builtin_expect(e_->rtag == ((a_ + (n) - 1) >> 12) + 1, 1)) v_ = *(T *)(uptr)((u32)a_ + e_->add); else mmu_read(c, tlb_, a_, (n), ip_, &v_); v_; })
@@ -160,11 +162,24 @@ uptr mmu_ptr(struct Cpu *c, TlbEntry *t, u64 a, unsigned n, u64 ip);   // a host
 extern u64 mc_rflags;   // RFLAGS but its arithmetic bits (a function keeps those in its Flags): IF, IOPL, AC, ID
 extern int mc_budget;   // polls left before the machine looks at its clock and its interrupts
 void rt_poll(struct Cpu *c, u64 ip);
-#define POLL(ip) do { if (__builtin_expect(--mc_budget < 0, 0)) rt_poll(c, (ip)); } while (0)
 static inline u64 flags_get64(const Flags *f) {
   return (u64)f->cf | 2u | (u64)f->pf << 2 | (u64)f->af << 4 | (u64)f->zf << 6 | (u64)f->sf << 7 | (u64)f->df << 10 | (u64)f->of << 11 | (mc_rflags & ~0xDD7ull);
 }
 void flags_set64(struct Cpu *c, Flags *f, u64 v);
+#ifdef GUEST_POLL_FLAGS
+// a runtime that leaves lifted code at a poll and enters it there again later (tools/tabc-pisco): the poll hands it
+// the function's flags, and the function, entered at that address, takes them back (a loop's carry, live there)
+// (by value, and set field by field: a function's flags whose address escaped would live in memory, not in locals)
+void rt_poll_f(struct Cpu *c, u64 ip, u64 rflags);
+extern u64 mc_resume_flags;
+#define POLL(ip) do { if (__builtin_expect(--mc_budget < 0, 0)) rt_poll(c, (ip)); } while (0)
+#define POLL_F(ip) do { if (__builtin_expect(--mc_budget < 0, 0)) rt_poll_f(c, (ip), flags_get64(&f)); } while (0)   // (where the lifter finds them live)
+#undef RESUME_FLAGS
+#define RESUME_FLAGS() do { u64 v_ = mc_resume_flags; f.cf = v_ & 1; f.pf = (v_ >> 2) & 1; f.af = (v_ >> 4) & 1; f.zf = (v_ >> 6) & 1; f.sf = (v_ >> 7) & 1; f.of = (v_ >> 11) & 1; } while (0)
+#else
+#define POLL(ip) do { if (__builtin_expect(--mc_budget < 0, 0)) rt_poll(c, (ip)); } while (0)
+#define POLL_F(ip) POLL(ip)
+#endif
 void rt_sti(struct Cpu *c);
 void rt_hlt(struct Cpu *c, u64 next);
 void rt_iret(struct Cpu *c) __attribute__((noreturn));

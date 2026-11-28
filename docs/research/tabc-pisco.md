@@ -39,7 +39,7 @@ then measures the result against tabc as released, on the same machine and brows
   supervisor on the host, once, and kept by its sha256: `busybox:musl` (never lifted) ran after 166 s of lifting.
   Then in 1 s, like every later run. `apk add lua5.4` works the same way (apk, libcrypto, libssl, zlib, libapk,
   then Lua's), over TLS from Alpine's mirror, and the installed Lua runs. An interpreter is the case where
-  tabc's emulator still wins, by 3.4 times on Lua ([What it took](#what-it-took), 9).
+  tabc's emulator still wins, by 1.4 times on Lua ([What it took](#what-it-took), 9).
 - **Limits** ([below](#limits)): one CPU (tabc's default is two), arm64's signal frames, a program lifted on its first
   run makes that run wait.
 
@@ -74,8 +74,8 @@ tabc run alpine:3.24.4 (amd64)
   - one this image's containers ran before is in the supervisor's list for the image (`pisco/index.json`), and is
     compiled while the kernel boots;
   - one met for the first time is posted to the supervisor, which lifts it on the host (`TABC_PISCO_LIFT`, the
-    lifter and wasi-sdk), once, keeps it by its sha256 for every image, and sends it back. The guest waits meanwhile
-    (JSPI).
+    lifter and wasi-sdk), once, keeps it by its sha256 and the lifting tools' hash (`lift-side.sh --tools`) for every
+    image, and sends it back. The guest waits meanwhile (JSPI).
 - **Identity is cheap after the first time.** Code is found by the hash of its page, as on the microvm. A page
   checked once is known again by its address space and address, and, after a fork or a flush, by its frame (a
   program's text is the page cache's, shared by every process that maps it) and 16 of its words. Indirect calls go
@@ -183,19 +183,28 @@ and showed five gaps, each fixed:
    certificate check, and `apk update` its signatures: nondeterministic, so tied to when the kernel takes the CPU.
    A poll that runs out of budget left lifted code wherever it could be entered again, a return address included;
    at a loop's head that is one, the loop's state (a carry kept from turn to turn in libcrypto's bignum loops) is
-   not what a return from a call has. Polls now leave only at a function's start: 24 handshakes of 24 verified,
-   against 16. (The benchmark is the same either way: an A/B on the compiled benchmark.)
+   not what a return from a call has. Leaving only at a function's start fixed TLS but cost the benchmark's sort
+   and fnv 1.5 times: a function in a long loop never returned, and V8, which has no on-stack replacement for
+   wasm, ran it in its first tier for ever. Now a poll at a jump back hands the runtime the function's flags, and
+   the function takes them back where it is entered (`GUEST_POLL_FLAGS` in rt/cpu.h): only where the lifter finds
+   them live at the loop's head (read there before all of them are written), since passing them at every jump back
+   kept every loop's flags alive and cost as much again. 24 handshakes of 24 verified and two `apk update` runs
+   were clean (against 16 of 24 before), and in Node the compiled benchmark is back where it was: calls 70, bytes
+   210, sort 870, float 122, memory 330 ms (against 66, 205, 820, 125, 325).
 9. **An interpreter's dispatch, one host frame deeper per opcode.** Lua 5.4 dispatches by GCC's computed goto,
    merged into one shared `jmp rax`; the lifter does not see a table there, so each opcode was an indirect call one
-   level deeper, until Chrome's stack ran out. Past 256 nested indirect calls the runtime now abandons what runs and
-   enters the target from the run loop (returns are found by their return addresses, as after a system call). The
-   lifter also recovers a table of absolute addresses read into a register (`mov rax,[rcx+rax*8]; jmp rax`) when
-   it sees the load.
+   level deeper, until Chrome's stack ran out. Now a jump into another lifted function is a tail call (wasm's
+   `return_call`, clang's `musttail`; the lifter's `LIFTER_MUSTTAIL=2`, which `lift-side.sh` sets): a direct one to
+   the function, an indirect one to the function the runtime finds for the target (`rt_resolve`). The host's stack
+   no longer grows, and Lua's loop went from 1.13 s to 0.45 s. As a safety net, past 256 nested indirect calls the
+   runtime abandons what runs and enters the target from the run loop (returns are found by their return
+   addresses, as after a system call). The lifter also recovers a table of absolute addresses read into a register
+   (`mov rax,[rcx+rax*8]; jmp rax`) when it sees the load.
 
 With those, `apk add --no-cache lua5.4` installs from dl-cdn.alpinelinux.org (TLS 1.3, signatures checked), and
 lua5.4, its library and readline and ncurses, lifted on their first run (75 s), run: a 3-million-turn loop in
-1.13 s. tabc's kwemu runs the arm64 Lua in 0.33 s: the dispatch above, a call per opcode, is 3.4 times slower than
-kwemu's JIT. The lifted libcrypto and libssl compute what the host's do (SHA-256, SHA-1, MD5, AES-CBC, ChaCha20,
+0.45 s, against 0.33 s for the arm64 Lua on tabc's kwemu (1.4 times slower: a tail call per opcode, where kwemu's
+JIT branches). The lifted libcrypto and libssl compute what the host's do (SHA-256, SHA-1, MD5, AES-CBC, ChaCha20,
 RSA signatures, byte for byte).
 
 And from the experiment it grew out of ([microvm-speed.md](microvm-speed.md), experiment 2): programs that are
@@ -217,8 +226,8 @@ page fetched from the supervisor) while another runs.
 - **The kernel is patched as a binary**, against one release of unkernel. A hook in `kw_emu.h` (a second CPU behind
   `kw_run`) would make the patch unnecessary.
 - **Interpreters that dispatch by a shared indirect jump** (Lua 5.4, and CPython's computed gotos likely too) run
-  a call per opcode: 3.4 times slower than kwemu on Lua. The lifter would have to see the dispatch table at the
-  shared jump (each handler loads its target from it), and keep the handlers as labels of one function.
+  a tail call per opcode: 1.4 times slower than kwemu on Lua. Faster needs the lifter to see the dispatch table at
+  the shared jump (each handler loads its target from it) and keep the handlers as labels of one function.
 - **Identity by sampled words.** After a fork or a flush, a page of code is known again by its frame, its address and
   16 of its words, not its whole hash. A different program whose page has the same frame, address and those words
   would be taken for the first one.
