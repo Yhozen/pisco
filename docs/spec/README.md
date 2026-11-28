@@ -23,6 +23,7 @@ The idea is winepak's (a packaged program that just works), with what Lutris, Bo
 | [base.md](base.md) | what a base promises its apps, its libraries, and when its version changes |
 | [image.md](image.md) | the image: its layout, media types, config, layers, and how its files behave |
 | [sessions.md](sessions.md) | sessions (what a player does, scripted) and what "the app works" means |
+| [distribution.md](distribution.md) | what may be published (the recipe, never what is made of the user's files) and how an app is named |
 | [host.md](host.md) | what a host gives an app's module: version 0, not stable (generated from the sources) |
 | [platforms/](platforms/) | each platform's `[run]`, its drive, and what is particular to it: [windows](platforms/windows.md) (`windows-x86`, `windows-x64`, `xbox-series`), [linux-x64](platforms/linux-x64.md), [microvm-x64](platforms/microvm-x64.md), [ps5](platforms/ps5.md) |
 
