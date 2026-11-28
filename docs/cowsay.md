@@ -1,6 +1,6 @@
 # cowsay (2026-11-27)
 
-The third Linux title: [cowsay](https://github.com/cowsay-org/cowsay) 3.8.4 (GPL-3.0 or Artistic), a Perl script, on
+The third Linux app: [cowsay](https://github.com/cowsay-org/cowsay) 3.8.4 (GPL-3.0 or Artistic), a Perl script, on
 perl 5.44.0, both built from their sources by `tools/build-cowsay.sh` into `out/cowsay/root`; nothing of them is in
 the repository. It was ported on a boat.dev sandbox, as the first task to measure that way of working
 ([dev-machines.md](dev-machines.md)).

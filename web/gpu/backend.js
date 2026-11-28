@@ -75,7 +75,7 @@ export function parseRootSignature(bytes) {
   return { params, samplers };
 }
 
-// the title layout of a texture in guest memory (rt/gdk/d3d12.c d3d12_footprints(): subresources one after another,
+// the app layout of a texture in guest memory (rt/gdk/d3d12.c d3d12_footprints(): subresources one after another,
 // 512-byte aligned, rows 256-byte aligned): [{offset, pitch, rows, width, height, depth, mip, layer}]
 const BYTES = { 'rgba32float': 16, 'rgba32uint': 16, 'rgba32sint': 16, 'rgba16float': 8, 'rgba16unorm': 8, 'rgba16uint': 8, 'rgba16snorm': 8, 'rgba16sint': 8, 'rg32float': 8, 'rg32uint': 8, 'rg32sint': 8,
   'rg8unorm': 2, 'rg8uint': 2, 'rg8snorm': 2, 'rg8sint': 2, 'r16float': 2, 'r16unorm': 2, 'r16uint': 2, 'r16snorm': 2, 'r16sint': 2, 'depth16unorm': 2, 'r8unorm': 1, 'r8uint': 1, 'r8snorm': 1, 'r8sint': 1 };
@@ -146,7 +146,7 @@ export async function startBackend({ memory, ring: ringAddr, device, canvas, dir
       const size = { width: r.width, height: dim === 1 ? 1 : height, depthOrArrayLayers: depth };
       const viewFormats = SRGB[f] ? [SRGB[f]] : [];
       r.gpu = device.createTexture({ size, format: f, usage, mipLevelCount: mips, sampleCount: samples, dimension: dim === 3 ? '3d' : dim === 1 ? '1d' : '2d', viewFormats });
-      if (backing) { r.title = titleLayout(r); r.hash = -1; } // texels in title memory: the GPU follows them
+      if (backing) { r.app = titleLayout(r); r.hash = -1; } // texels in app memory: the GPU follows them
     }
     res.set(id, r);
   }
@@ -162,13 +162,13 @@ export async function startBackend({ memory, ring: ringAddr, device, canvas, dir
   };
   const descriptor = (a) => { g.refresh(); return g.u32.slice(a >>> 2, (a >>> 2) + 8); };
   const viewFormat = (r, dxgi) => { const f = dxgi ? FORMATS[dxgi] : r.format; return f && (f === r.format || SRGB[r.format] === f) ? f : r.format; };
-  // a texture in title memory: uploaded again when its bytes changed (no write protection in wasm: a hash)
+  // a texture in app memory: uploaded again when its bytes changed (no write protection in wasm: a hash)
   const hashGuest = (a, n) => { g.refresh(); const w = new Uint32Array(g.buf, a >>> 0, n >>> 2); let h = 2166136261; for (let i = 0; i < w.length; i++) h = Math.imul(h ^ w[i], 16777619); return h >>> 0; };
   const syncTitleTexture = (r) => {
-    if (!r?.title) return;
-    const h = hashGuest(r.backing, r.title.size); if (h === r.hash) return;
+    if (!r?.app) return;
+    const h = hashGuest(r.backing, r.app.size); if (h === r.hash) return;
     r.hash = h;
-    for (const s of r.title.subs) {
+    for (const s of r.app.subs) {
       const src = guestBytes(r.backing + s.offset, s.pitch * s.rows * s.depth), dst = { texture: r.gpu, mipLevel: s.mip, origin: { x: 0, y: 0, z: r.dim === 3 ? 0 : s.layer } };
       const layout = { bytesPerRow: s.pitch, rowsPerImage: s.rows }, size = { width: s.width, height: s.height, depthOrArrayLayers: s.depth };
       if (writeShared) { try { device.queue.writeTexture(dst, src, layout, size); continue; } catch (e) { writeShared = false; } }
@@ -300,7 +300,7 @@ export async function startBackend({ memory, ring: ringAddr, device, canvas, dir
     // what the segment reads of a buffer in guest memory (offset, bytes; undefined: all of it)
     const useBuffer = (r, off = 0, size) => { if (!r || !r.backing || r.dim !== 0) return; const l = uploads.get(r) || []; l.push([off, size ?? r.size - off]); uploads.set(r, l); };
     const wrote = (r, off = 0, size) => { if (!r || !r.backing || r.dim !== 0) return; const l = written.get(r) || []; l.push([off, size ?? r.size - off]); written.set(r, l); };
-    // bytes of guest memory no resource holds (an index buffer at a title address): a buffer for this segment
+    // bytes of guest memory no resource holds (an index buffer at an app address): a buffer for this segment
     const guestBuffer = (va, size) => {
       const n4 = Math.max(4, Math.ceil(size / 4) * 4), b = device.createBuffer({ size: n4, usage: GPUBufferUsage.INDEX | GPUBufferUsage.VERTEX | GPUBufferUsage.UNIFORM | GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC });
       writeBuf(b, 0, guestBytes(va, n4)); temps.push(b); return { r: { gpu: b, size: n4 }, offset: 0 };

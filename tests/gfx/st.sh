@@ -19,19 +19,19 @@ for v in local boat-msvc; do
   rm -rf "$d"; mkdir -p "$d"
   cp -r "$src"/{Assets,MicrosoftGame.config,PixelShader.cso,VertexShader.cso,SimpleTriangleDesktop.exe} "$d"/; cp "$src"/*.dll "$d"/
   cp "$REDIST"/{msvcp140.dll,vcruntime140.dll,vcruntime140_1.dll} "$d"/
-  tools/build-title.sh "$d/SimpleTriangleDesktop.exe" "$o" > "$o.build.log" 2>&1 || { echo "$v: build failed ($o.build.log)"; fail=1; continue; }
+  tools/build-app.sh "$d/SimpleTriangleDesktop.exe" "$o" > "$o.build.log" 2>&1 || { echo "$v: build failed ($o.build.log)"; fail=1; continue; }
   node tools/shader-prep.mjs "$d/VertexShader.cso" "$d/PixelShader.cso" > /dev/null
-  PAGE='probe=120' DURATION=25 TIMEOUT=60 node tools/run-chrome.mjs "$o/title.wasm" "$d/SimpleTriangleDesktop.exe" > "$o.chrome.log" 2>&1
+  PAGE='probe=120' DURATION=25 TIMEOUT=60 node tools/run-chrome.mjs "$o/app.wasm" "$d/SimpleTriangleDesktop.exe" > "$o.chrome.log" 2>&1
   p=$(grep -o 'probe frame 120: .*' "$o.chrome.log"); echo "$v: $p"
   [[ "$p" == *"centre 187,137,137,255 corner 65,65,65,255 differ 259200" ]] || fail=1
 done
 o=out/st-local
-PAGE='hash=1&pace=off&stats=1' DURATION=150 TIMEOUT=200 node tools/run-chrome.mjs "$o/title.wasm" out/st-game/local/SimpleTriangleDesktop.exe > "$o.soak.log" 2>&1
+PAGE='hash=1&pace=off&stats=1' DURATION=150 TIMEOUT=200 node tools/run-chrome.mjs "$o/app.wasm" out/st-game/local/SimpleTriangleDesktop.exe > "$o.soak.log" 2>&1
 frames=$(grep -c '^gpu frame' "$o.soak.log"); hashes=$(grep '^gpu frame' "$o.soak.log" | awk '{print $4}' | sort -u | wc -l); errs=$(grep -c 'WebGPU error\|page exception' "$o.soak.log")
 echo "soak: $frames frames, $hashes distinct hash(es), $errs errors"; { [ "$frames" -ge 600 ] && [ "$hashes" = 1 ] && [ "$errs" = 0 ]; } || fail=1
 mkdir -p out/msvc-game && cp fixtures/msvc/eh.exe out/msvc-game/ && cp "$REDIST"/{vcruntime140.dll,vcruntime140_1.dll,msvcp140.dll} out/msvc-game/
-tools/build-title.sh out/msvc-game/eh.exe out/msvc-eh > out/msvc-eh.build.log 2>&1
-timeout 60 node web/run-node.mjs out/msvc-eh/title.wasm out/msvc-game/eh.exe > out/msvc-eh.run.log 2>&1
+tools/build-app.sh out/msvc-game/eh.exe out/msvc-eh > out/msvc-eh.build.log 2>&1
+timeout 60 node web/run-node.mjs out/msvc-eh/app.wasm out/msvc-game/eh.exe > out/msvc-eh.run.log 2>&1
 echo "MSVC exceptions: $(grep -c '^\[PASS\]' out/msvc-eh.run.log) passed, $(grep -c '^\[FAIL\]' out/msvc-eh.run.log) failed"
 [ "$(grep -c '^\[PASS\]' out/msvc-eh.run.log)" = 6 ] || fail=1
 [ $fail = 0 ] && echo PASS || echo FAIL; exit $fail

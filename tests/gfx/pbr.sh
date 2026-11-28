@@ -15,14 +15,14 @@ src=out/gdk-samples/pbr-local; d=out/pbr-game; o=out/pbr
 rm -rf "$d"; mkdir -p "$d"
 (cd "$src" && cp -r $(ls | grep -v '^obj$\|\.pdb$') "$root/$d"/)
 cp "$REDIST"/{msvcp140.dll,vcruntime140.dll,vcruntime140_1.dll} "$d"/
-tools/build-title.sh "$d/SimplePBR.exe" "$o" > "$o.build.log" 2>&1 || { echo "build failed ($o.build.log)"; exit 1; }
+tools/build-app.sh "$d/SimplePBR.exe" "$o" > "$o.build.log" 2>&1 || { echo "build failed ($o.build.log)"; exit 1; }
 node tools/shader-prep.mjs "$d/SimplePBR.exe" "$d"/SkyboxEffect_*.cso > "$o.shaders.log" 2>&1 # (DirectXTK effects the sample never uses may fail)
 tail -1 "$o.shaders.log"
-PAGE='hash=1&pace=off&stats=1' DURATION=120 TIMEOUT=160 node tools/run-chrome.mjs "$o/title.wasm" "$d/SimplePBR.exe" > "$o.chrome.log" 2>&1
+PAGE='hash=1&pace=off&stats=1' DURATION=120 TIMEOUT=160 node tools/run-chrome.mjs "$o/app.wasm" "$d/SimplePBR.exe" > "$o.chrome.log" 2>&1
 frames=$(grep -c '^gpu frame' "$o.chrome.log"); hashes=$(grep '^gpu frame' "$o.chrome.log" | tail -n +6 | awk '{print $4}' | sort -u | wc -l)
 errs=$(grep -c 'WebGPU error\|page exception\|has no translation' "$o.chrome.log"); stats=$(grep 'gpu stats' "$o.chrome.log" | tail -1)
 echo "Chrome: $frames frames read back, $hashes distinct hash(es) after the first 5, $errs errors; $stats"
 mkdir -p out/pbr-shots && rm -f out/pbr-shots/run.mp4*
-CAPTURE=out/pbr-shots/run.mp4 DURATION=30 TIMEOUT=60 node tools/run-chrome.mjs "$o/title.wasm" "$d/SimplePBR.exe" > out/pbr-shots/run.log 2>&1
+CAPTURE=out/pbr-shots/run.mp4 DURATION=30 TIMEOUT=60 node tools/run-chrome.mjs "$o/app.wasm" "$d/SimplePBR.exe" > out/pbr-shots/run.log 2>&1
 ffmpeg -loglevel error -y -sseof -1 -i out/pbr-shots/run.mp4 -frames:v 1 out/pbr-shots/frame.png && echo "frame: out/pbr-shots/frame.png"
 { [ "$frames" -ge 30 ] && [ "$hashes" = 1 ] && [ "$errs" = 0 ] && [[ "$stats" == *'"skipped":{}'* ]]; } && echo PASS || { echo FAIL; exit 1; }

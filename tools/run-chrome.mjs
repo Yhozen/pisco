@@ -1,18 +1,18 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // Runs a lifted title in headless Chrome and prints its output: node tools/run-chrome.mjs <title.wasm> <title.exe> [args...]
-//   or a title image: node tools/run-chrome.mjs <image> [args...] (web/image.mjs; its shots go to <image>-shots/)
+//   or an app image: node tools/run-chrome.mjs <image> [args...] (web/image.mjs; its shots go to <image>-shots/)
 // Starts tools/serve.mjs and Chrome, follows the page console through the DevTools protocol. WebGPU runs on
 // SwiftShader (Chrome's CPU Vulkan), as in Horizon's WEB.md, so no GPU is needed.
 // Environment: TIMEOUT (s, default 600), PAGE ('pace=off&hash=1': more page options), and the runtime's own SW_*
 //   settings as the Node host takes them (SW_TRACE, SW_STRICT, SW_CLOCK=<microseconds a frame>: a virtual clock, ...);
-//   SW_SESSION=<session.json> plays a scripted session (Windows desktop titles), and the frame presented at each of
+//   SW_SESSION=<session.json> plays a scripted session (Windows desktop apps), and the frame presented at each of
 //   its `shot` steps is saved as <the wasm's folder>/shots/<name>.png;
-//   CAPTURE=<out.mp4> record the presented frames and the audio; DURATION=<s> then stop the title (it is
+//   CAPTURE=<out.mp4> record the presented frames and the audio; DURATION=<s> then stop the app (it is
 //   recorded until then); KEYS=<json> key presses for the page, [[ms, code, keyCode, down, label?], ...] (a label
-//   marks the recording); RELOAD_AT=<s> load the page again then (a new title process, the same browser profile:
-//   what the title stored survives), with KEYS2 for the new page; CHROME_PROFILE=<folder> keep the browser's profile
-//   there (OPFS: what titles stored) and use it again next time, with PORT=<n> for the same origin (OPFS is per origin);
-//   SCREENSHOT=<out.png> the page as it is when the title ends (a title that prints: its text, in the page's colours);
+//   marks the recording); RELOAD_AT=<s> load the page again then (a new app process, the same browser profile:
+//   what the app stored survives), with KEYS2 for the new page; CHROME_PROFILE=<folder> keep the browser's profile
+//   there (OPFS: what apps stored) and use it again next time, with PORT=<n> for the same origin (OPFS is per origin);
+//   SCREENSHOT=<out.png> the page as it is when the app ends (an app that prints: its text, in the page's colours);
 //   TYPE=<text> typed into the page as key presses after TYPE_AT seconds (default 5), a newline as Enter (a machine's
 //   console, rt/microvm-x64)
 import { spawn } from 'node:child_process'; import path from 'node:path'; import fs from 'node:fs'; import os from 'node:os';

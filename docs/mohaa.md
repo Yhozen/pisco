@@ -1,11 +1,11 @@
 # Medal of Honor: Allied Assault, the single-player demo (2026-11-27)
 
-The first OpenGL title, and the first on id Tech 3: the demo of 2015 Inc.'s Medal of Honor: Allied Assault
+The first OpenGL app, and the first on id Tech 3: the demo of 2015 Inc.'s Medal of Honor: Allied Assault
 (Electronic Arts, 2001), a 32-bit Windows game on Ritual's derivative of the Quake III engine. Its one level is a
 mission of the full game. It runs on the Windows x86 runtime, and asks of it what Narbacular Drop and Tag did not:
 OpenGL 1.1 with its extensions of the time, the Miles Sound System over DirectSound, Winsock (the engine talks to its
 own server through a loopback socket), and game code in DLLs it loads from a subfolder. This page starts as the
-census and the oracle (milestone M0 of the plan below), measured before any runtime code was written for the title.
+census and the oracle (milestone M0 of the plan below), measured before any runtime code was written for the app.
 The game's files, logs and screenshots stay outside the repository (under `out/oracle/mohaa/`): this page holds
 names and counts only.
 
@@ -37,7 +37,7 @@ What is installed, by part:
 ### What the engine imports
 
 `pisco census` of the exe against `base/windows-x86:1`: 246 imports from 9 DLLs (kernel32 129, user32 57, wsock32
-24, gdi32 14, winmm 11, advapi32 6, system86 4, shell32 1), 153 implemented by the base, 4 lifted with the title
+24, gdi32 14, winmm 11, advapi32 6, system86 4, shell32 1), 153 implemented by the base, 4 lifted with the app
 (`system86.dll`), 89 not implemented: mostly small (`GlobalAlloc`, the clipboard, `ChangeDisplaySettingsA`,
 `SetWindowsHookExA`, the pixel-format functions of gdi32, `SwapBuffers`, `joyGetPosEx`, seven of Winsock's by
 ordinal). The game DLLs import kernel32 only (80 functions, 8 not implemented) and `system86.dll`.
@@ -140,7 +140,7 @@ tools/oracle-wine/mohaa-play.sh recipes/mohaa/sessions/menu.json menu1      # th
   DirectInput holds exclusively gets no messages (Narbacular Drop's menu relies on it).
 - **Winsock**: wsock32 numbers `inet_addr`, `inet_ntoa` and `ioctlsocket` 10, 11, 12 where ws2_32 has 11, 12, 10;
   forwarding them as the same numbers made the engine's `ioctlsocket(FIONBIO)` an `inet_addr`, and its socket blocking.
-- **The virtual clock**: `timeGetTime` moves it on when a title waits by reading it, as `QueryPerformanceCounter` did.
+- **The virtual clock**: `timeGetTime` moves it on when an app waits by reading it, as `QueryPerformanceCounter` did.
 - **Files**: what is still open for writing when the process ends (the console log) is saved, as Windows would have
   written it.
 
@@ -164,11 +164,11 @@ tools/oracle-wine/mohaa-play.sh recipes/mohaa/sessions/menu.json menu1      # th
 
 - **DirectSound** (`[libraries.dsound]`, `rt/windows-x86/dsound.c`): Miles makes one looping 44.1 kHz buffer and mixes
   its voices into it, reading where playback is with `GetCurrentPosition`; the buffer is played by the runtime's mixer
-  (resampled to 48 kHz), whose position follows the title's clock, so on the virtual clock what is mixed is the same
+  (resampled to 48 kHz), whose position follows the app's clock, so on the virtual clock what is mixed is the same
   on every run.
 - **The thread-naming exception.** Miles names its timer thread as Visual C++ code did, by raising `0x406D1388` and
   catching it itself; with no debugger that is the same as `RaiseException` returning, which the runtime now does (a
-  32-bit title has no structured exception dispatch yet).
+  32-bit app has no structured exception dispatch yet).
 - **A Pentium III.** The recipe gives the processor the oracle's machine is to the engine (MMX and SSE): the engine
   and Miles take the paths they take under Wine on an Intel processor, and the engine's console names the same CPU.
 - **One more of Miles' mixer routines** (`MSSMIXER` at `0x2113d047` as linked) is found by no discovery rule and is
@@ -193,7 +193,7 @@ tools/oracle-wine/mohaa-play.sh recipes/mohaa/sessions/menu.json menu1      # th
 | M0 | Census, recipe, oracle: `pisco build` reads Wise installers and InstallShield 5 / 6 cabinets | the build's files equal Wine's install; Wine reaches the menu every time |
 | M1 | Lift and start in Node: MMX, the DLLs in subfolders lifted and loaded by path, the missing Win32 functions, Winsock's loopback, input as window messages, an `opengl32` library (OpenGL 1.1 on the GPU ring) | strict, on the virtual clock, the `menu` and `level` sessions end with exit code 0, every record consistent; the console log is Wine's but for what describes the machine |
 | M2 | OpenGL's pixels in Chrome | the menu and the level's first view in headless Chrome are within Tag's threshold (3 of 255 on average) of Wine's screenshots |
-| M3 | Sound: DirectSound for Miles (lifted, with its MP3 decoder): the logos' and the menu's music, the level's sounds | what the title plays is close to what Wine records, and the same on every run |
+| M3 | Sound: DirectSound for Miles (lifted, with its MP3 decoder): the logos' and the menu's music, the level's sounds | what the app plays is close to what Wine records, and the same on every run |
 | M4 | Playable by hand on a real GPU; the docs | played from the logos into the level |
 
 ## Progress

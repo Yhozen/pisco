@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-// XAudio2 (xaudio2_9.dll): source voices mixed here, in C, into the title's sound output (mixer.c: one ring of
+// XAudio2 (xaudio2_9.dll): source voices mixed here, in C, into the app's sound output (mixer.c: one ring of
 // 48 kHz stereo float frames in shared memory that the host plays). PCM (8-bit unsigned, 16-bit, float) at any rate, any channel count, through each voice's
 // output matrix; submix voices pass through. XMA1 / XMA2 and Opus (the console's tag 0x704F, packets each behind
 // a 16-bit length) are decoded to PCM16 when a buffer is submitted (rt/gdk/audio_codec.c, FFmpeg's decoders);
 // ADPCM / WMA are not (the voice stays silent). XAudio2's structures are packed (pack(1)).
 // Voice callbacks (OnBufferStart, OnBufferEnd, OnStreamEnd, OnVoiceProcessingPassStart) run on the mixer thread
-// (none when a virtual clock makes the title's own thread mix: mixer.h).
+// (none when a virtual clock makes the app's own thread mix: mixer.h).
 #include <math.h>
 #include "rt.h"
 #include "mixer.h"

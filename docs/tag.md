@@ -1,6 +1,6 @@
 # Tag: The Power of Paint (2026-11-25)
 
-The second Windows x86 title. Its census and oracle (milestone T0 of the PISCO plan) come first: what the game asks
+The second Windows x86 app. Its census and oracle (milestone T0 of the PISCO plan) come first: what the game asks
 of Windows, Direct3D 9, D3DX and FMOD Ex, measured under Wine before any code was written for it. How to play it
 and each milestone after T0 are at the end ([Play it](#play-it), [Progress](#progress)). How the measurements are taken is in
 [`tools/oracle-wine/README.md`](../tools/oracle-wine/README.md). The game's files, Microsoft's DLLs, logs,
@@ -234,7 +234,7 @@ look, the left button to paint and the right button to erase once a gun is taken
   opcode, register, modifier and flow-control form from 1.1 to 2.x and pass naga, and bad inputs are refused;
   Tag's 46 bytecodes are all translated (their WGSL compiles in Chrome since T4).
 - **T4, pixels.** In headless Chrome (WebGPU on SwiftShader), strict, on the virtual clock, `tests/run.sh tag` plays
-  `menu-to-level1` with every title shader translated (21 WGSL modules, 13 pipelines, 673,707 draws, no draw left
+  `menu-to-level1` with every app shader translated (21 WGSL modules, 13 pipelines, 673,707 draws, no draw left
   out, no WebGPU error) and sets the checkpoints against Wine's: level 1 1.24 / 0.95 / 1.35 of 255 on average
   (2.3 % of pixels over 16), its tooltips 1.37 / 1.20 / 1.42, the menu 5.1 / 5.2 / 4.3 (the logo's colours are
   random); the paint splash differs as its random splats and its timing do. What it took: infinities made at run

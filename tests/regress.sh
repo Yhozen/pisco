@@ -1,8 +1,8 @@
 #!/bin/bash
 # SPDX-License-Identifier: GPL-2.0-or-later
-# tests/regress.sh [names...]: rebuilds the regression titles against the current runtime and runs them in Node.
+# tests/regress.sh [names...]: rebuilds the regression apps against the current runtime and runs them in Node.
 # Names: hello threads cxx dll xcl sf (default: all). Logs: out/regress-<name>.{build,run}.log.
-# Expected: every [PASS] line of hello / threads / cxx / dll; XCL's test title 46 of 50 in Node (the 4 checks that
+# Expected: every [PASS] line of hello / threads / cxx / dll; XCL's test app 46 of 50 in Node (the 4 checks that
 # read pixels back need the WebGPU back end: tests/gfx/xcl.sh runs it in Chrome); Stockfish's bench 2,497,913 nodes.
 # Environment: SF (Stockfish 19's Windows exe, default ~/untrusted/stockfish19/stockfish/stockfish-windows-x86-64-universal.exe)
 set -uo pipefail
@@ -16,8 +16,8 @@ names=${*:-hello threads cxx dll xcl sf}; fail=0
 for n in $names; do
   exe=${EXE[$n]}; o=out/regress-$n
   if [ ! -f "$exe" ]; then echo "$n: $exe missing, skipped"; continue; fi
-  if ! BASE=${BASES[$n]:-windows-x64} tools/build-title.sh "$exe" "$o" > "$o.build.log" 2>&1; then echo "$n: build failed (see $o.build.log)"; fail=1; continue; fi
-  timeout 1800 node web/run-node.mjs "$o/title.wasm" "$exe" ${ARGS[$n]:-} > "$o.run.log" 2>&1; code=$?
+  if ! BASE=${BASES[$n]:-windows-x64} tools/build-app.sh "$exe" "$o" > "$o.build.log" 2>&1; then echo "$n: build failed (see $o.build.log)"; fail=1; continue; fi
+  timeout 1800 node web/run-node.mjs "$o/app.wasm" "$exe" ${ARGS[$n]:-} > "$o.run.log" 2>&1; code=$?
   pass=$(grep -c '^\[PASS\]' "$o.run.log"); bad=$(grep -c '^\[FAIL\]' "$o.run.log")
   case $n in
     sf) nodes=$(grep -o 'Nodes searched *: *[0-9]*' "$o.run.log" | grep -o '[0-9]*$'); nps=$(grep -o 'Nodes/second *: *[0-9]*' "$o.run.log" | grep -o '[0-9]*$')

@@ -35,23 +35,23 @@ it in [`THIRD_PARTY.md`](THIRD_PARTY.md).
 A directory map labels files; it does not make incompatible licences compatible. What has to be consistent is
 each **program**:
 
-- **One linked program**: everything that ends up in one `title.wasm` (the lifted title, the runtime in
+- **One linked program**: everything that ends up in one `app.wasm` (the lifted app, the runtime in
   `rt/`, the host code that completes it) must carry licences that can be combined.
 - **Separate programs** that only exchange files and command lines can each have their own licence: the
   lifter, the shader tools, the test and oracle tooling, a recipe runner.
 
-| Code from | Licence | In `title.wasm` | In a separate tool |
+| Code from | Licence | In `app.wasm` | In a separate tool |
 |---|---|---|---|
 | Wine, vkd3d | LGPL-2.1-or-later | yes, in any build | yes |
 | DXVK | Zlib | yes, in any build | yes |
 | FFmpeg (built without `--enable-gpl`) | LGPL-2.1-or-later | yes, in any build (today: the XMA2 and Opus decoders) | yes |
 | wasi-libc, compiler-rt | Apache-2.0 WITH LLVM-exception, MIT | yes (the exception covers GPL-2.0) | yes |
 | stb_truetype | MIT OR Unlicense | yes, in any build | yes |
-| stb_vorbis | MIT OR Unlicense | yes, in any build (Windows desktop titles) | yes |
-| stb_image | MIT OR Unlicense | yes, in any build (Windows x64 titles) | yes |
+| stb_vorbis | MIT OR Unlicense | yes, in any build (Windows desktop apps) | yes |
+| stb_image | MIT OR Unlicense | yes, in any build (Windows x64 apps) | yes |
 | unkernel's network stack (`web/third_party/unkernel/`) | MIT | yes, in any build (host code: Node's network for a machine, `web/net-node.mjs`) | yes |
-| minimp3 | CC0-1.0 (public domain dedication) | yes, in any build (Windows desktop titles) | yes |
-| Liberation fonts | OFL-1.1 (a font embedded in a program: the OFL allows it with any software, the font itself staying under the OFL) | yes, in any build (Windows desktop titles) | yes |
+| minimp3 | CC0-1.0 (public domain dedication) | yes, in any build (Windows desktop apps) | yes |
+| Liberation fonts | OFL-1.1 (a font embedded in a program: the OFL allows it with any software, the font itself staying under the OFL) | yes, in any build (Windows desktop apps) | yes |
 | XCL | GPL-2.0-only | only in a build with no GPL-3.0 or LGPL-3.0 code | yes (as today: `crates/shaders`) |
 | VIctory | GPL-3.0 | only in a build with no GPL-2.0-only code | yes |
 | Lutris | GPL-3.0 | no use for it there | yes |
@@ -60,15 +60,15 @@ each **program**:
 Because our own code is GPL-2.0-or-later, it can sit in either kind of build: with GPL-2.0-only code the
 result is distributed under GPL-2.0, with GPL-3.0 code under GPL-3.0. The two cannot meet in one program.
 
-Today no code from XCL is linked into `title.wasm`: `crates/shaders` is a command-line tool, and the runtime
+Today no code from XCL is linked into `app.wasm`: `crates/shaders` is a command-line tool, and the runtime
 uses XCL only as a source of facts about the console (see `THIRD_PARTY.md`). To keep each build's set of
-licences checkable, a title links only the runtime files of its base (`bases/<runtime>/1/base.toml`, the one list of
+licences checkable, an app links only the runtime files of its base (`bases/<runtime>/1/base.toml`, the one list of
 them; `pisco sources` prints it): `base/windows-x86` is the core (`rt/*.c`) plus `rt/windows-x86/`;
 `base/windows-x64` the core, `rt/gdk/` and `rt/windows-x64/`; `base/xbox-series` the core, `rt/gdk/` and
 `rt/xbox-series/`; `base/linux-x64` three files of the core (`rt/core.c`, `rt/clock.c`, `rt/builtins.c`) and
 `rt/linux-x64/`, all our own; `base/microvm-x64` the same three files and `rt/microvm-x64/`, all our own too. (A Linux
-title is linked statically with a C library, musl's being MIT; that is the title's code, built outside the repository,
-not the runtime's. A machine's title is a kernel: Linux's is GPL-2.0-only, so a module with it is under GPL-2.0, and
+app is linked statically with a C library, musl's being MIT; that is the app's code, built outside the repository,
+not the runtime's. A machine's app is a kernel: Linux's is GPL-2.0-only, so a module with it is under GPL-2.0, and
 so are the programs lifted into that module, which must allow it: busybox and hello are GPL-2.0, fastfetch MIT, perl
 GPL-1.0-or-later. (Alpine's busybox, GPL-2.0, and musl's loader, MIT, are lifted when they first run, each into a
 module of its own in the user's cache.) A program whose licence does not, bash's GPL-3.0-or-later, is a module of its own (`[lifter]
@@ -77,7 +77,7 @@ calls, the boundary Linux's own licence note puts between the kernel and the pro
 loaded into one host process are separate works is a question of law this page does not answer; PISCO keeps them
 apart so that each file's licence is its own.) A recipe's libraries add files of its base only.
 
-## Title images
+## App images
 
 `pisco` (`crates/pisco`, GPL-2.0-or-later) is a separate program: it runs the lifter, clang and innoextract (zlib licence;
 downloaded, never linked) as subprocesses. In an image ([docs/images.md](docs/images.md)) the base's
@@ -86,7 +86,7 @@ built from the user's own installer, stay on the user's machine and are marked s
 
 ## What is never in this repository
 
-A title's files, anything lifted or built from them (`title.wasm`, title images, shaders, screenshots, traces), the
+An app's files, anything lifted or built from them (`app.wasm`, app images, shaders, screenshots, traces), the
 user's installers (a recipe names one by its sha256), and tools we only download (wasi-sdk, llvm-mingw, Wine, dxc,
 innoextract). They keep their own terms; `out/` is ignored.
 

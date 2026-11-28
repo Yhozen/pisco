@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-// DirectSound for Windows desktop titles: one device, the runtime's one sound output (mixer.c), and sound buffers
-// in guest memory that the mixer plays. A title (Miles Sound System, which mixes its own voices into one looping
+// DirectSound for Windows desktop apps: one device, the runtime's one sound output (mixer.c), and sound buffers
+// in guest memory that the mixer plays. An app (Miles Sound System, which mixes its own voices into one looping
 // buffer) writes into a buffer between Lock and Unlock and reads where playback is with GetCurrentPosition; the
-// mixer moves the play position as it takes frames (48 kHz, with a virtual clock as the title's clock moves), so the
-// positions a title sees follow what was really mixed. Every buffer is mixed in software: no hardware buffers, no
+// mixer moves the play position as it takes frames (48 kHz, with a virtual clock as the app's clock moves), so the
+// positions an app sees follow what was really mixed. Every buffer is mixed in software: no hardware buffers, no
 // 3D (IDirectSound3DBuffer is refused, as a device without it refuses it), no capture.
 // Formats: PCM, 8 or 16 bits, mono or stereo, at any rate (resampled linearly to 48 kHz).
 #include <math.h>
@@ -176,7 +176,7 @@ static u32 write_cursor(const Buffer *b) { u32 lead = (b->freq ? b->freq : b->ra
 IMP(dsound, IDirectSoundBuffer_GetCurrentPosition) { // (&play, &write)
   Buffer *b = BUF;
   if (b->primary) { if (ARG(1)) M32(ARG(1)) = 0; if (ARG(2)) M32(ARG(2)) = 0; RET(DS_OK); return; }
-  mixer_clock_moved();   // what is due by now is mixed: the position is the title's clock's
+  mixer_clock_moved();   // what is due by now is mixed: the position is the app's clock's
   pthread_mutex_lock(&mixer_lock);
   u32 pc = play_cursor(b), wc = write_cursor(b);
   pthread_mutex_unlock(&mixer_lock);

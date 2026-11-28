@@ -15,7 +15,7 @@ int linux_argc; char **linux_argv;
 int linux_drive;
 u64 linux_image_end;
 const char *linux_argv0;
-// What the first process finds in its environment: the same on every host (a title's output does not depend on who
+// What the first process finds in its environment: the same on every host (an app's output does not depend on who
 // runs it). No SHELL: no shell started it. TERM only when its output is a terminal (SW_TTY): one that knows colours.
 static const char *first_env[] = { "PATH=/usr/local/bin:/usr/bin:/bin", "HOME=/home/" LINUX_USER, "USER=" LINUX_USER, "LOGNAME=" LINUX_USER,
   "LANG=C.UTF-8", "PWD=/", 0, 0, 0 };
@@ -23,7 +23,7 @@ const char **linux_env = first_env;
 
 u64 linux_mem_used(void) { return (u64)__builtin_wasm_memory_size(0) * 65536; }
 
-// A Linux title has no imports: an indirect call or jump goes to lifted code.
+// A Linux app has no imports: an indirect call or jump goes to lifted code.
 void rt_call(Cpu *c, u64 t) { rt_dispatch(c, t); }
 
 enum { AT_NULL = 0, AT_PHDR = 3, AT_PHENT = 4, AT_PHNUM = 5, AT_PAGESZ = 6, AT_BASE = 7, AT_FLAGS = 8, AT_ENTRY = 9, AT_UID = 11, AT_EUID = 12, AT_GID = 13,
@@ -31,7 +31,7 @@ enum { AT_NULL = 0, AT_PHDR = 3, AT_PHENT = 4, AT_PHNUM = 5, AT_PAGESZ = 6, AT_B
 
 static void load(const ModuleDef *m, const char *src) {
   // room for the image: linear memory reaches past it, and malloc starts above it (as rt/process.c does for a
-  // 64-bit Windows title), or the link left a gap for it below the runtime's data (tools/build-title.sh)
+  // 64-bit Windows app), or the link left a gap for it below the runtime's data (tools/build-app.sh)
   extern char __global_base, __stack_high;
   u64 top = (m->base + m->size + 0xFFFF) & ~0xFFFFull, have = (u64)__builtin_wasm_memory_size(0) * 65536;
   if (top <= (u64)(uptr)&__global_base) {
@@ -85,16 +85,16 @@ int main(int argc, char **argv) {
   if ((e = getenv("SW_CWD")) && e[0] == '/' && strlen(e) < sizeof linux_cwd) strcpy(linux_cwd, e);
   if ((e = getenv("SW_FDS"))) fd_import(e);
   const ModuleDef *m = &rt_modules[0];
-  if (rt_module_count != 1) rt_fatal("a Linux title is one statically linked program");
+  if (rt_module_count != 1) rt_fatal("a Linux app is one statically linked program");
   // where the program is: at the root, which is then its folder, or as the host says (SW_EXE: the root is a drive,
-  // a title image's or a folder's, and every program on it is found there)
+  // an app image's or a folder's, and every program on it is found there)
   const char *base = strrchr(m->name, '/'); snprintf(linux_exe, sizeof linux_exe, "/%s", base ? base + 1 : m->name);
   if ((e = getenv("SW_EXE")) && e[0] == '/' && strlen(e) < sizeof linux_exe) { strcpy(linux_exe, e); linux_drive = 1; }
   char src[sizeof linux_exe + 4]; if (linux_drive) snprintf(src, sizeof src, "c:%s", linux_exe); else strcpy(src, m->name);
   linux_argv0 = (e = getenv("SW_ARGV0")) ? e : linux_exe;
   linux_argc = argc; linux_argv = calloc((size_t)argc + 1, sizeof *linux_argv);
   linux_argv[0] = (char *)linux_argv0; for (int i = 1; i < argc; i++) linux_argv[i] = argv[i];
-  // the title is a script (its image's exe: neofetch): it is run as execve runs it, through the program its #! names
+  // the app is a script (its image's exe: neofetch): it is run as execve runs it, through the program its #! names
   { char magic[4] = {0}; if (linux_drive && (host_read_file(src, (u32)strlen(src), 0, 4, (u64)(uptr)magic) != 4 || memcmp(magic, "\x7f" "ELF", 4))) {
       u64 *gargv = calloc((size_t)argc + 1, 8), *genv; unsigned envc = 0; while (linux_env[envc]) envc++;
       genv = calloc(envc + 1, 8);

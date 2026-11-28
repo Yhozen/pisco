@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-// FMOD Ex (fmodex.dll) for titles whose recipe says the runtime answers for it ([dll] "fmodex.dll" = "builtin"): the
+// FMOD Ex (fmodex.dll) for apps whose recipe says the runtime answers for it ([dll] "fmodex.dll" = "builtin"): the
 // functions Tag imports (docs/tag.md), on the runtime's sound output (mixer.c), with files decoded by audio_decode.c
 // (WAV, Ogg Vorbis, MP3). FMOD Ex's C++ API is a set of non-virtual stdcall methods exported under their decorated
-// names, `this` the first argument on the stack; its System, Sound and Channel pointers are opaque to the title.
+// names, `this` the first argument on the stack; its System, Sound and Channel pointers are opaque to the app.
 // From FMOD Ex's documentation: volumes are floats from 0 to 1; a channel's handle stops being valid when its sound
 // ends or is stopped, and calls on it then fail with FMOD_ERR_INVALID_HANDLE (isPlaying says false); playSound with
 // FMOD_CHANNEL_FREE (-1) takes a free channel, FMOD_CHANNEL_REUSE (-2) the one the handle names; loop counts are -1
@@ -164,7 +164,7 @@ IMP(fmodex, System_init) { // (this, max channels, flags, extra driver data)
   RET(FMOD_OK);
 }
 IMP(fmodex, System_release) { pthread_mutex_lock(&mixer_lock); for (int i = 0; i < CHANNELS; i++) stop(&ch[i]); pthread_mutex_unlock(&mixer_lock); RET(FMOD_OK); }
-IMP(fmodex, System_update) { RET(FMOD_OK); }   // the mixer runs on its own (or with the title's clock)
+IMP(fmodex, System_update) { RET(FMOD_OK); }   // the mixer runs on its own (or with the app's clock)
 IMP(fmodex, System_set3DSettings) { // (this, Doppler scale, distance factor, roll-off scale)
   pthread_mutex_lock(&mixer_lock);
   float df = farg(c, 2), r = farg(c, 3); if (df > 0) distance_factor = df; if (r >= 0) rolloff = r;

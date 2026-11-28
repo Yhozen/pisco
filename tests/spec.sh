@@ -38,7 +38,7 @@ import fs from "node:fs"; import { checkSession } from "./web/session.mjs";
 let n = 0, bad = 0;
 for (const r of fs.readdirSync("recipes")) { const d = `recipes/${r}/sessions`; if (!fs.existsSync(d)) continue;
   for (const f of fs.readdirSync(d).filter((f) => f.endsWith(".json"))) { const s = JSON.parse(fs.readFileSync(`${d}/${f}`, "utf8")); try { checkSession(s); if (s.app !== r) throw new Error(`app ${s.app}, in recipes/${r}`); n++; } catch (e) { console.error(`${d}/${f}: ${e.message}`); bad++; } } }
-const wrong = [{ app: "x", steps: [] }, { schema: 1, app: "x", steps: [{ jump: 1 }] }, { schema: 1, app: "x", steps: [{ wait: 1, down: true }] }, { schema: 1, app: "x", title: "x", steps: [] }];
+const wrong = [{ app: "x", steps: [] }, { schema: 1, app: "x", steps: [{ jump: 1 }] }, { schema: 1, app: "x", steps: [{ wait: 1, down: true }] }, { schema: 1, app: "x", app: "x", steps: [] }];
 for (const w of wrong) { try { checkSession(w); console.error(`accepted, and must not be: ${JSON.stringify(w)}`); bad++; } catch {} }
 console.log(n); process.exit(bad ? 1 : 0);') || fail=1
 # the host interface (docs/spec/host.md) is what the sources give, and every SW_* variable has its kind

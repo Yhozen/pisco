@@ -34,7 +34,7 @@ pub fn tree_digest(entries: &[(String, char, String)]) -> String {
 // ---- tar ----
 /// A folder; a file (and whether it is executable: only on a platform with modes); a symbolic link and its target
 pub enum Entry { Dir, File(Vec<u8>, bool), Link(String) }
-/// A layer's files: paths relative to C:\ with '/' separators, as the title's file system shows them (case kept).
+/// A layer's files: paths relative to C:\ with '/' separators, as the app's file system shows them (case kept).
 #[derive(Default)]
 pub struct Tree { pub entries: BTreeMap<String, Entry> }
 impl Tree {

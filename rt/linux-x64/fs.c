@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-// The file system a Linux title sees, read-only. Its root is the title's folder or, for a title image, the image's
-// drive (the host knows a file there as "c:/<path>", as it does for a Windows title: web/image.mjs): the host
+// The file system a Linux app sees, read-only. Its root is the app's folder or, for an app image, the image's
+// drive (the host knows a file there as "c:/<path>", as it does for a Windows app: web/image.mjs): the host
 // answers for the files there. /proc, /sys and /dev are the runtime's own (proc.c), and so are the files of /etc
-// a program expects on any system when the title's folder has none.
+// a program expects on any system when the app's folder has none.
 #include "linux.h"
 
 HOST("stat") s64 host_stat(const char *name, u32 len);                        // size, -1 missing, -2 directory

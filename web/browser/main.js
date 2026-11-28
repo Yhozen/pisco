@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // Starts a lifted title in this page: ?wasm=<title.wasm>&exe=<the title's .exe>&args=<space-separated>
-// or a title image (web/image.mjs, docs/images.md): ?image=<the image's URL, served by tools/serve.mjs>&args=<more>
-// The title's threads (its main thread too) run in workers; this page owns what a console would: the GPU
-// (web/gpu/backend.js, on this thread), the speakers (an AudioWorklet playing the title's mixer ring), and the
-// keyboard and gamepad (written into the title's input block), or for a Windows desktop title the keyboard and the
+// or an app image (web/image.mjs, docs/images.md): ?image=<the image's URL, served by tools/serve.mjs>&args=<more>
+// The app's threads (its main thread too) run in workers; this page owns what a console would: the GPU
+// (web/gpu/backend.js, on this thread), the speakers (an AudioWorklet playing the app's mixer ring), and the
+// keyboard and gamepad (written into the app's input block), or for a Windows desktop app the keyboard and the
 // mouse under Pointer Lock (events into its input ring).
 // Options: &pace=off (no frame clock), &hash=1 (log a hash of every presented frame),
 //          &capture=1 (send presented frames and the audio to the server, which records them: tools/serve.mjs),
 //          &SW_<NAME>=<value>: the runtime's settings, as the Node host takes them from the environment. For
-//          Windows desktop titles: SW_CLOCK=16667 (a virtual clock: that many microseconds a presented frame) and
+//          Windows desktop apps: SW_CLOCK=16667 (a virtual clock: that many microseconds a presented frame) and
 //          SW_SESSION_STEPS=<steps> (a scripted session, as web/session.mjs writes one; tools/run-chrome.mjs
 //          makes it from SW_SESSION=<session.json>). At each `shot` of a session the frame presented last is
 //          sent to the server (POST /capture/shot), which saves it as a PNG.
@@ -24,9 +24,9 @@ const workers = [];
 let line = '';
 const POOL = 32; // guest threads come from workers the page starts ahead of time (see worker.js)
 let ctl, boot, memory, device, dir, drive = null, folder = null;
-// ---- the title's text: a terminal. Lines of cells, a cursor that moves (CR, LF as CR LF, BS, TAB, and the CSI
+// ---- the app's text: a terminal. Lines of cells, a cursor that moves (CR, LF as CR LF, BS, TAB, and the CSI
 // sequences for the cursor, erasing and the SGR colours: 16, 256 and 24-bit, bold, dim, italic, underline, reverse).
-// What it does not know (other escapes, OSC) is left out. A Linux title is told how wide it is (SW_TTY, below). ----
+// What it does not know (other escapes, OSC) is left out. A Linux app is told how wide it is (SW_TTY, below). ----
 const ANSI = ['#000', '#c33', '#3a3', '#c90', '#48c', '#a4a', '#3aa', '#ccc', '#666', '#f55', '#5d5', '#fd5', '#6af', '#f6f', '#5ff', '#fff'];
 const colour256 = (n) => n < 16 ? ANSI[n] : n < 232 ? `rgb(${[Math.floor((n - 16) / 36), Math.floor((n - 16) / 6) % 6, (n - 16) % 6].map((v) => v ? 55 + 40 * v : 0)})` : `rgb(${Array(3).fill(8 + 10 * (n - 232))})`;
 const term = { lines: [[]], row: 0, col: 0, cols: 100000, rows: 40, wrap: true, pen: {}, style: '', held: '', saved: [0, 0], dirty: new Set(), els: [] };
@@ -129,7 +129,7 @@ function onFrame(f) {
     console.log(`gpu frame ${f.index} ${h.toString(16).padStart(8, '0')}`);
   }
   // wall-clock times (they continue across a reload of the page); with a virtual clock (SW_CLOCK: microseconds a
-  // frame) the title's: frame n shows from (n + 1) frames on, and the sound is placed on the same clock (startAudio)
+  // frame) the app's: frame n shows from (n + 1) frames on, and the sound is placed on the same clock (startAudio)
   const time = clockStep ? performance.timeOrigin + (f.index + 1) * clockStep / 1000 : performance.timeOrigin + f.time;
   if (capture) post('/capture/frame', f.pixels, { 'x-frame': JSON.stringify({ index: f.index, time, width: f.width, height: f.height, format: f.format }) });
 }
@@ -141,7 +141,7 @@ async function onShot(f) {
   console.log(`shot ${f.name}: frame ${f.index + 1} at ${(now / 1000).toFixed(1)} s, ${reply}; ${frames} frames since the last in ${s.toFixed(1)} s (${(frames / s).toFixed(1)} a second)`);
   lastShot = { index: f.index + 1, time: performance.now() };
 }
-// ---- audio: the title's mixer ring (rt/gdk/xaudio2.c) -> an AudioWorklet; recordings read the same ring ----
+// ---- audio: the app's mixer ring (rt/gdk/xaudio2.c) -> an AudioWorklet; recordings read the same ring ----
 async function startAudio(addr) {
   let ctx;
   try {
@@ -168,7 +168,7 @@ async function startAudio(addr) {
     }, 100);
   }
 }
-// ---- input: keys held and the first gamepad, into the title's input block (rt/gdk/gameinput.c) ----
+// ---- input: keys held and the first gamepad, into the app's input block (rt/gdk/gameinput.c) ----
 function startInput(addr) {
   const u32 = new Uint32Array(memory.buffer, addr, 32), f32 = new Float32Array(memory.buffer, addr, 32);
   const held = new Map(); let seq = 0;
@@ -212,7 +212,7 @@ function startConsole(addr) {
 }
 // ---- input for a Windows desktop title (rt/windows-x86/input.c): the keyboard as DirectInput scan codes, the mouse as
 // relative motion under Pointer Lock (a click on the canvas takes the pointer; Escape gives it back, as browsers
-// do, and is passed on to the title as its Escape key) ----
+// do, and is passed on to the app as its Escape key) ----
 const DIK = { Escape: 0x01, Minus: 0x0C, Equal: 0x0D, Backspace: 0x0E, Tab: 0x0F, BracketLeft: 0x1A, BracketRight: 0x1B, Enter: 0x1C, ControlLeft: 0x1D,
   Semicolon: 0x27, Quote: 0x28, Backquote: 0x29, ShiftLeft: 0x2A, Backslash: 0x2B, Comma: 0x33, Period: 0x34, Slash: 0x35, ShiftRight: 0x36,
   NumpadMultiply: 0x37, AltLeft: 0x38, Space: 0x39, CapsLock: 0x3A, NumLock: 0x45, ScrollLock: 0x46, Numpad7: 0x47, Numpad8: 0x48, Numpad9: 0x49,
@@ -226,7 +226,7 @@ for (let i = 1; i <= 10; i++) DIK[`F${i}`] = 0x3A + i;
 function startWin32Input(addr) {
   const i32 = new Int32Array(memory.buffer, addr, 4 + 4 * 512), cap = i32[2], held = new Set();
   const push = (kind, a, b) => {
-    const w = Atomics.load(i32, 0); if (w - Atomics.load(i32, 1) >= cap) return;   // the title has not read for a while: dropped
+    const w = Atomics.load(i32, 0); if (w - Atomics.load(i32, 1) >= cap) return;   // the app has not read for a while: dropped
     const at = 4 + 4 * (w % cap); i32[at] = kind; i32[at + 1] = a; i32[at + 2] = b; Atomics.store(i32, 0, w + 1);
   };
   const key = (code, down) => { const scan = DIK[code]; if (!scan || held.has(code) === down) return false; if (down) held.add(code); else held.delete(code); push(1, scan, down ? 1 : 0); return true; };
@@ -248,7 +248,7 @@ function startWin32Input(addr) {
 let scripted = null, playKeys = null;
 window.swKeys = (list) => { scripted = list; if (playKeys) playKeys(list); };
 
-// ---- the title's persistent storage (S:\): OPFS, one folder per title ----
+// ---- the app's persistent storage (S:\): OPFS, one folder per app ----
 let storeDir = null, storeQueue = Promise.resolve();
 async function openStore(key) {
   const root = await navigator.storage.getDirectory();
@@ -274,7 +274,7 @@ bus.onmessage = (e) => {
   }
   if (m.refill !== undefined) startPooled(m.refill);
   if (m.gpu !== undefined) {
-    if (!device) { log('gpu: no WebGPU device: the title cannot draw'); return; }
+    if (!device) { log('gpu: no WebGPU device: the app cannot draw'); return; }
     startBackend({ memory, ring: m.gpu, device, canvas, dir, log, onFrame: capture || hashFrames || probe !== null ? onFrame : null, keepAll: hashFrames || probe !== null, onShot }).then((s) => {
       window.swGpu = s;
       if (q.get('stats') === '1') setInterval(() => console.log(`gpu stats: ${JSON.stringify({ ...s, errors: s.errors.count })}`), 3000);
@@ -288,15 +288,15 @@ bus.onmessage = (e) => {
   if (m.exit !== undefined) {
     status.textContent = `exit ${m.exit}`; document.title = `exit ${m.exit}`;
     if (line) console.log(line);
-    // a title drawn through the explicit records (Direct3D 9): what the back end made of them, in one line
+    // an app drawn through the explicit records (Direct3D 9): what the back end made of them, in one line
     if (window.swGpu?.explicit?.draws) console.log(`gpu explicit records: ${JSON.stringify(window.swGpu.explicit)}, ${window.swGpu.presents} presents, ${window.swGpu.errors.count} WebGPU errors`);
-    // what the title stored last is written to OPFS first (a title that saves as it quits: Narbacular Drop's system.opt)
+    // what the app stored last is written to OPFS first (an app that saves as it quits: Narbacular Drop's system.opt)
     storeQueue.then(() => { console.log(`pisco exit ${m.exit}`); bus.postMessage({ stop: true }); });
   }
 };
 if (!crossOriginIsolated) { status.textContent = 'not cross-origin isolated: shared memory is unavailable'; console.log('pisco exit 125'); }
 else {
-  // the GPU first: what it can do is known before the title asks
+  // the GPU first: what it can do is known before the app asks
   try {
     const adapter = navigator.gpu && await navigator.gpu.requestAdapter();
     if (adapter) {
@@ -306,12 +306,12 @@ else {
       console.log(`gpu: ${adapter.info?.vendor || ''} ${adapter.info?.architecture || ''} ${adapter.info?.description || ''} features: ${want.join(' ') || 'none'}`);
     } else log('gpu: WebGPU is not available in this browser');
   } catch (err) { log(`gpu: ${err.message}`); }
-  // a title image: its module, its drive (the file layers, served below <image>/c/) and its settings (exe, registry)
+  // an app image: its module, its drive (the file layers, served below <image>/c/) and its settings (exe, registry)
   const image = q.get('image') ? await fetchImage(new URL(q.get('image'), location.href).href).catch((e) => { log(`image: ${e.message}`); return null; }) : null;
   if (q.get('image') && !image) { console.log('pisco exit 125'); throw new Error('no image'); }
   const module = await WebAssembly.compile(image ? image.wasm : await (await fetch(q.get('wasm'))).arrayBuffer());
   if (image) { drive = image.drive; folder = image.settings.folder; dir = drive + folder.split('/').map(encodeURIComponent).join('/') + '/'; console.log(`image: ${image.settings.name} (manifest ${image.digest})`); }
-  else dir = new URL(q.get('exe'), location.href).href.replace(/[^/]*$/, ''); // the title's folder
+  else dir = new URL(q.get('exe'), location.href).href.replace(/[^/]*$/, ''); // the app's folder
   memory = new WebAssembly.Memory({ initial: 1024, maximum: 65536, shared: true });
   const tids = new Int32Array(new SharedArrayBuffer(4)); tids[0] = 1;
   const given = (q.get('args') || '').split(' ').filter(Boolean), args = given.length || !image ? given : image.settings.args;   // (arguments given replace the image's)
@@ -319,7 +319,7 @@ else {
   ctl = new Int32Array(new SharedArrayBuffer(16 * POOL));
   const env = { ...(image ? image.settings.env : {}) }; for (const [k, v] of q) if (k.startsWith('SW_')) env[k] = k === 'SW_REGISTRY' && env[k] ? `${env[k]}\n${v}` : v;
   if (q.get('trace')) env.SW_TRACE = q.get('trace');
-  // a Linux title: the page is its terminal, as wide as the text area (&SW_TTY=0: its output is a pipe instead)
+  // a Linux app: the page is its terminal, as wide as the text area (&SW_TTY=0: its output is a pipe instead)
   if (image?.settings.text) {
     document.body.classList.add('text');
     const probe1 = document.createElement('span'); probe1.textContent = 'M'.repeat(50); out.append(probe1); const w = probe1.getBoundingClientRect().width / 50; probe1.remove();
@@ -330,7 +330,7 @@ else {
   if (env.SW_CONSOLE === undefined) env.SW_CONSOLE = 'tty';   // a machine's console: someone may type (rt/microvm-x64)
   let store = [];
   try { store = await openStore(image ? `image:${image.settings.name}` : new URL(q.get('exe'), location.href).pathname); if (store.length) console.log(`storage: ${store.length} file(s) from earlier sessions`); } catch (e) { log(`storage: ${e.message} (saves will not survive a reload)`); }
-  // a Linux title: its processes (web/kernel.mjs), each a worker this page starts (the first, a fork's, an execve's)
+  // a Linux app: its processes (web/kernel.mjs), each a worker this page starts (the first, a fork's, an execve's)
   const kernel = WebAssembly.Module.exports(module).some((e) => e.name === 'rt_fork_resume') ? createKernel() : null, programs = image?.config.programs || null;
   // a machine's programs in modules of their own (rt/microvm-x64): fetched here, loaded by the worker (web/side.mjs)
   const side = image?.config.side ? await Promise.all(Object.entries(image.config.side).map(async ([n, d]) => [n, await (await fetch(image.url + blobPath(d))).arrayBuffer()])) : [];

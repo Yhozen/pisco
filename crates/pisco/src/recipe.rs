@@ -27,7 +27,7 @@ pub struct Input { pub id: String, pub folder: bool, pub file: String, pub files
 pub struct Source { pub extract: String, pub app: Option<String>, pub map: BTreeMap<String, String>, pub cabs: Vec<Cab>,
     pub root: Option<String>, pub adds: Vec<Add>,
     /// [source.installshield] groups: where each file group of an InstallShield 5 / 6 setup inside the installer
-    /// goes, below the title's folder ("" the folder itself, "-" not installed); InstallShield's own script says
+    /// goes, below the app's folder ("" the folder itself, "-" not installed); InstallShield's own script says
     /// it, and is not read
     pub installshield: Option<BTreeMap<String, String>> }
 /// [[extract]] copy: the files of a folder input that the app needs and its download does not carry (Microsoft's

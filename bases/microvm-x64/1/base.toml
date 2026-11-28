@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
-# base/microvm-x64:1, what a machine's title is built FROM (docs/linux.md): the image of a machine's own software,
+# base/microvm-x64:1, what a machine's app is built FROM (docs/linux.md): the image of a machine's own software,
 # a kernel (lifter --machine), the parts of the core that imitate no system (the lifted functions' table, memory,
 # the clock) and the machine (rt/microvm-x64/: one x86-64 CPU in long mode, its MMU, a local APIC, a 16550).
 name = "base/microvm-x64"

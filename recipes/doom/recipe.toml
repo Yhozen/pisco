@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
-# doomgeneric with Freedoom's IWAD, built as an Xbox Series title by tests/gfx/doom.sh (out/doom/game: doom.exe,
+# doomgeneric with Freedoom's IWAD, built as an Xbox Series app by tests/gfx/doom.sh (out/doom/game: doom.exe,
 # freedoom1.wad and its shaders), as an image FROM the Xbox Series base (tests/images.sh builds it twice and runs it).
 schema = 1
 name = "doom"

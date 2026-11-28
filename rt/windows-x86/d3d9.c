@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-// Direct3D 9 for Windows desktop titles: the Direct3D object (the adapter and what it supports), the device and
+// Direct3D 9 for Windows desktop apps: the Direct3D object (the adapter and what it supports), the device and
 // its swap chain, reference counting, and the statistics. Resources are in d3d9_resources.c, the device's state
 // and draws in d3d9_state.c, state blocks in d3d9_stateblock.c; what reaches the GPU goes through d3d9_gpu.c.
 // The adapter is the oracle's: its identity, modes, format support and capabilities are what Wine answered on
-// the machine the reference session was recorded on (d3d9_oracle.gen.h), so a title takes the same decisions.
+// the machine the reference session was recorded on (d3d9_oracle.gen.h), so an app takes the same decisions.
 // Present shows the back buffer (d3d9_gpu.c), counts a frame, moves the virtual clock and lets the session player act.
 #include <stdarg.h>
 #include "d3d9.h"
@@ -56,7 +56,7 @@ void d3d9_stats_print(const char *title, int since_mark) {
   qsort(v, n, sizeof *v, by_calls);
   for (unsigned i = 0; i < n; i++) if (v[i]->calls > v[i]->mark) { used++; total += v[i]->calls - v[i]->mark; }
   Text t = {0};
-  put(&t, "%s: %u methods, %llu calls", title, used, total); flush(&t);
+  put(&t, "%s: %u methods, %llu calls", app, used, total); flush(&t);
   put(&t, " ");
   for (unsigned i = 0; i < used; i++) put(&t, "%s %s %llu", i ? "," : "", v[i]->name, v[i]->calls - v[i]->mark);
   flush(&t);
@@ -222,7 +222,7 @@ IMP(d3d9, IDirect3D9_CreateDevice) {
   if (ARG(2) != 1) { com_unsure("Direct3D 9: CreateDevice of device type %u: only the HAL device (1) exists", (u32)ARG(2)); RET(D3DERR_NOTAVAILABLE); return; }
   u32 window = pp->window ? pp->window : (u32)ARG(3); s32 cw = 0, ch = 0;
   if (!pp->windowed) {
-    // full screen: the page's canvas is the display, and the mode the title asks for is its back buffer's size (the
+    // full screen: the page's canvas is the display, and the mode the app asks for is its back buffer's size (the
     // refresh rate is the host's). The mode must be named, as on Windows.
     if (!pp->width || !pp->height || !pp->format || !window) { RET(D3DERR_INVALIDCALL); return; }
   } else {
@@ -241,7 +241,7 @@ IMP(d3d9, IDirect3D9_CreateDevice) {
   d->adapter = (u32)ARG(1); d->device_type = (u32)ARG(2); d->focus_window = (u32)ARG(3); d->behavior = flags; d->pp = *pp; d->pp.window = window;
   d->swapchain = (SwapChain9 *)GP(com_new("d3d9", &IDirect3DSwapChain9_interface, sizeof(SwapChain9)));
   d->swapchain->o.kind = K_SWAPCHAIN; d->swapchain->o.device = d; d->swapchain->o.held = 1;
-  // the back buffer and the depth buffer belong to the device: no reference of the title's until it asks for them
+  // the back buffer and the depth buffer belong to the device: no reference of the app's until it asks for them
   d->back_buffer = d3d9_surface_new(d, 0, 0, pp->width, pp->height, pp->format, USAGE_RENDERTARGET, POOL_DEFAULT, pp->multisample, pp->quality);
   d3d9_hold(&d->back_buffer->o); d->back_buffer->lockable = pp->flags & 1;   // D3DPRESENTFLAG_LOCKABLE_BACKBUFFER
   if (pp->auto_depth) { d->auto_depth = d3d9_surface_new(d, 0, 0, pp->width, pp->height, pp->depth_format, USAGE_DEPTHSTENCIL, POOL_DEFAULT, pp->multisample, pp->quality); d3d9_hold(&d->auto_depth->o); }
@@ -314,7 +314,7 @@ IMP(d3d9, IDirect3DDevice9_GetBackBuffer) { // (swap chain, back buffer, type, I
   if (ARG(1) || ARG(2) || !ARG(4)) { if (ARG(4)) M32(ARG(4)) = 0; RET(D3DERR_INVALIDCALL); return; }
   d3d9_addref(&d->back_buffer->o); M32(ARG(4)) = (u32)(uptr)d->back_buffer; RET(D3D_OK);
 }
-// Queries do not exist on this device: a title that asks takes the path it has for cards without them
+// Queries do not exist on this device: an app that asks takes the path it has for cards without them
 IMP(d3d9, IDirect3DDevice9_CreateQuery) { STAT(device_CreateQuery); ARGV("device_CreateQuery type", ARG(1)); if (ARG(2)) M32(ARG(2)) = 0; RET(D3DERR_NOTAVAILABLE); }
 
 // ---- IDirect3DSwapChain9: the device's own ----

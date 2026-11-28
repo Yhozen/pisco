@@ -12,16 +12,16 @@
 #define HOST(name) __attribute__((import_module("host"), import_name(name)))
 HOST("fault") __attribute__((noreturn)) void host_fault(u32 kind, u64 addr);
 HOST("now_us") double host_now_us(void);
-// The title's clock, in microseconds since 1970: the host's, or with SW_CLOCK=<microseconds a frame> a virtual one
+// The app's clock, in microseconds since 1970: the host's, or with SW_CLOCK=<microseconds a frame> a virtual one
 // that starts at a fixed date and moves by that step when a frame is presented and by the time asked for on Sleep
-// (clock.c). The Win32 time functions of a 32-bit title read it; rt_uptime_us is the same clock since "boot".
+// (clock.c). The Win32 time functions of a 32-bit app read it; rt_uptime_us is the same clock since "boot".
 u64 rt_now_us(void);
 u64 rt_uptime_us(void);
 int rt_clock_virtual(void);
 void rt_clock_advance(u64 us);       // nothing unless the clock is virtual
 void rt_clock_advance_frame(void);   // a frame was presented
-void rt_clock_polled(void);          // the title read the clock: a virtual one moves on after many reads in a row
-HOST("read_file") u32 host_read_file(const char *name, u32 name_len, u64 offset, u64 len, u64 dst); // from the title's folder
+void rt_clock_polled(void);          // the app read the clock: a virtual one moves on after many reads in a row
+HOST("read_file") u32 host_read_file(const char *name, u32 name_len, u64 offset, u64 len, u64 dst); // from the app's folder
 HOST("log") void host_log(const char *text, u32 len);
 HOST("gpu_open") void host_gpu_open(u32 ring);            // the GPU back end starts reading this ring (rt/d3d12_cmd.h)
 
@@ -31,7 +31,7 @@ extern const unsigned fn_count; extern const u64 fn_addrs[]; extern void (*const
 extern const ModuleDef rt_modules[]; extern const unsigned rt_module_count;
 extern const u64 import_base, import_slots[], import_targets[]; extern const unsigned import_count;
 extern const char *const import_names[];
-#define image_base (rt_modules[0].base)                    // the title's exe
+#define image_base (rt_modules[0].base)                    // the app's exe
 #define image_stack_reserve (rt_modules[0].stack_reserve)
 const ModuleDef *rt_module_of(u64 addr);                   // the lifted image holding addr, or 0
 const ModuleDef *rt_module_named(const char *name);       // by file name, case-insensitive, with or without ".dll"
@@ -41,7 +41,7 @@ u64 rt_module_load(Cpu *c, const ModuleDef *m);           // LoadLibrary of a li
 int rt_module_free(Cpu *c, const ModuleDef *m);           // FreeLibrary: an on-demand DLL's last reference detaches it
 
 // ---- guest calls ----
-// The runtime is built for one guest width (GUEST_BITS, from the title: cpu.h defaults it to 64).
+// The runtime is built for one guest width (GUEST_BITS, from the app: cpu.h defaults it to 64).
 #if GUEST_BITS == 32
 // Arguments of a 32-bit call (stdcall or cdecl), as an import sees them: all on the stack, above the return
 // address ESP points at. The import returns normally; rt_call then removes the return address and, for a
@@ -158,7 +158,7 @@ typedef struct Object {
   s64 count, max;          // semaphores
   Thread *owner; int recursion; // mutexes
   int fd;                  // files: a host descriptor (standard handles), or
-  struct VFile *vf;        // a file of the title's file system (vfs.c)
+  struct VFile *vf;        // a file of the app's file system (vfs.c)
   int delete_on_close;
   u64 size, view;          // mappings
   char name[64];
@@ -196,8 +196,8 @@ u64 rt_dynamic_import(const char *dll, const char *name); // GetProcAddress
 const char *rt_import_name(u64 addr);
 u64 rt_stub_import(const char *full);                     // a named address that only logs (unknown vtable slots)
 
-// ---- the title's recipe (recipe.gen.c, from tools/recipe-gen.py) ----
-// The virtual CPU's features, one bit each. Without a recipe a title gets all of them.
+// ---- the app's recipe (recipe.gen.c, from tools/recipe-gen.py) ----
+// The virtual CPU's features, one bit each. Without a recipe an app gets all of them.
 enum { CPU_FPU = 1, CPU_TSC = 2, CPU_CX8 = 4, CPU_CMOV = 8, CPU_MMX = 0x10, CPU_FXSR = 0x20, CPU_SSE = 0x40, CPU_SSE2 = 0x80, CPU_SSE3 = 0x100,
        CPU_SSSE3 = 0x200, CPU_SSE41 = 0x400, CPU_SSE42 = 0x800, CPU_POPCNT = 0x1000, CPU_CX16 = 0x2000, CPU_PCLMUL = 0x4000 };
 extern const unsigned rt_cpu_features;

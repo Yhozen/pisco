@@ -20,7 +20,7 @@
 #define E_OUTOFMEMORY 0x8007000Eu
 #define IID_IUnknown_text "00000000-0000-0000-c000-000000000046"
 
-// Direct3D's own structures (the ones titles pass by address)
+// Direct3D's own structures (the ones apps pass by address)
 typedef struct { float m[16]; } Matrix9;                          // D3DMATRIX, row by row
 typedef struct { float r, g, b, a; } Color9;                      // D3DCOLORVALUE
 typedef struct { Color9 diffuse, ambient, specular, emissive; float power; } Material9;                       // D3DMATERIAL9
@@ -44,7 +44,7 @@ enum { LOCK_READONLY = 0x10, LOCK_NOSYSLOCK = 0x800, LOCK_NOOVERWRITE = 0x1000, 
 enum { FMT_R8G8B8 = 20, FMT_A8R8G8B8 = 21, FMT_X8R8G8B8 = 22, FMT_VERTEXDATA = 100, FMT_INDEX16 = 101, FMT_INDEX32 = 102 };
 
 // ---- objects ----
-// Every object starts the same way. `refs` are the title's references; `held` counts the device's own uses of
+// Every object starts the same way. `refs` are the app's references; `held` counts the device's own uses of
 // the object (bound to a stage, a stream or a target, or kept by a state block). An object lives while either
 // is above zero, and holds a reference on its device while `refs` is, as the oracle's does (d3d9probe.txt).
 // A texture's surfaces and a volume texture's volumes have no count of their own: theirs is the texture's.
@@ -83,7 +83,7 @@ typedef struct Buffer9 {       // a vertex buffer or an index buffer
   u8 gpu_pending, gpu_mode;    //   whether any lock said which, and how they may be written (GPU_WRITE_*)
   u8 *gpu_copy;                //   what the GPU holds, for a large buffer locked whole (only what differs is sent)
 } Buffer9;
-typedef struct Declaration9 { Object9 o; u32 count, fvf; Element9 *elements;   // `count` includes the end marker; `fvf`: the code it was made from, 0 for a title's own
+typedef struct Declaration9 { Object9 o; u32 count, fvf; Element9 *elements;   // `count` includes the end marker; `fvf`: the code it was made from, 0 for an app's own
                               struct Declaration9 *next_fvf; } Declaration9;
 typedef struct SwapChain9 { Object9 o; } SwapChain9;
 // a vertex or pixel shader: its bytecode (d3d9_sm.c translates it for a draw), from the version token to the end token
@@ -101,7 +101,7 @@ typedef struct State9 {
   Texture9 *textures[SAMPLERS];
   struct { Buffer9 *buffer; u32 offset, stride, freq; } streams[STREAMS];
   Buffer9 *indices;
-  Declaration9 *declaration; u32 fvf;     // the vertex format: a title's declaration (fvf 0), or the device's own declaration for an FVF code
+  Declaration9 *declaration; u32 fvf;     // the vertex format: an app's declaration (fvf 0), or the device's own declaration for an FVF code
   struct Shader9 *vertex_shader, *pixel_shader;   // 0: the fixed-function pipeline
   Material9 material; Viewport9 viewport; Rect9 scissor;
   float clip_planes[CLIP_PLANES][4];
@@ -144,7 +144,7 @@ const Format9 *d3d9_format(u32 format);
 u32 d3d9_pitch(const Format9 *f, u32 width);
 u32 d3d9_rows(const Format9 *f, u32 height);
 // references
-u32 d3d9_addref(Object9 *o);              // the title's: returns the new count
+u32 d3d9_addref(Object9 *o);              // the app's: returns the new count
 u32 d3d9_release(Object9 *o);
 void d3d9_hold(Object9 *o);               // the device's own; null is allowed
 void d3d9_unhold(Object9 *o);

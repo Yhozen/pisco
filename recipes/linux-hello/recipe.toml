@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 # fixtures/linux-hello (tests/run.sh linux builds it into out/linux-hello), as an image FROM the Linux base: the one
-# title of base/linux-x64:1 that tests/run.sh images builds twice.
+# app of base/linux-x64:1 that tests/run.sh images builds twice.
 schema = 1
 name = "linux-hello"
 from = "base/linux-x64:1"

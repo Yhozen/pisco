@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-// kernel32.dll (and the ntdll functions it forwards) for lifted titles.
+// kernel32.dll (and the ntdll functions it forwards) for lifted apps.
 #include <sched.h>
 #include <time.h>
 #include <unistd.h>
@@ -272,7 +272,7 @@ static void virtual_query(Cpu *c, u64 a, u64 out);
 IMP(kernel32, VirtualQuery) { virtual_query(c, ARG(0), ARG(1)); }
 IMP(kernel32, VirtualQueryEx) { virtual_query(c, ARG(1), ARG(2)); }   // (process, address, info, size): this process's
 // MEMORY_BASIC_INFORMATION: base, allocation base, allocation protection, region size, state (MEM_COMMIT), protection,
-// type (MEM_PRIVATE); pointer-sized fields, so 28 bytes for a 32-bit title and 48 for a 64-bit one
+// type (MEM_PRIVATE); pointer-sized fields, so 28 bytes for a 32-bit app and 48 for a 64-bit one
 static void put_mbi(u64 out, u64 base, u64 alloc, u32 aprot, u64 size, u32 prot) {
 #if GUEST_BITS == 32
   memset((void *)GP(out), 0, 28);
@@ -294,17 +294,17 @@ static void virtual_query(Cpu *c, u64 a, u64 out) {
   RET(n);
 }
 IMP(kernel32, GetProcessHeap) { RET(0x7000); }
-// What a block the title did not ask to be zeroed holds. Windows hands back a small block with whatever was there
-// before (only a big one, from fresh pages, is zero), and a title can depend on that by accident: Narbacular
+// What a block the app did not ask to be zeroed holds. Windows hands back a small block with whatever was there
+// before (only a big one, from fresh pages, is zero), and an app can depend on that by accident: Narbacular
 // Drop's player, as it starts a level, attaches the camera to itself only if a pointer it sets a few lines later
 // is already non-zero (0x41d9cb tests [this+0x1e4], 0x41da5e sets it), and without the camera the level's first
 // frame reads through a stale index. Here the heap is the runtime's malloc, whose leftovers depend on the runtime
-// and the host as much as on the title, so a recipe can ask for small blocks filled with one byte instead
+// and the host as much as on the app, so a recipe can ask for small blocks filled with one byte instead
 // ([quirks] heap_fill = 0xCD: the same on every host, and non-zero as the game's runs under Wine show it found there).
 static void heap_fresh(void *p, u64 from, u64 to) {
   if (p && to > from && rt_heap_fill >= 0) memset((u8 *)p + from, to >= 0x7F000 ? 0 : rt_heap_fill, to - from);   // 0x7F000: above it Windows' heap allocates fresh pages
 }
-// The size a block was asked for: what Windows' HeapSize answers (malloc_usable_size is rounded up). A title's
+// The size a block was asked for: what Windows' HeapSize answers (malloc_usable_size is rounded up). An app's
 // CRT grows its atexit table when HeapSize says the table is full, so a larger answer changes its calls. Kept
 // beside the heap, by address (open addressing; a freed entry becomes a tombstone), so blocks stay as malloc
 // lays them out.
@@ -413,14 +413,14 @@ IMP(kernel32, UnmapViewOfFile) {
 // ---- time ----
 // (the clock itself is clock.c)
 #if GUEST_BITS == 32
-// 32-bit titles: every clock is the title's clock
+// 32-bit apps: every clock is the app's clock
 IMP(kernel32, QueryPerformanceCounter) { rt_clock_polled(); M64(ARG(0)) = rt_uptime_us(); RET(1); }
 IMP(kernel32, QueryPerformanceFrequency) { M64(ARG(0)) = 1000000; RET(1); }
 IMP(kernel32, GetTickCount) { rt_clock_polled(); RET((u32)(rt_uptime_us() / 1000)); }
 IMP(kernel32, GetTickCount64) { RET64(rt_uptime_us() / 1000); }
 static u64 filetime_now(void) { return rt_now_us() * 10 + 116444736000000000ull; }
 #else
-// 64-bit titles: the host's clocks, or with SW_CLOCK the title's (a Windows x64 desktop title's sessions)
+// 64-bit apps: the host's clocks, or with SW_CLOCK the app's (a Windows x64 desktop app's sessions)
 static u64 filetime_now(void) { if (rt_clock_virtual()) return rt_now_us() * 10 + 116444736000000000ull; struct timespec t; clock_gettime(CLOCK_REALTIME, &t); return (u64)t.tv_sec * 10000000 + (u64)t.tv_nsec / 100 + 116444736000000000ull; }
 IMP(kernel32, QueryPerformanceCounter) { if (rt_clock_virtual()) { rt_clock_polled(); M64(ARG(0)) = rt_uptime_us(); } else M64(ARG(0)) = (u64)host_now_us(); RET(1); }
 IMP(kernel32, QueryPerformanceFrequency) { M64(ARG(0)) = 1000000; RET(1); }
@@ -475,7 +475,7 @@ static u64 module_handle(const char *n) {
   const ModuleDef *m = rt_module_named(n);
   if (m) return rt_module_loaded(m) ? m->base : 0;   // an on-demand DLL has no handle until LoadLibrary loads it
 #if GUEST_BITS == 32
-  // a desktop title names a DLL exactly: "d3d9d.dll" (Direct3D's debug build, which D3DX looks for) is not "d3d9.dll"
+  // a desktop app names a DLL exactly: "d3d9d.dll" (Direct3D's debug build, which D3DX looks for) is not "d3d9.dll"
   const char *base = strrchr(n, '\\'); base = base ? base + 1 : n;
   size_t len = strlen(base); if (len > 4 && !strcasecmp(base + len - 4, ".dll")) len -= 4;
   for (unsigned i = 0; i < sizeof system_modules / sizeof system_modules[0]; i++) if (strlen(system_modules[i].name) == len && !strncasecmp(base, system_modules[i].name, len)) return system_modules[i].h;
@@ -550,7 +550,7 @@ IMP(kernel32, GetProcAddress) {
 // ---- strings and code pages ----
 IMP(kernel32, GetCommandLineA) { static u64 p; if (!p) { p = (uptr)strdup(rt_command_line); } RET(p); }
 IMP(kernel32, GetCommandLineW) { static u64 p; if (!p) p = (uptr)rt_widen_guest(rt_command_line); RET(p); }
-IMP(kernel32, GetACP) { RET(GUEST_BITS == 32 ? 1252 : 65001); } // an old 32-bit title's C runtime builds its tables from a single-byte code page
+IMP(kernel32, GetACP) { RET(GUEST_BITS == 32 ? 1252 : 65001); } // an old 32-bit app's C runtime builds its tables from a single-byte code page
 IMP(kernel32, GetOEMCP) { RET(437); }
 IMP(kernel32, GetCPInfo) { u64 p = ARG(1); memset((void *)GP(p), 0, 20); M32(p) = 1; M8(p + 4) = '?'; RET(1); }
 IMP(kernel32, SetConsoleCP) { RET(1); }
@@ -753,7 +753,7 @@ IMP(kernel32, RtlPcToFileHeader) { // (pc, &base): the image holding pc
 #define STARTUPINFO_SIZE (GUEST_BITS == 32 ? 68 : 104)
 IMP(kernel32, GetStartupInfoW) { u64 p = ARG(0); memset((void *)GP(p), 0, STARTUPINFO_SIZE); M32(p) = STARTUPINFO_SIZE; }
 IMP(kernel32, GetStartupInfoA) { u64 p = ARG(0); memset((void *)GP(p), 0, STARTUPINFO_SIZE); M32(p) = STARTUPINFO_SIZE; }
-IMP(kernel32, SetCurrentDirectoryA) { RET(1); } // the title's folder stays the current one (as SetCurrentDirectoryW)
+IMP(kernel32, SetCurrentDirectoryA) { RET(1); } // the app's folder stays the current one (as SetCurrentDirectoryW)
 IMP(kernel32, RoInitialize) { RET(0); }
 IMP(kernel32, RoUninitialize) {}
 

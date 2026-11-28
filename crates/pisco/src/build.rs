@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-// pisco build: a recipe and the user's own installer -> a title image (docs/images.md).
+// pisco build: a recipe and the user's own installer -> an app image (docs/images.md).
 //   1. the installer, checked by its sha256, is extracted (innoextract) into the cache, once per installer
-//   2. the title's images are lifted and the lifted C compiled, once per lift key: the digest of the images' bytes,
+//   2. the app's images are lifted and the lifted C compiled, once per lift key: the digest of the images' bytes,
 //      the lifter (its version and the hash of its sources), rt/cpu.h and rt/modules.h, the lifter's options,
 //      clang's version and the flags
 //   3. the runtime's sources (the base's core and the recipe's libraries) are compiled, once per source and flags
@@ -210,7 +210,7 @@ fn unzip(src: &Path, root: Option<&str>, to: &Path) -> R<()> {
     if n == 0 { return Err(format!("{}: no files{}", src.display(), root.map(|r| format!(" under {r}/")).unwrap_or_default())); }
     Ok(())
 }
-/// extract = "wise": a Wise installer (or a zip around one: its one .exe), its files to the title's folder; with
+/// extract = "wise": a Wise installer (or a zip around one: its one .exe), its files to the app's folder; with
 /// [[extract]] installshield, the InstallShield setup among them is read instead and its file groups go where the
 /// recipe says
 fn unwise(r: &Recipe, src: &Path, tmp: &Path) -> R<()> {
@@ -321,7 +321,7 @@ fn extract(r: &Recipe, src: &Path, sha: &str, cache: &Path, with: &[(String, Pat
             x => return Err(format!("[[extract]] {x}: not a first step")),
         }
         for (guest, host) in &adds {
-            let rel = if guest.eq_ignore_ascii_case(&app_guest) { "" } else { match guest.get(..app_guest.len() + 1) { Some(p) if p.eq_ignore_ascii_case(&format!("{app_guest}/")) => &guest[app_guest.len() + 1..], _ => return Err(format!("[[source.add]] {guest}: files are added in the title's folder ({app_guest}) or under it")) } };
+            let rel = if guest.eq_ignore_ascii_case(&app_guest) { "" } else { match guest.get(..app_guest.len() + 1) { Some(p) if p.eq_ignore_ascii_case(&format!("{app_guest}/")) => &guest[app_guest.len() + 1..], _ => return Err(format!("[[source.add]] {guest}: files are added in the app's folder ({app_guest}) or under it")) } };
             let dst = tmp.join("app").join(rel);
             if let Some(p) = dst.parent() { io(std::fs::create_dir_all(p), p)?; }
             io(std::fs::copy(host, &dst), host)?;
@@ -444,7 +444,7 @@ fn cflags(t: &Tools, cache: &Path, opt: &str, bits: u32, os: &str) -> Vec<String
 /// What the lifter puts in the import table of the lifted C ("dll!name")
 pub fn lifted_imports(title_c: &Path) -> R<Vec<String>> {
     let text = io(std::fs::read_to_string(title_c), title_c)?;
-    let line = text.lines().find(|l| l.starts_with("const char*const import_names[]={")).ok_or("title.c has no import_names")?;
+    let line = text.lines().find(|l| l.starts_with("const char*const import_names[]={")).ok_or("app.c has no import_names")?;
     let mut v: Vec<String> = line.split('"').skip(1).step_by(2).map(|s| s.to_string()).collect();
     v.sort(); v.dedup();
     Ok(v)
@@ -476,7 +476,7 @@ fn lift_as(t: &Tools, r: &Recipe, exe: &Path, ex: &Extracted, cache: &Path, user
             if let Some(p) = h.parent() { if !sys_dirs.iter().any(|d| d == p) { sys_dirs.push(p.to_path_buf()); } }
         }
     }
-    // [code] load: DLLs the title loads itself, by their path below the exe's folder
+    // [code] load: DLLs the app loads itself, by their path below the exe's folder
     let mut loads: Vec<String> = Vec::new();
     for l in &r.load {
         let rel = l.replace('\\', "/");
@@ -507,7 +507,7 @@ fn lift_as(t: &Tools, r: &Recipe, exe: &Path, ex: &Extracted, cache: &Path, user
         say(&format!("lift: cached, lift key {}: not lifted or compiled again", &key[..16]));
     } else {
         let tmp = tmp_name(&out); let _ = std::fs::remove_dir_all(&tmp); io(std::fs::create_dir_all(&tmp), &tmp)?;
-        let o = Command::new(&t.lifter).arg(exe).arg("title.c").args(&args).args(&dll_dirs).args(&loads).current_dir(&tmp).output().map_err(|e| format!("lifter: {e}"))?;
+        let o = Command::new(&t.lifter).arg(exe).arg("app.c").args(&args).args(&dll_dirs).args(&loads).current_dir(&tmp).output().map_err(|e| format!("lifter: {e}"))?;
         io(std::fs::write(tmp.join("lifter.log"), [&o.stdout[..], &o.stderr[..]].concat()), &tmp)?;
         if !o.status.success() { return Err(format!("the lifter failed: see {}", tmp.join("lifter.log").display())); }
         let lifted_at = time.elapsed().as_secs_f64();
@@ -538,15 +538,15 @@ fn lift_as(t: &Tools, r: &Recipe, exe: &Path, ex: &Extracted, cache: &Path, user
         io(std::fs::write(out.join("cflags"), flags.join(" ")), &out)?;
     }
     let objects = c_files(&out)?.into_iter().map(|c| out.join(format!("{c}.o"))).collect();
-    let imports = if user.is_some() { vec![] } else { lifted_imports(&out.join("title.c"))? };   // (a machine's program has no import table)
+    let imports = if user.is_some() { vec![] } else { lifted_imports(&out.join("app.c"))? };   // (a machine's program has no import table)
     Ok(Lifted { imports, dir: out, bits, low, high, linux: os == "linux", os, key, objects })
 }
 fn c_files(dir: &Path) -> R<Vec<String>> {
-    let mut v: Vec<String> = io(std::fs::read_dir(dir), dir)?.filter_map(|e| e.ok()).map(|e| e.file_name().to_string_lossy().into_owned()).filter(|n| n.starts_with("title") && n.ends_with(".c")).collect();
+    let mut v: Vec<String> = io(std::fs::read_dir(dir), dir)?.filter_map(|e| e.ok()).map(|e| e.file_name().to_string_lossy().into_owned()).filter(|n| n.starts_with("app") && n.ends_with(".c")).collect();
     v.sort(); Ok(v)
 }
 fn env_of(dir: &Path) -> R<(u32, u64, u64, String)> {
-    let text = io(std::fs::read_to_string(dir.join("title.env")), &dir.join("title.env"))?;
+    let text = io(std::fs::read_to_string(dir.join("app.env")), &dir.join("app.env"))?;
     let get = |k: &str| text.lines().find_map(|l| l.strip_prefix(&format!("{k}="))).map(|v| v.to_string()).unwrap_or_default();
     let hexv = |v: String| u64::from_str_radix(v.trim_start_matches("0x"), 16).unwrap_or(0);
     Ok((get("GUEST_BITS").parse().unwrap_or(64), hexv(get("IMAGE_LOW")), hexv(get("IMAGE_HIGH")), get("OS")))
@@ -603,7 +603,7 @@ pub fn build(root: &Path, o: &Opts) -> R<()> {
 
     // 1. the source, then its files
     let src = match o.source.clone().or_else(|| bound(&o.with, &r.primary.id).cloned()) { Some(p) => p, None => locate(&r, &r.primary)? };
-    // a folder input (a title the user built or copied) is known by its tree digest
+    // a folder input (an app the user built or copied) is known by its tree digest
     let sha = if r.primary.folder {
         if !src.is_dir() { return Err(format!("{}: input {} is a folder", src.display(), r.primary.id)); }
         folder_digest(&src, r.primary.files.as_deref(), modes(&r))?
@@ -612,7 +612,7 @@ pub fn build(root: &Path, o: &Opts) -> R<()> {
     if o.keep_inputs && !r.primary.folder && matches!(r.primary.pin, Pin::Sha256(_)) { keep_input(&src, &sha)?; }
     let mut ex = extract(&r, &src, &sha, &cache, &o.with)?;
     if let Some(c) = &o.compare { compare(&ex, c)?; }
-    // [files]: settings a setup step would write, put in the title's files (a file the installer has is replaced)
+    // [files]: settings a setup step would write, put in the app's files (a file the installer has is replaced)
     for (place, text) in &r.files {
         let guest = recipe::drive_path(place)?;
         let host = cache.join("files").join(oci::sha256(text.as_bytes()));
@@ -633,8 +633,8 @@ pub fn build(root: &Path, o: &Opts) -> R<()> {
     let exe_guest = recipe::drive_path(&r.exe)?;
     let exe = ex.files.iter().find(|(g, _)| g.eq_ignore_ascii_case(&exe_guest)).map(|x| x.1.clone()).ok_or(format!("{}: not among the installer's files", r.exe))?;
 
-    // 2. lifted: the exe, or every program of a Linux title (each ELF among its files: execve starts them; the same
-    // program under two names is lifted once). A Linux title's exe may be a script: its first process starts in
+    // 2. lifted: the exe, or every program of a Linux app (each ELF among its files: execve starts them; the same
+    // program under two names is lifted once). A Linux app's exe may be a script: its first process starts in
     // any program's module and runs it (rt/linux-x64/start.c)
     let is_elf = |p: &Path| std::fs::File::open(p).ok().and_then(|mut f| { let mut b = [0u8; 4]; std::io::Read::read_exact(&mut f, &mut b).ok().map(|_| b == *b"\x7fELF") }).unwrap_or(false);
     let programs: Vec<(String, PathBuf)> = if base.os == "linux" { ex.files.iter().filter(|(_, h)| !h.is_symlink() && is_elf(h)).map(|(g, h)| (g.clone(), h.clone())).collect() } else { vec![(exe_guest.clone(), exe.clone())] };
@@ -659,7 +659,7 @@ pub fn build(root: &Path, o: &Opts) -> R<()> {
         }
     }
     // a machine's programs in modules of their own ([hints.pisco] modules): lifted position-independent, each linked as a
-    // wasm side module (web/side.mjs loads it); the title's module exports what they import
+    // wasm side module (web/side.mjs loads it); the app's module exports what they import
     let mut side_lifts: Vec<(String, Lifted)> = Vec::new();
     if base.os == "microvm" {
         for p in &r.modules {
@@ -725,10 +725,10 @@ pub fn build(root: &Path, o: &Opts) -> R<()> {
     let (gen_objs, _) = compile_cached(&t, &cache, "gen", gen_items, &rt_flags)?;
     say(&format!("runtime: {} sources, {rt_new} compiled, {} cached ({:.1} s)", sources.len(), sources.len() - rt_new, t3.elapsed().as_secs_f64()));
 
-    // 4. the modules: a machine's side modules first (what they import, the title's module exports)
+    // 4. the modules: a machine's side modules first (what they import, the app's module exports)
     let wasm_ld = t.clang.parent().unwrap().join("wasm-ld");
     let mut side_wasms: Vec<(String, PathBuf)> = Vec::new(); let mut side_needs: BTreeSet<String> = BTreeSet::new();
-    // (a machine's title exports what any lifted program may import: one may be lifted when it first runs)
+    // (a machine's app exports what any lifted program may import: one may be lifted when it first runs)
     if base.os == "microvm" { let f = root.join("rt/microvm-x64/side-exports.txt"); for l in io(std::fs::read_to_string(&f), &f)?.lines().filter(|l| !l.starts_with('#')) { side_needs.extend(l.split_whitespace().map(String::from)); } }
     for (n, l) in &side_lifts {
         let mut key = format!("side 1\nname {n}\n"); for o in &l.objects { key.push_str(&format!("{}\n", oci::sha256(&io(std::fs::read(o), o)?))); }
@@ -757,18 +757,18 @@ pub fn build(root: &Path, o: &Opts) -> R<()> {
         format!("-Wl,--import-memory,--shared-memory,--initial-memory=67108864,--max-memory=4294967296,--export=wasi_thread_start,--export=rt_last_pc,{layout_flags}"), "-Wl,--export=__heap_base".into(),
         if side_needs.is_empty() { String::new() } else { format!("-Wl,--export-table,--growable-table,--export=__stack_pointer{}", side_needs.iter().map(|f| format!(",--export={f}")).collect::<String>()) }];
     let tail: Vec<String> = tail.into_iter().filter(|s| !s.is_empty()).collect();
-    let mut key = format!("link 2 (as title.wasm)\nclang {}\nflags {} {}\n", t.clang_version, link.join(" "), tail.join(" "));
+    let mut key = format!("link 2 (as app.wasm)\nclang {}\nflags {} {}\n", t.clang_version, link.join(" "), tail.join(" "));
     for o in &objects { key.push_str(&format!("{}\n", oci::sha256(&io(std::fs::read(o), o)?))); }
     let key = oci::sha256(key.as_bytes());
     let wasm = cache.join("link").join(format!("{key}.wasm"));
     let t4 = Instant::now();
     if wasm.is_file() { say(&format!("link: cached ({})", &key[..16])); } else {
         io(std::fs::create_dir_all(cache.join("link")), &cache)?;
-        // linked as "title.wasm" in a folder of its own: wasm-ld names the module after its output file (the name section)
+        // linked as "app.wasm" in a folder of its own: wasm-ld names the module after its output file (the name section)
         let tmp = tmp_name(&wasm); let _ = std::fs::remove_dir_all(&tmp); io(std::fs::create_dir_all(&tmp), &tmp)?;
-        let o = Command::new(&t.clang).args(&link).args(&objects).arg("-o").arg(tmp.join("title.wasm")).args(&tail).output().map_err(|e| e.to_string())?;
+        let o = Command::new(&t.clang).args(&link).args(&objects).arg("-o").arg(tmp.join("app.wasm")).args(&tail).output().map_err(|e| e.to_string())?;
         if !o.status.success() { return Err(format!("link failed: {}", String::from_utf8_lossy(&o.stderr).lines().take(12).collect::<Vec<_>>().join("\n"))); }
-        io(std::fs::rename(tmp.join("title.wasm"), &wasm), &wasm)?;
+        io(std::fs::rename(tmp.join("app.wasm"), &wasm), &wasm)?;
         let _ = std::fs::remove_dir_all(&tmp);
         say(&format!("link: {} objects ({:.1} s)", objects.len(), t4.elapsed().as_secs_f64()));
     }
@@ -796,8 +796,8 @@ pub fn build(root: &Path, o: &Opts) -> R<()> {
     let put = |media: &str, data: &[u8], a: Vec<(&'static str, String)>| { let v: Vec<(&str, &str)> = a.iter().map(|(k, v)| (*k, v.as_str())).collect(); lay.put(media, data, &v) };
     layers.push(put(LAYER, &game.tar(), own("app", r.name.clone()))?);
     if let Some(t) = extra { layers.push(put(LAYER, &t.tar(), own("shaders", format!("{} shaders", r.name)))?); }
-    let module = put(MODULE, &io(std::fs::read(&wasm), &wasm)?, own("module", "title.wasm".into()))?;
-    // a Linux title's other programs: a module each (the first module above is the one its first process starts in)
+    let module = put(MODULE, &io(std::fs::read(&wasm), &wasm)?, own("module", "app.wasm".into()))?;
+    // a Linux app's other programs: a module each (the first module above is the one its first process starts in)
     let mut program_layers = Vec::new(); let mut digest_of: BTreeMap<usize, String> = BTreeMap::new();
     digest_of.insert(main_lift, format!("sha256:{}", module.digest));
     for (k, w) in wasms.iter().enumerate() {
@@ -866,7 +866,7 @@ pub fn build(root: &Path, o: &Opts) -> R<()> {
 /// [warmup]: the image run once in Node (SW_HLSL_CAPTURE: D3DCompile logs each source it has no shader for and
 /// answers with a placeholder; SW_EXIT_FRAMES: the run ends after that many presents), the logged sources compiled
 /// by tools/hlsl-prep.mjs (dxc, then tools/shader-prep.mjs: dxil2spv and naga) into <cache>/shaders/<key>, once per
-/// image and session; returned as a layer: the files under the title's folder, `shaders/`
+/// image and session; returned as a layer: the files under the app's folder, `shaders/`
 fn shaders_layer(root: &Path, r: &Recipe, sh: &recipe::Shaders, image: &Path, image_digest: &str, app_guest: &str, cache: &Path) -> R<Tree> {
     let session = sh.session.as_ref().map(|s| r.dir.join(s));
     let mut key = format!("image {image_digest}\nframes {}\n", sh.frames);
@@ -886,15 +886,15 @@ fn shaders_layer(root: &Path, r: &Recipe, sh: &recipe::Shaders, image: &Path, im
         io(std::fs::write(&log, [&o.stdout[..], &o.stderr[..]].concat()), &log)?;
         let sources = String::from_utf8_lossy(&std::fs::read(&log).unwrap_or_default()).matches("d3dcompile-source ").count();
         if !o.status.success() && sources == 0 { return Err(format!("[warmup]: the run ended with {} and compiled nothing: see {}", o.status, log.display())); }
-        let title = tmp.join("title");
-        let o = Command::new("node").arg(root.join("tools/hlsl-prep.mjs")).arg(&log).arg("--title").arg(&title).output().map_err(|e| format!("node: {e}"))?;
+        let app = tmp.join("app");
+        let o = Command::new("node").arg(root.join("tools/hlsl-prep.mjs")).arg(&log).arg("--app").arg(&app).output().map_err(|e| format!("node: {e}"))?;
         io(std::fs::write(tmp.join("prep.log"), [&o.stdout[..], &o.stderr[..]].concat()), &tmp)?;
         if !o.status.success() { return Err(format!("[warmup]: tools/hlsl-prep.mjs failed: see {}", tmp.join("prep.log").display())); }
         publish(&tmp, &dir)?;
         say(&format!("shaders: {sources} sources compiled and translated ({:.1} s)", t.elapsed().as_secs_f64()));
     }
     let (mut fs, mut ds) = (Vec::new(), Vec::new());
-    let src = dir.join("title");
+    let src = dir.join("app");
     if src.is_dir() { walk(&src, "", &mut fs, &mut ds)?; }
     let mut tree = Tree::default();
     let join = |rel: &str| if app_guest.is_empty() { rel.to_string() } else { format!("{app_guest}/{rel}") };
@@ -967,7 +967,7 @@ mod tests {
     }
 }
 
-/// The imports of a wasm module, as ("<module>:<kind>" or the module, name): what a side module needs of the title's
+/// The imports of a wasm module, as ("<module>:<kind>" or the module, name): what a side module needs of the app's
 /// (kinds: function, table, memory, global; GOT.mem's and GOT.func's are named by their module alone)
 fn wasm_imports(b: &[u8]) -> R<Vec<(String, String)>> {
     let leb = |b: &[u8], at: &mut usize| -> R<u64> { let (mut v, mut s) = (0u64, 0); loop { let x = *b.get(*at).ok_or("a truncated module")?; *at += 1; v |= u64::from(x & 0x7f) << s; s += 7; if x & 0x80 == 0 { return Ok(v); } } };

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // D3D12.X, the console's additions to D3D12 (rt/gdk/d3d12.c): the frame clock (device #78-#80) and the command
-// list's own methods. Slots and behaviour follow XCL's findings on retail titles (github.com/ivall/xcl, GPL-2.0).
+// list's own methods. Slots and behaviour follow XCL's findings on retail apps (github.com/ivall/xcl, GPL-2.0).
 #include "../gdk/d3d12.h"
 
 // ---- the console's frame clock (device #78-#80): origins every interval, tokens count them ----

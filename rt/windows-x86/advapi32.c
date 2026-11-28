@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-// The registry, for Windows desktop titles: read-only, made of the values a title is given. They come from two
+// The registry, for Windows desktop apps: read-only, made of the values an app is given. They come from two
 // places, read once at the first call: the table built into the module (rt_registry, recipe.gen.c: a recipe read
-// by tools/build-title.sh), then the host's SW_REGISTRY, the registry of a title image (its config: the base's
+// by tools/build-app.sh), then the host's SW_REGISTRY, the registry of an app image (its config: the base's
 // defaults and the recipe's [registry], web/image.mjs), whose values win. SW_REGISTRY is one value a line:
 // "<full key path>\t<name>\tdword\t<number>" or "<full key path>\t<name>\tsz\t<text>".
 // A key exists when a value is in it or below it; every other key is missing, as on a system where nothing was
@@ -98,10 +98,10 @@ IMP(advapi32, RegCloseKey) {
   pthread_mutex_unlock(&reg_lock);
   RET(0);
 }
-// (key, index, name, characters): the registry here has values, not subkeys a title would list
+// (key, index, name, characters): the registry here has values, not subkeys an app would list
 IMP(advapi32, RegEnumKeyA) { RET(259); }   // ERROR_NO_MORE_ITEMS
 
-// Writes: kept in this run's registry (not on disk), so the title reads back what it wrote, as it would
+// Writes: kept in this run's registry (not on disk), so the app reads back what it wrote, as it would
 IMP(advapi32, RegCreateKeyA) { // (key, subkey, &out): the key is made if missing
   pthread_mutex_lock(&reg_lock); load();
   const char *base = key_path((u32)ARG(0));

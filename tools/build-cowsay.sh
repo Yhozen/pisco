@@ -1,7 +1,7 @@
 #!/bin/bash
 # SPDX-License-Identifier: GPL-2.0-or-later
 # build-cowsay.sh [out dir, default out/cowsay]: cowsay (docs/cowsay.md), a Perl script, and what it needs, in
-# <out>/root, the root of the title (recipes/cowsay):
+# <out>/root, the root of the app (recipes/cowsay):
 #   usr/bin/perl     perl 5.44.0 (GPL-1.0-or-later or Artistic-1.0), static, with its XS modules built in but the
 #                    large ones cowsay does not use (Encode, Unicode::Collate, compression, threads, ...); its
 #                    library in usr/lib/perl5, without the documentation

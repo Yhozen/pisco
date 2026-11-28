@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-// The processes of a Linux title (rt/linux-x64/process.c), as both hosts keep them (web/run-node.mjs, and the page's
+// The processes of a Linux app (rt/linux-x64/process.c), as both hosts keep them (web/run-node.mjs, and the page's
 // workers: web/browser/worker.js). A process is an instance of its program's module with memory of its own, in a
 // worker of its own; what joins them is here, in one SharedArrayBuffer every worker sees: the process table (who is
 // running, who has ended and with what code) and the pipes (a ring of bytes each, and how many ends of each kind

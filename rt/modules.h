@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-// The images the lifter lifted, in load order: the title's exe first, then the DLLs it ships.
+// The images the lifter lifted, in load order: the app's exe first, then the DLLs it ships.
 #pragma once
 typedef struct { unsigned long long va, off; unsigned len, vsize; } ModuleSection;
 typedef struct {
-  const char *name;                 // file name in the title's folder
+  const char *name;                 // file name in the app's folder
   unsigned long long base, file_base, size;
   unsigned is_dll;
   unsigned long long entry, tls_dir, pdata; unsigned pdata_size;
   unsigned long long exports, stack_reserve;
-  unsigned flags;                   // MODULE_ON_DEMAND: a DLL the title loads itself (LoadLibrary), not at start
+  unsigned flags;                   // MODULE_ON_DEMAND: a DLL the app loads itself (LoadLibrary), not at start
   const ModuleSection *sections; unsigned section_count;
   const unsigned long long *relocs; unsigned reloc_count;
   unsigned first_import, import_count;

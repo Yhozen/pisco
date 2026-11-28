@@ -45,7 +45,7 @@ module's functions, memory and table ([web/side.mjs](../../web/side.mjs)).
 | `proc_ppid` | `u32 host_proc_ppid(void)` | linux-x64 | the number of the process that started this one |
 | `proc_wait` | `s32 host_proc_wait(s32 pid, u32 nohang, u32 *code)` | linux-x64 | the child that ended (0: none yet with nohang; -ECHILD) |
 | `program_image` | `int host_program_image(u32 image, u32 len, u32 fns, u32 n_fns)` | microvm-x64 | the machine met code no program it has holds: the program's image, read from memory, and its functions' addresses (u64s); the host may lift it into a module of its own and load it (web/lift.mjs); 1 when it did |
-| `read_file` | `u32 host_read_file(const char *name, u32 name_len, u64 offset, u64 len, u64 dst)` | core | from the title's folder |
+| `read_file` | `u32 host_read_file(const char *name, u32 name_len, u64 offset, u64 len, u64 dst)` | core | from the app's folder |
 | `stat` | `s64 host_stat(const char *name, u32 len)` | linux-x64, microvm-x64, core | size, -1 missing, -2 directory |
 | `store_info` | `s64 host_store_info(u32 index, char *name, u32 cap)` | core | size of stored file `index` and its path, -1 after the last |
 | `store_read` | `void host_store_read(u32 index, void *dst)` | core | the bytes of stored file `index` |

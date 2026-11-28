@@ -11,7 +11,7 @@ target/release/pisco build recipes/narbacular-drop --source ~/Downloads/narbacul
 target/release/pisco run out/images/narbacular-drop --session recipes/narbacular-drop/sessions/menu-to-level.json   # Node
 target/release/pisco run out/images/narbacular-drop --chrome                                                    # headless Chrome
 target/release/pisco inspect out/images/narbacular-drop [--files]
-target/release/pisco census out/images/narbacular-drop      # or a title's .exe: what the base and its libraries answer for
+target/release/pisco census out/images/narbacular-drop      # or an app's .exe: what the base and its libraries answer for
 target/release/pisco install hello32 && target/release/pisco run hello32   # by name, from the store (below)
 ```
 
@@ -19,7 +19,7 @@ The model is OCI's, with three differences:
 
 1. **No `RUN`.** We cannot run an installer inside our own runtime. A recipe's steps run on the builder's machine,
    with a fixed vocabulary: extract the installer, place its files, set registry values.
-2. **Code is layered at build time.** A title is one statically linked wasm module. A base's "libraries" are sets of
+2. **Code is layered at build time.** An app is one statically linked wasm module. A base's "libraries" are sets of
    runtime sources (with cached objects); the image carries only the linked module.
 3. **App layers are never published.** The base and library layers and the recipe can be shared; the app layer
    and the module are built locally from the user's own installer, checked by its sha256. They are marked
@@ -33,7 +33,7 @@ with the config's JSON Schema in [spec/config.schema.json](spec/config.schema.js
 checks one). What is `pisco`'s own:
 
 - **One module per program.** The lifted code, the runtime and the import tables are linked into one module
-  (`title.wasm`); a Linux app's other programs are a module each (role `program`, named in the config's `programs`),
+  (`app.wasm`); a Linux app's other programs are a module each (role `program`, named in the config's `programs`),
   a machine's are in the kernel's module or in side modules (`side`).
 - **The CPU features are built into the module** (`rt_cpu_features`, by `tools/recipe-gen.py`); **the registry is
   not**: the host hands the config's values to the runtime at start (`SW_REGISTRY`, one value a line:
@@ -51,10 +51,10 @@ checks one). What is `pisco`'s own:
 (`web/browser/main.js`, `?image=<url>`) fetches and checks the documents and the module, and the workers read the
 drive from `tools/serve.mjs`, which serves an image's drive below `<image>/c/`. The runtime's file system
 (`rt/vfs.c`) sees the drive under its writable overlay: the title's folder as before (`C:\title`, relative paths),
-and the rest of `C:\` (`C:\WINDOWS\win.ini`). What the title writes stays where M5 put it, outside the image:
-`SW_SAVES` in Node, OPFS in the browser (keyed by the image's title, so saves survive a rebuild).
+and the rest of `C:\` (`C:\WINDOWS\win.ini`). What the app writes stays where M5 put it, outside the image:
+`SW_SAVES` in Node, OPFS in the browser (keyed by the image's app, so saves survive a rebuild).
 
-The old invocation keeps working: `node web/run-node.mjs title.wasm <the title's .exe>`.
+The old invocation keeps working: `node web/run-node.mjs app.wasm <the app's .exe>`.
 
 ## Recipes
 
@@ -93,7 +93,7 @@ opt = "-O1"
 ```
 
 `pisco build <recipe> --input <id>=<path>` names an input (`--source <path>`: the one the first step reads; `--with
-<ID>=<folder>` as before). `pisco recipe <recipe> --json` prints the recipe as `pisco` reads it: `tools/build-title.sh`
+<ID>=<folder>` as before). `pisco recipe <recipe> --json` prints the recipe as `pisco` reads it: `tools/build-app.sh`
 (`RECIPE=...`) and `tools/recipe-gen.py` take that, so `pisco` is the one reader of recipes.
 
 What the steps do here:
@@ -112,10 +112,10 @@ What the steps do here:
 ## Bases and libraries
 
 `bases/<name>/<version>/base.toml` defines what a recipe's `from` names: one base per runtime, and the only list of
-the runtime's files (`pisco sources <base | recipe>` prints a title's; `tools/build-title.sh` asks it; `tests/run.sh
+the runtime's files (`pisco sources <base | recipe>` prints an app's; `tools/build-app.sh` asks it; `tests/run.sh
 layout` checks that no other list exists and that every file is in a base):
 
-| Base | Runtime | Sources | Titles (recipes) |
+| Base | Runtime | Sources | Apps (recipes) |
 |---|---|---|---|
 | `base/windows-x86:1` | Windows x86 | `rt/*.c`, `rt/windows-x86/*.c` | hello32, Narbacular Drop |
 | `base/windows-x64:1` | Windows x64 | `rt/*.c`, `rt/gdk/*.c`, `rt/windows-x64/*.c` | hello64, SimpleTriangleDesktop, SimplePBR (folders the user built), Desire (a zip) |
@@ -177,7 +177,7 @@ manifest digest is the last line on stdout):
    the recipe's `opt`. `<cache>/lift/<key>/` holds the C and the objects;
 4. **the runtime**: each source compiled once per key: its own bytes, every header, table, included source and
    font under `rt/`, the flags and clang's version (`<cache>/rt/<key>.o`); the import table
-   (`tools/gen-imports.sh`, which `tools/build-title.sh` uses too) and the CPU features are compiled once per content;
+   (`tools/gen-imports.sh`, which `tools/build-app.sh` uses too) and the CPU features are compiled once per content;
 5. **the link**, once per set of objects (`<cache>/link/<key>.wasm`);
 6. **the image**: the layers, the module, the config, the manifest and the index, into `out/images/<name>` (`--out`).
 
@@ -186,11 +186,11 @@ recipe's registry, display or arguments touches only the config: nothing is lift
 the module blob is the same (tests/images.sh measures it). Objects are built with `-ffile-prefix-map` for the
 repository and the cache, so no path of the build machine reaches them (stb_truetype's `assert` would carry its
 own path otherwise), and two checkouts in different places give the same bytes. The module is linked as
-`title.wasm` in a folder of its own: wasm-ld writes the output file's name into the module's name section, and the
+`app.wasm` in a folder of its own: wasm-ld writes the output file's name into the module's name section, and the
 first version of `pisco`, linking to a temporary name, made the second clean build differ by those two bytes.
 
 ## Tests
 
-`tests/run.sh images` (tests/images.sh): hello32, hello64, Doom and Narbacular Drop (one title of each base) built twice
+`tests/run.sh images` (tests/images.sh): hello32, hello64, Doom and Narbacular Drop (one app of each base) built twice
 each with empty caches (the same manifest digests), their shared base layer, a registry-only rebuild, then `pisco run` of the menu-to-level session in
 Node, with the checkpoints `tests/run.sh nd` checks, and the image's registry read by advapi32.

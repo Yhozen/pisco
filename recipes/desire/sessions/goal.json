@@ -1,7 +1,7 @@
 {
  "schema": 1,
  "app": "desire",
- "about": "The maze of the Wine run whose std::random_device gave aee69d51 and b9466b87 (recipes/desire/traces/mazes.txt; `random` makes ours the same), walked from the start to the goal: W held 800 ms a cell (2.5 units a second, cells of 2), the arrows held 1000 ms a quarter turn (90 degrees a second; Right turns toward the map's north when facing east). Then the CLEAR title and the ending picture, and Enter. Written for our runtime's virtual clock: under Wine the game's frame rate is too low for held keys to mean the same distance.",
+ "about": "The maze of the Wine run whose std::random_device gave aee69d51 and b9466b87 (recipes/desire/traces/mazes.txt; `random` makes ours the same), walked from the start to the goal: W held 800 ms a cell (2.5 units a second, cells of 2), the arrows held 1000 ms a quarter turn (90 degrees a second; Right turns toward the map's north when facing east). Then the CLEAR app and the ending picture, and Enter. Written for our runtime's virtual clock: under Wine the game's frame rate is too low for held keys to mean the same distance.",
  "random": [
   "aee69d51",
   "b9466b87"

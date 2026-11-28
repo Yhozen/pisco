@@ -1,6 +1,6 @@
 # neofetch (2026-11-26)
 
-The second Linux title, and the first made of several programs: [neofetch](https://github.com/dylanaraps/neofetch)
+The second Linux app, and the first made of several programs: [neofetch](https://github.com/dylanaraps/neofetch)
 7.1.0 (MIT), a bash script of 10,572 lines. Running it means running bash, the subshells bash forks for every
 `$(...)`, and the programs it starts (`uname`, `awk`, `grep`, `hostname`, `realpath`). Here they are bash 5.2.37 and
 busybox 1.36.1, each one static x86-64 program, lifted into a module of its own; each process is an instance of
@@ -49,7 +49,7 @@ programs executed), about 7 seconds in Node.
   the path names; arguments, environment, working directory and descriptors go with it (`rt/linux-x64/process.c`).
   Scripts are run through the program their `#!` names, as the kernel does.
 - **Entering a function at a return address.** A lifted function returns natively where the guest returns, so the
-  guest can go on from any return address with nothing below it: every function of a Linux title can be entered
+  guest can go on from any return address with nothing below it: every function of a Linux app can be entered
   at the return address of each call it makes (`c->resume`, a `switch` the lifter puts at its start), and the
   runtime enters the guest in a loop that goes on at the address each function returned to (`linux_run`). A
   forked child and a `longjmp` both use it: `longjmp` unwinds the runtime's stack to that loop, which goes on at

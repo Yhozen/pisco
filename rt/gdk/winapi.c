@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-// Small Windows functions the 64-bit runtimes' titles ask for: thread descriptions, environment variables (none),
+// Small Windows functions the 64-bit runtimes' apps ask for: thread descriptions, environment variables (none),
 // toolhelp snapshots (refused), advapi32's LsaOpenPolicy (refused: the caller's fallback runs).
 #include "rt.h"
 

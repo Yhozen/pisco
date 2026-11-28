@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-// FMOD 3 (fmod.dll) for titles whose recipe says the runtime answers for it ([dll] "fmod.dll" = "builtin"): the
-// FSOUND functions Narbacular Drop imports, on the runtime's sound output (mixer.c). Sounds come from the title's
-// files through its own file callbacks when it set them (FSOUND_File_SetCallbacks: called on the title's thread with
-// rt_guest_call, the whole file read when it is loaded or opened), else from the title's file system; they are
+// FMOD 3 (fmod.dll) for apps whose recipe says the runtime answers for it ([dll] "fmod.dll" = "builtin"): the
+// FSOUND functions Narbacular Drop imports, on the runtime's sound output (mixer.c). Sounds come from the app's
+// files through its own file callbacks when it set them (FSOUND_File_SetCallbacks: called on the app's thread with
+// rt_guest_call, the whole file read when it is loaded or opened), else from the app's file system; they are
 // decoded by audio_decode.c (WAV, Ogg Vorbis, MP3). FMOD's functions are stdcall, exported under decorated names
 // (_FSOUND_Init@12); the ones that return a truth value return it as a signed char, in AL.
 //
@@ -80,7 +80,7 @@ static void trace(const char *fmt, ...) {
 static const char *guest_string(u64 p) { return p ? (const char *)GP(p) : ""; }
 
 // ---- files ----
-// The whole of a file the title names: through its callbacks, or from its file system. Returns a malloc'd copy.
+// The whole of a file the app names: through its callbacks, or from its file system. Returns a malloc'd copy.
 static u8 *load_file(Cpu *c, u64 name, u32 mode, u32 offset, u32 length, u32 *size) {
   if (mode & LOADMEMORY) { // the data itself, `length` bytes
     u8 *d = malloc(length ? length : 1); memcpy(d, (void *)GP(name + offset), length); *size = length; return d;
@@ -266,7 +266,7 @@ IMP(fmod, FSOUND_Close) {
   for (int i = 0; i < CHANNELS; i++) if (ch[i].active) stop(&ch[i]);
   pthread_mutex_unlock(&mixer_lock);
 }
-// (open, close, read, seek, tell): the title's file functions, stdcall
+// (open, close, read, seek, tell): the app's file functions, stdcall
 IMP(fmod, FSOUND_File_SetCallbacks) {
   cb_open = (u32)ARG(0); cb_close = (u32)ARG(1); cb_read = (u32)ARG(2); cb_seek = (u32)ARG(3); cb_tell = (u32)ARG(4);
   if (!cb_open || !cb_close || !cb_read || !cb_seek || !cb_tell) cb_open = cb_close = cb_read = cb_seek = cb_tell = 0;   // all or none

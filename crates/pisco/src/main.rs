@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-// pisco: builds, runs and inspects title images (docs/images.md).
+// pisco: builds, runs and inspects app images (docs/images.md).
 //   pisco build <recipe dir> [--input <id>=<path>]... [--source <path>] [--out <image dir>] [--cache <dir>] [--compare <installed folder>]
 //   pisco recipe <recipe dir> [--json | --keys]: the recipe as pisco reads it (JSON, for tools/recipe-gen.py), or the keys schema 1 knows
 //   pisco install <name | recipe dir> [--rev <commit>] [--input <id>=<path>]...: built into the store ($PISCO_HOME,
@@ -10,7 +10,7 @@
 //   pisco run <image | name> [--session <session.json>] [--saves <dir>] [--chrome] [-- app arguments]
 //   pisco census <image | title.exe> [--recipe <recipe dir> | --from base/windows-x86:1 --libraries a,b] [--dll-dir <system32>] [--all]
 //   pisco inspect <image> [--files]
-//   pisco sources <base | recipe dir> [--libraries a,b | --all-libraries]: the runtime files a title of that base links
+//   pisco sources <base | recipe dir> [--libraries a,b | --all-libraries]: the runtime files an app of that base links
 // The repository is found from this program's own place (target/release/pisco), or SW_ROOT.
 mod build;
 mod census;
@@ -128,7 +128,7 @@ fn base_cmd(root: &Path, a: &Args) -> R<()> {
 }
 
 /// `pisco recipe <dir> --json`: the recipe as pisco reads it, the one reader of recipes (tools/recipe-gen.py and
-/// tools/build-title.sh take this); `--keys`: what schema 1 knows, for tests/run.sh spec
+/// tools/build-app.sh take this); `--keys`: what schema 1 knows, for tests/run.sh spec
 fn recipe_cmd(a: &Args) -> R<()> {
     if a.flag("keys") {
         for k in recipe::KEYS { println!("key {k}"); }
@@ -218,7 +218,7 @@ fn census(root: &Path, a: &Args) -> R<()> {
         let t = build::tools(root)?;
         // --dll-dir <folder>: DLLs it imports from the system's folder (an image's C:\WINDOWS\system32) are lifted with it
         let dll_dir = a.get("dll-dir").map(|d| format!("{}=c:/WINDOWS/system32", d.canonicalize().unwrap_or(d.clone()).display()));
-        let o = Command::new(&t.lifter).arg(target.canonicalize().map_err(|e| format!("{}: {e}", target.display()))?).arg("title.c").args(builtin.iter().flat_map(|d| ["--builtin", d.as_str()]))
+        let o = Command::new(&t.lifter).arg(target.canonicalize().map_err(|e| format!("{}: {e}", target.display()))?).arg("app.c").args(builtin.iter().flat_map(|d| ["--builtin", d.as_str()]))
             .args(dll_dir.iter().flat_map(|d| ["--dll-dir", d.as_str()])).current_dir(&tmp).output().map_err(|e| e.to_string())?;
         std::fs::write(tmp.join("lifter.log"), [&o.stdout[..], &o.stderr[..]].concat()).map_err(|e| e.to_string())?;
         if !o.status.success() { return Err(format!("the lifter failed: {}", tmp.join("lifter.log").display())); }
@@ -226,7 +226,7 @@ fn census(root: &Path, a: &Args) -> R<()> {
         let shipped = std::fs::read_dir(dir).map(|d| d.filter_map(|e| e.ok()).map(|e| e.file_name().to_string_lossy().to_ascii_lowercase()).filter(|n| n.ends_with(".dll") && !builtin.contains(n)).collect()).unwrap_or_default();
         let libs = if let Some(r) = &rec { r.libraries.clone() } else { a.get("libraries").map(|l| l.to_string_lossy().split(',').filter(|s| !s.is_empty()).map(String::from).collect()).unwrap_or_default() };
         let from = rec.as_ref().map(|r| r.from.clone()).or(a.get("from").map(|p| p.to_string_lossy().into_owned())).unwrap_or("base/windows-x86:1".into());
-        (build::lifted_imports(&tmp.join("title.c"))?, from, libs, shipped)
+        (build::lifted_imports(&tmp.join("app.c"))?, from, libs, shipped)
     };
     let base = recipe::load_base(root, &base)?;
     let c = census::Census::new(root, &base, &libraries, &shipped)?;
@@ -243,7 +243,7 @@ fn census(root: &Path, a: &Args) -> R<()> {
 }
 
 /// The runtime's source files for a base (and libraries), one per line, from the repository's root: the only list
-/// of them is the bases' (tools/build-title.sh asks here)
+/// of them is the bases' (tools/build-app.sh asks here)
 fn sources(root: &Path, a: &Args) -> R<()> {
     let Some(what) = a.pos.first() else { usage() };
     let (base, libs) = if what.starts_with("base/") {

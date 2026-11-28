@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-// The Linux x86-64 runtime: what its files share. A title is one statically linked ELF; it reaches the system
+// The Linux x86-64 runtime: what its files share. An app is one statically linked ELF; it reaches the system
 // only through the `syscall` instruction (syscall.c), and what it finds there is this folder.
 #pragma once
 #include "rt.h"
@@ -9,7 +9,7 @@ enum { L_EPERM = 1, L_ENOENT = 2, L_EINTR = 4, L_EIO = 5, L_EBADF = 9, L_ECHILD 
        L_EEXIST = 17, L_ENOTDIR = 20, L_EISDIR = 21, L_EINVAL = 22, L_EMFILE = 24, L_ENOTTY = 25, L_ESPIPE = 29, L_EROFS = 30, L_ERANGE = 34,
        L_ENAMETOOLONG = 36, L_ENOSYS = 38, L_ELOOP = 40, L_EAFNOSUPPORT = 97, L_ETIMEDOUT = 110 };
 
-// ---- the machine a title is told it runs on (proc.c) ----
+// ---- the machine an app is told it runs on (proc.c) ----
 #define LINUX_RELEASE "6.1.0-pisco"
 #define LINUX_VERSION "#1 SMP PREEMPT_DYNAMIC pisco"
 #define LINUX_HOSTNAME "pisco"
@@ -19,8 +19,8 @@ enum { L_EPERM = 1, L_ENOENT = 2, L_EINTR = 4, L_EIO = 5, L_EBADF = 9, L_ECHILD 
 u64 linux_mem_used(void);                 // what the module's memory has grown to
 extern int linux_tty;                     // SW_TTY=1: the standard streams are a terminal (80 columns by 24 rows, or SW_TTY=<columns>x<rows>)
 extern u16 linux_cols, linux_rows;
-extern char linux_exe[];                  // the title's path as it sees it: "/<file name>", or where its image puts it
-extern int linux_drive;                   // the root is a title image's drive (the host knows its files as "c:/..."), not the title's folder
+extern char linux_exe[];                  // the app's path as it sees it: "/<file name>", or where its image puts it
+extern int linux_drive;                   // the root is an app image's drive (the host knows its files as "c:/..."), not the app's folder
 extern int linux_argc; extern char **linux_argv;   // its arguments (argv[0] is linux_exe)
 extern const char **linux_env;            // its environment
 extern u64 linux_image_end;               // where the image ends (the program break never moves from there)
@@ -29,7 +29,7 @@ extern u64 linux_image_end;               // where the image ends (the program b
 enum { N_FILE = 1, N_DIR, N_LINK, N_NULL, N_RANDOM, N_TTY };
 typedef struct {
   int type; u64 size; u64 ino;
-  char *data;        // a generated file's bytes or a link's target (malloc'd: the caller frees), or 0: a file of the title's folder
+  char *data;        // a generated file's bytes or a link's target (malloc'd: the caller frees), or 0: a file of the app's folder
   char host[512];    // its name for the host
   int noexec;        // a file of the drive without its executable bit (the host says so: host_exec)
 } Node;

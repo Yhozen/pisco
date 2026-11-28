@@ -20,8 +20,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
-// stb_truetype's memory comes from a pool of this file's, emptied before each glyph: the title's heap is the
-// runtime's malloc, and a title that reads freed or uninitialised heap memory (Narbacular Drop does, in its first
+// stb_truetype's memory comes from a pool of this file's, emptied before each glyph: the app's heap is the
+// runtime's malloc, and an app that reads freed or uninitialised heap memory (Narbacular Drop does, in its first
 // level) must not find the rasteriser's leftovers there
 static unsigned char pool[1 << 20]; static size_t pool_used;
 static void *pool_alloc(size_t n) { n = (n + 15) & ~(size_t)15; if (pool_used + n > sizeof pool) return 0; void *p = pool + pool_used; pool_used += n; return p; }

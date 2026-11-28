@@ -2,7 +2,7 @@
 // longjmp. A lifted function returns by returning: the guest's return addresses are not jumped to, so the C
 // library's own longjmp (restore the stack pointer, jump to the saved address) cannot work. The lifter puts this in
 // its place: the registers setjmp saved are loaded, the runtime's stack is unwound, and the guest goes on at the
-// address setjmp would have returned to (linux_resume_at, start.c). setjmp itself is the title's: it fills the
+// address setjmp would have returned to (linux_resume_at, start.c). setjmp itself is the app's: it fills the
 // jmp_buf as musl and glibc lay it out for x86-64 (rbx, rbp, r12 to r15, the stack pointer after the return, the
 // return address).
 #include "linux.h"

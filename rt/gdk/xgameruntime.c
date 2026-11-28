@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // The GDK's XGameRuntime, offline: task queues, XAsync, XUser, saves, persistent local storage, package,
-// networking hints. Behaviour follows XCL's findings on retail titles (github.com/ivall/xcl, GPL-2.0).
+// networking hints. Behaviour follows XCL's findings on retail apps (github.com/ivall/xcl, GPL-2.0).
 #include "gdk.h"
 
 // ---- XTaskQueue: a queue has a work port and a completion port; a composite queue uses other queues' ports ----

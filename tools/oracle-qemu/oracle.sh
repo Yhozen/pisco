@@ -12,22 +12,22 @@
 #   oracle.sh dir <title>      prints the run folder
 # Environment: ORACLE_RUN (the run folder, default out/oracle/<title>), ORACLE_TIMEOUT (seconds, default 300), and
 #   env.sh's QEMU, ORACLE_QEMU_MACHINE, ORACLE_QEMU_CPU, ORACLE_QEMU_MEMORY.
-# The K0 gate (docs/research/kernel-as-a-title.md) is `run` on less hardware:
+# The K0 gate (docs/research/kernel-as-an-app.md) is `run` on less hardware:
 #   ORACLE_QEMU_MACHINE=q35,hpet=off,pit=off,pic=off oracle.sh run linux tsc_early_khz=2900000
 set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd); root=$(cd "$here/../.." && pwd); . "$here/env.sh"
 cmd=${1:?usage: oracle.sh run|programs|dir <title> ...}; title=${2:?title}; shift 2
-run=${ORACLE_RUN:-$root/out/oracle/$title}; mkdir -p "$run"
+run=${ORACLE_RUN:-$root/out/oracle/$app}; mkdir -p "$run"
 case $cmd in
   dir) echo "$run" ;;
   programs)
-    [ -f "$run/console.txt" ] || { echo "oracle.sh: no run of $title yet (oracle.sh run $title)" >&2; exit 2; }
+    [ -f "$run/console.txt" ] || { echo "oracle.sh: no run of $app yet (oracle.sh run $app)" >&2; exit 2; }
     sed -n '/^Run \/init as init process/,$p' "$run/console.txt" | sed 1d ;;
   run)
     command -v "$QEMU" > /dev/null || { "$here/setup.sh"; exit 2; }
-    d=$root/out/$title
+    d=$root/out/$app
     for f in bzImage initramfs.cpio; do [ -f "$d/$f" ] || { echo "oracle.sh: $d/$f is not built (tools/build-linux.sh)" >&2; exit 2; }; done
-    line="$(cat "$root/recipes/$title/cmdline")${*:+ $*}"
+    line="$(cat "$root/recipes/$app/cmdline")${*:+ $*}"
     code=0
     timeout "${ORACLE_TIMEOUT:-300}" "$QEMU" -M "$ORACLE_QEMU_MACHINE,accel=tcg" -cpu "$ORACLE_QEMU_CPU" -m "$ORACLE_QEMU_MEMORY" -smp 1 \
       -display none -no-reboot -nodefaults -no-user-config -serial stdio -device isa-debug-exit,iobase=0xf4,iosize=0x04 \

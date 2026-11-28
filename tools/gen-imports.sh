@@ -1,10 +1,10 @@
 #!/bin/bash
 # SPDX-License-Identifier: GPL-2.0-or-later
-# gen-imports.sh <guest bits> <lifted dir> <out.c> <runtime sources...>: the import table of a title's module.
+# gen-imports.sh <guest bits> <lifted dir> <out.c> <runtime sources...>: the import table of an app's module.
 # Every IMP(dll, name) the runtime sources define goes into rt_import_table (and <out dir>/imports.txt); for a
 # 32-bit title also what each import removes from the stack (rt_stdcall_table): first rt/windows-x86/stdcall.txt, then what
 # the import libraries say (tools/stdcall-sizes.sh) of the runtime's functions and of the imports named in the
-# lifted C (<lifted dir>/title*.c). Used by tools/build-title.sh and by `pisco build` (crates/pisco).
+# lifted C (<lifted dir>/app*.c). Used by tools/build-app.sh and by `pisco build` (crates/pisco).
 set -euo pipefail
 root=$(cd "$(dirname "$0")/.." && pwd); bits=$1; lifted=$2; out=$3; shift 3
 list=$(dirname "$out")/imports.txt
@@ -23,7 +23,7 @@ aliases=$(grep -ho 'ALIAS([a-z0-9_]*, *"[^"]*", *[A-Za-z0-9_]*, *-\{0,1\}[0-9]*)
   [ -z "$aliases" ] || echo "$aliases" | awk '{print "  {\""$1"\", \""$2"\", "$3"},"}'
   echo '  {0, 0, 0}};'
   echo "const unsigned rt_alias_table_count = sizeof rt_alias_table / sizeof rt_alias_table[0] - 1;"
-  # 32-bit: what each import removes from the stack, for the runtime's and the title's own imports
+  # 32-bit: what each import removes from the stack, for the runtime's and the app's own imports
   echo 'typedef struct { const char *name; int bytes; } StdcallDef;'
   echo 'const StdcallDef rt_stdcall_table[] = {'
   if [ "$bits" = 32 ]; then

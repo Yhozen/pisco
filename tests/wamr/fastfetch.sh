@@ -12,12 +12,12 @@ const [dir, out] = process.argv.slice(2);
 const image = await openImageDir(dir);
 if (image.settings.exe !== 'usr/bin/fastfetch') throw new Error('expected the fastfetch recipe');
 writeFileSync(out + '/fastfetch', image.drive.read(image.settings.exe));
-writeFileSync(out + '/title.wasm', image.wasm);
+writeFileSync(out + '/app.wasm', image.wasm);
 JS
 cc -O2 -Wall -Werror -shared -fPIC -I"$WAMR_INCLUDE" tests/wamr/fastfetch-host.c -o "$out/host.so"
-wamrc --enable-multi-thread --bounds-checks=1 -o "$out/title.aot" "$out/title.wasm"
+wamrc --enable-multi-thread --bounds-checks=1 -o "$out/app.aot" "$out/app.wasm"
 PISCO_TEST_ELF="$out/fastfetch" timeout 300 iwasm --heap-size=0 --native-lib="$out/host.so" \
     --env=SW_STRICT=1 --env=SW_CLOCK=16667 --env=SW_EXE=/usr/bin/fastfetch \
-    "$out/title.aot" --pipe -l none > "$out/got.txt"
+    "$out/app.aot" --pipe -l none > "$out/got.txt"
 diff -u recipes/fastfetch/traces/pipe.txt "$out/got.txt"
 echo "fastfetch: all 13 lines from WAMR AOT match the PISCO reference"

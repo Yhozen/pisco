@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-// Title images (docs/images.md), as every host reads them: web/run-node.mjs, the browser's page and workers
+// App images (docs/images.md), as every host reads them: web/run-node.mjs, the browser's page and workers
 // (web/browser/main.js, worker.js) and tools/serve.mjs. An image is an OCI image layout (oci-layout, index.json,
-// blobs/sha256/...): one manifest, a config (the title's exe, display, CPU, DLL choices, registry) and in order the
-// file layers (tar: the base's, the libraries', the game's) and the module (title.wasm).
-// The file layers stacked make the title's C: drive, the lower layers of its file system (rt/vfs.c): a later layer's
-// file replaces an earlier one's, a ".wh.<name>" entry removes <name>. The title's own writes stay above them, kept
+// blobs/sha256/...): one manifest, a config (the app's exe, display, CPU, DLL choices, registry) and in order the
+// file layers (tar: the base's, the libraries', the game's) and the module (app.wasm).
+// The file layers stacked make the app's C: drive, the lower layers of its file system (rt/vfs.c): a later layer's
+// file replaces an earlier one's, a ".wh.<name>" entry removes <name>. The app's own writes stay above them, kept
 // by the host (SW_SAVES in Node, OPFS in the browser). Names are matched without regard to case, as on Windows.
 // Nothing here needs Node; openImageDir (Node only) imports node:fs when it is called.
 export const MEDIA = {
@@ -29,7 +29,7 @@ export function manifestOf(index, ref) {
 export function checkManifest(manifest) {
   if (manifest.artifactType !== MEDIA.artifact) throw new Error(`image: not a pisco app (artifactType ${manifest.artifactType})${manifest.artifactType === 'application/vnd.pisco.title.v1' ? ': an image of an older pisco, build it again' : ''}`);
   const layers = manifest.layers.filter((l) => l.mediaType === MEDIA.layer), module = manifest.layers.find((l) => l.mediaType === MEDIA.module);
-  if (!module) throw new Error('image: no module (title.wasm) among its layers');
+  if (!module) throw new Error('image: no module (app.wasm) among its layers');
   return { layers, module, roles: layers.map((l) => l.annotations?.[ROLE] || 'layer') };
 }
 // The host interface this host gives modules (docs/spec/host.md), and the config's schema it reads
@@ -41,11 +41,11 @@ export function checkConfig(config) {
 }
 export const blobPath = (digest) => `blobs/sha256/${digest.replace(/^sha256:/, '')}`;
 
-// What a host needs to start the title: the exe and its folder on the drive ('C:\Program Files\X\x.exe' ->
-// 'Program Files/X/x.exe', 'Program Files/X'; a Linux title's '/usr/bin/x' -> 'usr/bin/x', 'usr/bin'), its arguments,
+// What a host needs to start the app: the exe and its folder on the drive ('C:\Program Files\X\x.exe' ->
+// 'Program Files/X/x.exe', 'Program Files/X'; a Linux app's '/usr/bin/x' -> 'usr/bin/x', 'usr/bin'), its arguments,
 // and the runtime's settings the image makes: SW_REGISTRY, the registry values rt/windows-x86/advapi32.c reads
-// ("<key>\t<name>\tdword|sz\t<value>" a line); for a Linux title SW_EXE, its path from the root, which tells the
-// runtime that its root is the image's drive (rt/linux-x64/fs.c); for a machine's title (rt/microvm-x64) SW_INITRD and
+// ("<key>\t<name>\tdword|sz\t<value>" a line); for a Linux app SW_EXE, its path from the root, which tells the
+// runtime that its root is the image's drive (rt/linux-x64/fs.c); for a machine's app (rt/microvm-x64) SW_INITRD and
 // SW_CMDLINE, its kernel's initramfs and command line
 export function settings(config) {
   const linux = config.os === 'linux' || config.os === 'microvm';
@@ -59,10 +59,10 @@ export function settings(config) {
     if (config.run.initrd) env.SW_INITRD = config.run.initrd.split('/').filter(Boolean).join('/');
     if (config.run.cmdline) env.SW_CMDLINE = config.run.cmdline;
   }
-  // (text: a Linux title has no screen of its own, what it shows is what it prints; nor a machine's, its serial console)
+  // (text: a Linux app has no screen of its own, what it shows is what it prints; nor a machine's, its serial console)
   return { name: config.name, text: linux, exe, folder, exeName: exe.slice(folder.length ? folder.length + 1 : 0), args: config.run.args || [], display: config.run.display || null, env };
 }
-// A name the runtime asks its host for (rt/vfs.c): "c:/<path>" is on the drive, anything else is in the title's folder
+// A name the runtime asks its host for (rt/vfs.c): "c:/<path>" is on the drive, anything else is in the app's folder
 export function driveName(name, folder) {
   if (/^c:(\/|$)/i.test(name)) return name.slice(3);
   return folder ? (name ? `${folder}/${name}` : folder) : name;

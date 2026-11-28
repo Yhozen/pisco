@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-// kernel32 for Windows desktop titles: what an old program's own C runtime asks for when it starts (the
+// kernel32 for Windows desktop apps: what an old program's own C runtime asks for when it starts (the
 // system's version, start-up information, the environment, character tables of the ANSI code page) and the
 // ANSI functions the core runtime does not have. The system we describe is Windows XP SP3, Western European
-// (code page 1252): what a 2005 title was written for.
+// (code page 1252): what a 2005 app was written for.
 #include <ctype.h>
 #include "../rt.h"
 #include "../vfs.h"
@@ -228,7 +228,7 @@ IMP(kernel32, GetTempFileNameW) {
   size_t i = 0; for (; out[i]; i++) M16(ARG(3) + 2 * i) = (u8)out[i]; M16(ARG(3) + 2 * i) = 0;
   RET(u);
 }
-// (name, characters, buffer, &file part): a relative name is under the title's folder, where it runs
+// (name, characters, buffer, &file part): a relative name is under the app's folder, where it runs
 IMP(kernel32, GetFullPathNameA) {
   const char *n = GSTR(ARG(0)); char full[300];
   if ((n[0] && n[1] == ':') || (n[0] == '\\' && n[1] == '\\')) snprintf(full, sizeof full, "%s", n);
@@ -257,7 +257,7 @@ IMP(kernel32, InterlockedCompareExchange) { u32 want = (u32)ARG(2); __atomic_com
 IMP(kernel32, IsDBCSLeadByte) { RET(0); }
 IMP(kernel32, lstrcmpiA) { int r = strcasecmp(GSTR(ARG(0)), GSTR(ARG(1))); RET((u32)(r < 0 ? -1 : r > 0)); }
 
-// ---- the environment's variables: the table above, then what the title sets ----
+// ---- the environment's variables: the table above, then what the app sets ----
 static char *set_names[32], *set_values[32]; static unsigned set_count;
 static const char *env_get(const char *name) {
   for (unsigned i = 0; i < set_count; i++) if (!strcasecmp(set_names[i], name)) return set_values[i];
@@ -280,7 +280,7 @@ static void env_set(const char *name, const char *value) {
 IMP(kernel32, SetEnvironmentVariableA) { env_set(GSTR(ARG(0)), ARG(1) ? GSTR(ARG(1)) : 0); RET(1); }
 IMP(kernel32, SetEnvironmentVariableW) { char *n = rt_narrow(GWSTR(ARG(0))), *v = ARG(1) ? rt_narrow(GWSTR(ARG(1))) : 0; env_set(n, v); free(n); free(v); RET(1); }
 
-// ---- folders and drives: the system's are C:\WINDOWS's; the current folder is the title's (relative paths are) ----
+// ---- folders and drives: the system's are C:\WINDOWS's; the current folder is the app's (relative paths are) ----
 static u32 copy_out(Cpu *c, const char *s, u64 buf, u32 cap) { u32 n = (u32)strlen(s); if (n + 1 > cap) return n + 1; memcpy(GSTR(buf), s, n + 1); return n; }
 IMP(kernel32, GetCurrentDirectoryA) { RET(copy_out(c, "C:\\title", ARG(1), (u32)ARG(0))); }   // (size, buffer)
 IMP(kernel32, GetSystemDirectoryA) { RET(copy_out(c, "C:\\WINDOWS\\system32", ARG(0), (u32)ARG(1))); }
@@ -329,7 +329,7 @@ IMP(kernel32, CompareStringW) {
   }
   RET(na < nb ? 1 : na > nb ? 3 : 2);
 }
-// Other programs are not started: a title that starts one (a settings program, a web page) is told it was not found
+// Other programs are not started: an app that starts one (a settings program, a web page) is told it was not found
 IMP(kernel32, WinExec) { rt_log("kernel32: WinExec \"%s\": other programs are not started", GSTR(ARG(0))); RET(2); }
 IMP(kernel32, CreateProcessA) { rt_log("kernel32: CreateProcess \"%s\": other programs are not started", ARG(1) ? GSTR(ARG(1)) : ARG(0) ? GSTR(ARG(0)) : ""); SET_LAST_ERROR(2); RET(0); }
 IMP(shell32, ShellExecuteA) { rt_log("shell32: ShellExecute %s \"%s\": other programs are not started", ARG(1) ? GSTR(ARG(1)) : "open", ARG(2) ? GSTR(ARG(2)) : ""); RET(2); }

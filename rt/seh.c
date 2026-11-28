@@ -228,7 +228,7 @@ static void dispatch(Cpu *c, u64 rec, u64 orig) {
 
 // MS_VC_EXCEPTION, 0x406D1388: Visual C++'s way to name a thread for a debugger. The code that raises it catches it
 // itself (`__try { RaiseException(...) } __except (EXCEPTION_EXECUTE_HANDLER) {}`) and goes on; with no debugger
-// that is the same as RaiseException returning, which is what happens here (a 32-bit title has no SEH dispatch yet).
+// that is the same as RaiseException returning, which is what happens here (a 32-bit app has no SEH dispatch yet).
 // The information: 0x1000, the name, the thread id (-1: the caller), flags.
 static int thread_name(Cpu *c) {
   if ((u32)ARG(0) != 0x406D1388u || (u32)ARG(2) < 3 || !ARG(3)) return 0;
