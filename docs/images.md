@@ -132,8 +132,10 @@ needs (`pisco census <exe>`); it says so when a base is experimental.
 ## The store
 
 `pisco install <recipe>` builds an app into the store, and `pisco run <name>` runs it from any folder; `pisco list`
-says what is installed and `pisco remove <name>` takes it away. `<recipe>` is a recipe's folder or the name of one in
-`recipes/`, the official ones ([spec/distribution.md](spec/distribution.md)). The store is `$PISCO_HOME`
+says what is installed and `pisco remove <name>` takes it away. `<recipe>` is a name
+([spec/distribution.md](spec/distribution.md#names)): `tag` for one of `recipes/` (the official source),
+`owner/repo/tag` for a GitHub repository's, `@ns/tag` after `pisco source add @ns <git url>`, `<git url>#tag`, or a
+recipe's folder. `pisco search [words]` looks in the official source and every `@ns`. The store is `$PISCO_HOME`
 (`~/.pisco`):
 
 ```
@@ -141,6 +143,8 @@ blobs/sha256/<digest>   every app's blobs, once: apps FROM one base share its la
 apps/<name>/            an image layout whose blobs/ is a link to ../../blobs: a host reads it as any image folder
 saves/<name>/           what the app keeps between runs (SW_SAVES; `--saves` says another place), kept across installs
 tmp/                    an install builds here, then moves the app into apps/ by one rename
+sources/                one checkout of each git source, at the commit last installed from
+sources.toml            the namespaces: @ns = "<git url>"
 ```
 
 `index.json`'s entry says where the app came from (`org.pisco.source`). `pisco inspect` and `pisco census` take an
