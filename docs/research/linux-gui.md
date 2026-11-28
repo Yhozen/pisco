@@ -234,7 +234,12 @@ on it:
 - **The first tier and its queue are a proof of concept.** Nothing chooses between waiting and qemu-user by the
   program's size; a lift a task waits for and the runner's lift of the same program wait on one lock file, so a
   stopped runner stops that task (it happened while the runner was paused for a benchmark); the queue is lifted
-  oldest first, with no notion of what the desktop needs first.
+  oldest first, with no notion of what the desktop needs first. A task already past the harmless syscalls (JWM,
+  after it has opened the display) cannot be re-executed on qemu-user, so it waits for every library it misses:
+  on x86-64 xterm, xeyes and xclock came up at once while JWM waited for its cairo and pixman lifts.
+- **A large library's lift is heavy on the host.** A 3.6 MB library (1.2 million instructions) is 16 units of
+  5.5 MB of C, each 1.6 GB and 4 to 50 minutes in clang; four at once on 8 GB had one killed, which ended the lift
+  after 37 minutes (lift-side.sh now runs no more compiles than 2 GiB slots available).
 - **Lifted Xorg's two bugs** (above): fonts of two-byte encodings, and one exit.
 - A program loaded with `dlopen` after it has done work waits for its lift (asleep, the others run): lifted Xorg
   waited about a minute for its five modules the first time.
