@@ -84,15 +84,93 @@ That is the wait a person sees the first time anything new runs. The first tier 
 - **The tier, in the guest.** tabc's init bind-mounts `/tabc/bin` (x86load and qemu-x86_64) at `/.pisco` in the
   container's root. qemu-x86_64 is Alpine's (static, aarch64); `setup.sh` fetches it.
 
-RESULT_TIER
+Measured on a cache with nothing lifted (`sh -c 'echo hello; md5sum /bin/busybox'`, amd64 alpine:3.24.4):
+
+| | first run | the runs after |
+|---|---|---|
+| before (a lift is waited for) | about 70 s (musl's loader 10 s, busybox 55 s, then the command) | 1.8 s |
+| the first tier | 4.1 s (`/bin/sh` and `md5sum` on qemu-user; both lifted meanwhile, about 65 s) | 1.8 s, lifted |
+
+The x86-64 desktop of section 1, from an empty cache, shows the trade's other side: the install and Xorg's first
+start ran mostly on qemu-user (apk's triggers: `update-mime-database` 10 min, `fc-cache` 3 min), and the first
+desktop drew its background and little else for minutes; the run after it was lifted (section 4).
 
 ## 3. One library, one lift
 
-TEXT_CANON
+A lifted module is keyed by the sha256 of the program's image, rebuilt from memory when its code is first met
+(`ask_host` in `runtime.c`). For a library that image held two things that differ from one program to the next:
+
+- **Its address.** musl's loader maps a library where the kernel puts it (`mmap(0, ...)`); with the bottom-up layout
+  that depends on what the program mapped before, so libX11 sat at a different address in xterm and in xeyes.
+- **Its relocated data.** The loader has filled its GOT with the addresses of other modules' symbols (and of the
+  program's own: copy relocations, interposition) before any of its code runs.
+
+So the same file was lifted once per program that mapped it differently: of the 52 images an x86-64 desktop's
+first runs met, 23 were such repeats (same size, another sha256). Two changes in `runtime.c` make one image per
+library:
+
+- **An address per library.** The runtime notes the path of the last `.so` opened and, for the `mmap(0, ...)` of
+  that descriptor which follows, asks the kernel for an address of its own: a 256 MiB slot of a 16 TiB region,
+  from the path's hash (`lib_address`). It is a hint: where the slot is taken, the kernel chooses, and that
+  library gets a lift of its own.
+- **A canonical image.** Before the hash, each of the library's relocations is set to what its own base gives
+  (`R_X86_64_RELATIVE`: base + addend) or to 0 (everything that depends on another module). The lifter reads code
+  and the tables it needs from the image (jump tables are relative or `RELATIVE`), not other modules' addresses.
+
+With them, libfreetype is one image (`30af9415…`) for fc-cache, xterm and JWM; RESULT_CANON_COUNT
 
 ## 4. Fast
 
-TEXT_FAST
+### The picture: only the rows that changed, off the kernel's thread
+
+The kernel runs on one thread, the worker's, and everything else the worker does takes time from the guest. The
+first version sent a frame as the SDK gives it: every 33 ms `frame()` (the whole picture copied to RGBA), a hash of
+it, and a post of the 3 MiB when the hash changed. The second reads the framebuffer in place, compares it with the
+last frame row by row, and posts only the band of rows that changed, as XRGB; the page converts it and draws only
+those rows. On the arm64 desktop with `bench.sh` running (`display:` lines of the log, every 10 s; both runs on a
+machine also busy lifting, so the times are indicative):
+
+| | the worker's time on the picture, per 10 s | frames per 10 s |
+|---|---|---|
+| whole frames, RGBA on the worker | 0.83 to 2.77 s (8 to 28 % of the kernel's thread) | 1 to 74, all 768 rows |
+| changed rows, XRGB, converted on the page | 0.18 to 0.94 s (2 to 9 %) | 1 to 67, 150 to 680 rows |
+
+In the same runs xterm's start took 3.0 to 7.0 s against 7.9 to 13.3 s, and its scroll of 20,000 lines 9.7 to
+14.5 s against 13.2 to 18.7 s.
+
+RESULT_DESKTOP_BENCH
+
+## What this says about the roadmap
+
+The roadmap proposed alongside this work (an architecture of interchangeable execution back ends: the lifter,
+FEX or Box64, KVM, unkernel; a P0 to P3 list) reads differently after a day of this. Where today's evidence bears
+on it:
+
+- **unkernel integration is the Linux direction, not a P1.** A kernel compiled to wasm with lifted user programs is
+  what tabc-pisco is, and it runs a desktop, apk over TLS and Lua, faster than kwemu on compute
+  ([tabc-pisco.md](tabc-pisco.md)). The lifted microVM (Linux itself lifted) stays the way to run a kernel that has
+  no wasm build; for Linux, compiling the kernel wins on every count measured.
+- **No universal software MMU: confirmed, and the hybrid shows where one belongs.** Lifted programs in a real kernel
+  need its MMU (fork, mmap, copy on write); PISCO's TLB filled from `kw_user_addr` is that, and nothing of it
+  reaches the other runtimes. The principle "a feature for one runtime costs the others nothing" held here: every
+  change of this page is in `tools/tabc-pisco`.
+- **Differential testing (P0): the first tier is a ready oracle.** The flags bug of tabc-pisco.md (one TLS handshake
+  in three) took hours to find. The guest now holds qemu-user beside the lifted code: running a program both ways
+  and comparing its output, or its registers at each system call, is a few lines in the runtime. That is cheaper
+  than KVM and FEX as oracles and runs where the bugs show, in the browser.
+- **Register summaries (P0): yes; calls are the gap left.** Lifted code beats kwemu on loops (2.6 to 4.8 times) and
+  loses on call-heavy code (fib, 72 ms against 53). That is what register summaries address.
+- **ABI thunks (P1): for graphics first.** In Linux the thunk that pays is the GPU: unkernel already forwards GL
+  (virgl on WebGL2) and Vulkan (on WebGPU) from the guest's Mesa. A lifted x86-64 Mesa using them is the next step
+  for a GPU desktop, before libc or libm thunks, which the lifted code already runs at near wasm speed.
+- **What the roadmap misses: the lift is the user's wait.** The time a person sees is lifting (busybox 55 s,
+  libcrypto 7.5 min), not running. Three things cut it, in order of effect: (1) a shared cache of lifted modules,
+  keyed by the image's sha256, so that Alpine's libcrypto is lifted once for everyone (the canonical library images
+  of section 3 make the key the same in every program); (2) the first tier (section 2), so that nobody waits; (3)
+  a faster lift for the first run (`-O1`, or a split that keeps every compiler busy: one part of libcrypto took
+  8 minutes alone).
+- **Defer KVM, FEX and Box64, libkrun, native relinking** for the browser: none runs there. They belong to a native
+  host, which [hosts.md](../hosts.md) already weighs.
 
 ## Limits
 
