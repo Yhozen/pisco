@@ -30,17 +30,17 @@ img=${IMG:-out/images/linux}
 [ -f $img/index.json ] || { echo "no Linux image at $img (target/release/pisco build recipes/linux): Linux not checked"; exit 0; }
 cmd="$(cat recipes/linux/cmdline) rdinit=/bin/sh"
 rm -f $d/linux.db*
-# (the console's input stays open: a pipe that ended would end the shell, and with it the machine; SW_CONSOLE=tty: the
+# (the console's input stays open, a process substitution the shell does not wait for: a pipe that ended would end the shell, and with it the machine; SW_CONSOLE=tty: the
 # machine on the host's clock, as when someone types)
-{ printf '%s\n' 'mount -t devtmpfs dev /dev; mount -t proc proc /proc; cd /tmp; echo "written before the snapshot" > note; X=42' \
+input1() ({ printf '%s\n' 'mount -t devtmpfs dev /dev; mount -t proc proc /proc; cd /tmp; echo "written before the snapshot" > note; X=42' \
     '(i=0; while true; do i=$((i+1)); echo $i > /tmp/count; sleep 1; done) &' \
-    'sleep 3; echo "count at the snapshot: $(cat /tmp/count)"; echo READY""SNAP'; sleep 600; } |
-  SW_STATE=$d/linux.db SW_SNAPSHOT_ON=READYSNAP SW_CONSOLE=tty SW_CMDLINE="$cmd" timeout 600 node web/run-node.mjs $img > $d/linux1.txt 2>&1
+    'sleep 3; echo "count at the snapshot: $(cat /tmp/count)"; echo READY""SNAP'; sleep 600; })
+SW_STATE=$d/linux.db SW_SNAPSHOT_ON=READYSNAP SW_CONSOLE=tty SW_CMDLINE="$cmd" timeout 600 node web/run-node.mjs $img < <(input1) > $d/linux1.txt 2>&1
 grep -q '^pisco: snapshot .* chunks of 64 KiB' $d/linux1.txt || fail "Linux took no snapshot ($d/linux1.txt)"
 at=$(tr -d '\r' < $d/linux1.txt | sed -n 's/^count at the snapshot: \([0-9]*\)$/\1/p' | tail -1)
-{ printf '%s\n' 'echo "note: $(cat note), X=$X, count: $(cat count)"; sleep 2; echo "after 2 s: $(cat count), in $(pwd)"' \
-    'printf "\000" | dd of=/dev/port bs=1 seek=244 count=1 2>/dev/null'; sleep 600; } |
-  SW_STATE=$d/linux.db SW_CONSOLE=tty timeout 600 node web/run-node.mjs $img > $d/linux2.txt 2>&1
+input2() ({ printf '%s\n' 'echo "note: $(cat note), X=$X, count: $(cat count)"; sleep 2; echo "after 2 s: $(cat count), in $(pwd)"' \
+    'printf "\000" | dd of=/dev/port bs=1 seek=244 count=1 2>/dev/null'; sleep 600; })
+SW_STATE=$d/linux.db SW_CONSOLE=tty timeout 600 node web/run-node.mjs $img < <(input2) > $d/linux2.txt 2>&1
 out=$(tr -d '\r' < $d/linux2.txt)
 grep -q '^pisco: snapshot .* chunks read' <<< "$out" || fail "the second run did not go on from the snapshot ($d/linux2.txt)"
 line=$(grep '^note: ' <<< "$out" | tail -1); after=$(sed -n 's/^after 2 s: \([0-9]*\), in .*/\1/p' <<< "$out" | tail -1)

@@ -115,7 +115,8 @@ if (isMainThread) {
   };
   let snapWord = 0, consoleRing = 0;
   // the file whole, its log written into it (one file to copy or push), before the run ends
-  const checkpoint = () => afs.getDatabase().prepare('PRAGMA wal_checkpoint(TRUNCATE)').all().catch((e) => say(`state: ${e.message}`));
+  // (bounded: it can wait on a reader that never comes, and the file is whole without it: its log is beside it)
+  const checkpoint = () => Promise.race([afs.getDatabase().prepare('PRAGMA wal_checkpoint(TRUNCATE)').all().catch((e) => say(`state: ${e.message}`)), new Promise((r) => setTimeout(r, 3000))]);
   const onSnapshot = (s) => { saving = saving.then(() => keep(s)); };
   const keep = async (s) => {
     try {
