@@ -37,8 +37,9 @@ then measures the result against tabc as released, on the same machine and brows
   workload, and a cold start 1.3 times faster.
 - **Any amd64 image, not only what was lifted before.** A program met for the first time is lifted by tabc's
   supervisor on the host, once, and kept by its sha256: `busybox:musl` (never lifted) ran after 166 s of lifting.
-  Then in 1 s, like every later run. `apk add` drives five more libraries through it, libcrypto and libssl among
-  them, and they compute what the host's do; apk's own TLS check still fails ([What it took](#what-it-took)).
+  Then in 1 s, like every later run. `apk add lua5.4` works the same way (apk, libcrypto, libssl, zlib, libapk,
+  then Lua's), over TLS from Alpine's mirror, and the installed Lua runs. An interpreter is the case where
+  tabc's emulator still wins, by 3.4 times on Lua ([What it took](#what-it-took), 9).
 - **Limits** ([below](#limits)): one CPU (tabc's default is two), arm64's signal frames, a program lifted on its first
   run makes that run wait.
 
@@ -178,10 +179,24 @@ and showed five gaps, each fixed:
 7. **CPUID said PCLMULQDQ**, which the lifter does not lift. libcrypto's GHASH took that path; now OpenSSL takes
    its portable one.
 
-With those, the lifted libcrypto and libssl compute what the host's do (SHA-256, SHA-1, MD5, AES-CBC, ChaCha20,
-byte for byte), and Alpine's `openssl s_client` completes a verified TLS 1.3 handshake with dl-cdn.alpinelinux.org
-from the tab. `apk add` itself still fails: its own fetch code reports the same server's certificate as not trusted
-(not found yet).
+8. **Re-entering lifted code at a return address that is also a loop's head.** One TLS handshake in three failed its
+   certificate check, and `apk update` its signatures: nondeterministic, so tied to when the kernel takes the CPU.
+   A poll that runs out of budget left lifted code wherever it could be entered again, a return address included;
+   at a loop's head that is one, the loop's state (a carry kept from turn to turn in libcrypto's bignum loops) is
+   not what a return from a call has. Polls now leave only at a function's start: 24 handshakes of 24 verified,
+   against 16. (The benchmark is the same either way: an A/B on the compiled benchmark.)
+9. **An interpreter's dispatch, one host frame deeper per opcode.** Lua 5.4 dispatches by GCC's computed goto,
+   merged into one shared `jmp rax`; the lifter does not see a table there, so each opcode was an indirect call one
+   level deeper, until Chrome's stack ran out. Past 256 nested indirect calls the runtime now abandons what runs and
+   enters the target from the run loop (returns are found by their return addresses, as after a system call). The
+   lifter also recovers a table of absolute addresses read into a register (`mov rax,[rcx+rax*8]; jmp rax`) when
+   it sees the load.
+
+With those, `apk add --no-cache lua5.4` installs from dl-cdn.alpinelinux.org (TLS 1.3, signatures checked), and
+lua5.4, its library and readline and ncurses, lifted on their first run (75 s), run: a 3-million-turn loop in
+1.13 s. tabc's kwemu runs the arm64 Lua in 0.33 s: the dispatch above, a call per opcode, is 3.4 times slower than
+kwemu's JIT. The lifted libcrypto and libssl compute what the host's do (SHA-256, SHA-1, MD5, AES-CBC, ChaCha20,
+RSA signatures, byte for byte).
 
 And from the experiment it grew out of ([microvm-speed.md](microvm-speed.md), experiment 2): programs that are
 position-independent and dynamically linked (Alpine's busybox on musl's loader, both lifted, at the addresses
@@ -201,6 +216,9 @@ page fetched from the supervisor) while another runs.
   access); 221 system calls are translated, the rest return ENOSYS and are logged once.
 - **The kernel is patched as a binary**, against one release of unkernel. A hook in `kw_emu.h` (a second CPU behind
   `kw_run`) would make the patch unnecessary.
+- **Interpreters that dispatch by a shared indirect jump** (Lua 5.4, and CPython's computed gotos likely too) run
+  a call per opcode: 3.4 times slower than kwemu on Lua. The lifter would have to see the dispatch table at the
+  shared jump (each handler loads its target from it), and keep the handlers as labels of one function.
 - **Identity by sampled words.** After a fork or a flush, a page of code is known again by its frame, its address and
   16 of its words, not its whole hash. A different program whose page has the same frame, address and those words
   would be taken for the first one.

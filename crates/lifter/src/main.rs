@@ -480,10 +480,18 @@ fn jump_table_nth(img: &Image, insns: &BTreeMap<u64, Instruction>, jmp: &Instruc
                     load = Some(**i);
                     break;
                 }
+                // a table of absolute addresses read into the register (GCC's computed goto: Lua's dispatch,
+                // `lea rcx,[rip+T]; and eax,0x7f; mov rax,[rcx+rax*8]; jmp rax`)
+                Mnemonic::Mov if i.op_kind(1) == OpKind::Memory && i.memory_index() != Register::None && i.memory_index_scale() == 8 && add_base.is_none() => {
+                    load = Some(**i);
+                    break;
+                }
                 _ => {}
             }
         }
     }
+    let dbg = std::env::var_os("LIFTER_DEBUG_JMP").map(|v| u64::from_str_radix(v.to_str().unwrap_or(""), 16).unwrap_or(0)) == Some(jmp.ip());
+    if dbg { eprintln!("jmp 0x{:x} (nth {nth}): load {:?}; before it {:?}", jmp.ip(), load.map(|l| l.ip()), prev.iter().take(6).map(|i| format!("{:x} {}", i.ip(), i)).collect::<Vec<_>>()); }
     let load = load?;
     let base_reg = load.memory_base().full_register();
     let index = load.memory_index().full_register();
@@ -563,15 +571,25 @@ fn jump_table_nth(img: &Image, insns: &BTreeMap<u64, Instruction>, jmp: &Instruc
     let bound = bound.or_else(|| sim_at(load.ip(), index)).or_else(|| table_bound(&prev, load.ip(), index)).or_else(|| table_bound_by_branch(insns, &load, index))
         .or_else(|| guard_bound(&prev, load.ip()));
     if bound.is_none() && std::env::var_os("LIFTER_DEBUG").is_some() { eprintln!("table without bound: jmp at 0x{:x}, load at 0x{:x}", jmp.ip(), load.ip()); }
+    if dbg { eprintln!("  base 0x{base:x} table 0x{table:x} bound {bound:?}"); }
     let bound = Some(bound?); // a table with no bound is not trusted: its end is unknown
     // a target may be in another part of the function (GCC's .cold): any code will do
     let _ = range;
     let inside = |t: u64| img.is_code(t);
     let mut out = Vec::new();
     for k in 0..bound.unwrap_or(4096).min(4096) {
-        let Some(e) = img.u32(table + k * 4) else { break };
-        let t = if load.mnemonic() == Mnemonic::Movsxd { rebase.wrapping_add(e as i32 as i64 as u64) } else { rebase.wrapping_add(u64::from(e)) };
+        let t = if load.memory_index_scale() == 8 {
+            let Some(b) = img.bytes(table + k * 8) else { break };
+            if b.len() < 8 { break; }
+            u64::from_le_bytes(b[..8].try_into().unwrap())   // (absolute: the image's relocations applied)
+        } else {
+            let Some(e) = img.u32(table + k * 4) else { break };
+            if load.mnemonic() == Mnemonic::Movsxd { rebase.wrapping_add(e as i32 as i64 as u64) } else { rebase.wrapping_add(u64::from(e)) }
+        };
         if !inside(t) {
+            // a table of absolute addresses bounded by a mask (`and eax,0x7f`) may be shorter than the mask says
+            // (Lua's 83 opcodes in 128): its entries up to the first that is not code
+            if load.memory_index_scale() == 8 && out.len() >= 2 { break; }
             if bound.is_some() { return None; }
             break;
         }

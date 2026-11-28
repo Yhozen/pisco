@@ -54,7 +54,7 @@ enum { X_TAG = 13, X_FLAGS = 25, X_FP = 26, X_X87 = 27, X_GS = 28, X_PEND = 29, 
 
 typedef struct Ctx {
   Cpu cpu; jmp_buf exit, root; volatile u64 root_pc, exit_rip; volatile u32 exit_ev;
-  struct kw_cpu *kc; struct kw_regs *kr; u64 rflags; int budget_polls;
+  struct kw_cpu *kc; struct kw_regs *kr; u64 rflags; int budget_polls; int depth;
 } Ctx;
 static Ctx *cur;
 static const ProgramDef *progs[64]; static unsigned n_progs;
@@ -64,7 +64,7 @@ static int trace;
 EXPORT("pisco_trace") void pisco_trace(int t) { trace = t; }
 
 // statistics (pisco_stats)
-static u64 st_runs, st_syscalls, st_polls_out, st_misses, st_faults_in, st_flushes, st_reenter;
+static u64 st_unwound, st_runs, st_syscalls, st_polls_out, st_misses, st_faults_in, st_flushes, st_reenter;
 
 static void load(Cpu *c, const struct kw_regs *k) {
   memset(c, 0, sizeof *c);
@@ -329,9 +329,14 @@ static const ProgramDef *program_at(Cpu *c, u64 pc) {
   return prog_cur;
 }
 static int find(const u64 *v, unsigned n, u64 pc) { unsigned lo = 0, hi = n; while (lo < hi) { unsigned m = (lo + hi) / 2; if (v[m] < pc) lo = m + 1; else hi = m; } return lo < n && v[lo] == pc ? (int)lo : -1; }
+// where a poll may leave lifted code for the kernel (its budget, an interrupt) and come back to later: a function's
+// start only. A poll at a jump back may also be a return address, which the function can be entered at; but the
+// loop's state there (its flags: a carry kept from one turn to the next in libcrypto's bignum loops) is not what a
+// return from a call has, and re-entering there broke one TLS handshake in three. At a function's start nothing
+// but the registers is live.
 static int enterable(u64 pc) {
   const ProgramDef *p = program_at(&cur->cpu, pc); if (!p) return 0;
-  return find(p->fn_addrs, p->fn_count, pc) >= 0 || find(p->resume_at, p->resume_count, pc) >= 0;
+  return find(p->fn_addrs, p->fn_count, pc) >= 0;
 }
 static void enter(Cpu *c, u64 pc) {
   const ProgramDef *p = program_at(c, pc); int i;
@@ -343,12 +348,23 @@ static void enter(Cpu *c, u64 pc) {
 // indirect calls and jumps by address, cached for one generation of the address space (rt/microvm-x64/run.c)
 typedef struct { u64 pc, gen, pgd; void (*fn)(Cpu *); } CallSlot;
 static CallSlot calls[4096];
+// An indirect jump the lifter did not resolve is a tail call here, one host frame deeper: an interpreter whose
+// dispatch is such a jump (Lua's computed goto, merged by GCC into one `jmp rax`) would go deeper with every opcode
+// until the browser's stack runs out. Past MAX_DEPTH nested indirect calls, what runs is abandoned and the code is
+// entered at the target from the run loop: returns are found by their return addresses, as after a system call.
+enum { MAX_DEPTH = 256 };
 void rt_call(Cpu *c, u64 t) {
+  Ctx *x = cur;
+  if (x->depth >= MAX_DEPTH) { st_unwound++; x->root_pc = t; longjmp(x->root, 1); }
   CallSlot *s = &calls[((t >> 4) ^ (t >> 16)) & 4095];
-  if (s->pc == t && s->gen == calls_gen && s->pgd == cur_pgd) { s->fn(c); return; }
-  const ProgramDef *p = program_at(c, t); int i;
-  if (p && (i = find(p->fn_addrs, p->fn_count, t)) >= 0) { *s = (CallSlot){ t, calls_gen, cur_pgd, p->fn_ptrs[i] }; p->fn_ptrs[i](c); return; }
-  cur->root_pc = t; longjmp(cur->root, 1);   // (a return address: what runs is abandoned, the code entered there)
+  void (*fn)(Cpu *) = 0;
+  if (s->pc == t && s->gen == calls_gen && s->pgd == cur_pgd) fn = s->fn;
+  else {
+    const ProgramDef *p = program_at(c, t); int i;
+    if (p && (i = find(p->fn_addrs, p->fn_count, t)) >= 0) { fn = p->fn_ptrs[i]; *s = (CallSlot){ t, calls_gen, cur_pgd, fn }; }
+  }
+  if (!fn) { x->root_pc = t; longjmp(x->root, 1); }   // (a return address: what runs is abandoned, the code entered there)
+  x->depth++; fn(c); x->depth--;
 }
 void rt_dispatch(Cpu *c, u64 t) { rt_call(c, t); }
 void rt_check_return(Cpu *c, u64 call, u64 next, u64 sp) { (void)call; (void)next; (void)sp; (void)c; }
@@ -611,7 +627,7 @@ static void run_from(Ctx *x, u64 p) {
   Cpu *c = &x->cpu;
   x->root_pc = p;
   setjmp(x->root);
-  p = x->root_pc;
+  p = x->root_pc; x->depth = 0;
   for (;;) { c->landing = 0; enter(c, p); p = rd64(c, R[RSP] - 8); }
 }
 static u32 run_task(u64 cpu_, u64 regs_) {
@@ -673,5 +689,5 @@ EXPORT("pisco_after") u32 pisco_after(u64 cpu_, u64 regs_, u32 ev) {
 EXPORT("pisco_stats") void pisco_stats(void) {
   logf_("pisco: %llu runs, %llu system calls to the kernel, %llu exits at polls, %llu TLB misses, %llu full TLB flushes, %llu entries at return addresses, %llu programs asked for, %u registered",
         st_runs, st_syscalls, st_polls_out, st_misses, st_flushes, st_reenter, st_asked, n_progs);
-  logf_("pisco: flushes: %llu ranges, %llu all, %llu address spaces; %llu page hashes", st_fk[1], st_fk[2], st_fk[3], st_hash);
+  logf_("pisco: flushes: %llu ranges, %llu all, %llu address spaces; %llu page hashes; %llu indirect calls too deep, unwound", st_fk[1], st_fk[2], st_fk[3], st_hash, st_unwound);
 }
