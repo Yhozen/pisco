@@ -30,7 +30,7 @@ packages  Doom as a console title, XCL's   Stockfish, SimpleTriangleDesktop,    
 | Windows x64 | `base/windows-x64:1` | `rt/gdk/`, `rt/windows-x64/` | Stockfish 19, Microsoft's SimpleTriangleDesktop and SimplePBR | Desire, a small D3D12 game on its own engine ([desire.md](desire.md)) | desktop D3D12 titles |
 | Windows x86 | `base/windows-x86:1` | `rt/windows-x86/` | Narbacular Drop, playable; Tag: The Power of Paint into its second level (Direct3D 9 shaders as WGSL, D3DX's effects, FMOD Ex) | Medal of Honor: Allied Assault's demo, an OpenGL game on id Tech 3 ([mohaa.md](mohaa.md)) | 32-bit Direct3D 9 games of the 2000s |
 | Linux x64 | `base/linux-x64:1` | `rt/linux-x64/` | fastfetch 2.71.0; neofetch 7.1.0 on bash and busybox, its processes forked and executed; cowsay on perl 5.44 ([fastfetch.md](fastfetch.md), [neofetch.md](neofetch.md), [cowsay.md](cowsay.md)) | threads, signals, a file system that can be written | statically linked command-line programs |
-| Microvm x64 | `base/microvm-x64:1` | `rt/microvm-x64/` | Linux 6.18 and busybox lifted, an image: `/init`'s programs as on QEMU, a shell to type into, in Node and the page ([linux.md](linux.md)) | virtio block and network | Linux itself, lifted, and its programs |
+| Microvm x64 | `base/microvm-x64:1` | `rt/microvm-x64/` | Linux 6.18 and busybox lifted, an image: `/init`'s programs as on QEMU, a shell to type into, in Node and the page ([linux.md](linux.md)); a virtio disk; a network in Node | the network in the page | Linux itself, lifted, and its programs |
 | PS5 | `base/ps5:1` | `rt/ps5/` | the raymarching tech demo v1.4 (CPU-drawn, AVX2 and FMA): its three scenes, pad and music ([ps5.md](ps5.md)) | more system functions, a GPU (AGC) title, images by `pisco build` | PS5 homebrew |
 
 A new runtime is a new folder and a new base; a new title of an existing runtime is a recipe.
@@ -97,3 +97,4 @@ A new runtime is a new folder and a new base; a new title of an existing runtime
 | K11 | programs lifted from their image in memory (the auxiliary vector's headers, the segments as loaded): from the disk or anywhere | done ([linux.md](linux.md#progress)) |
 | K12 | a distribution's program, position-independent and dynamically linked: Alpine's busybox, and musl's loader, lifted when they first run | done ([linux.md](linux.md#progress)) |
 | K13 | libraries: one a program is linked against and one it opens (`dlopen`), each found below the code first met in it, lifted and loaded | done ([linux.md](linux.md#progress)) |
+| K14 | a network: virtio's network device on the machine (`SW_NET`), unkernel's network stack (MIT) terminating its frames in Node; a lease, a name and a page fetched | done ([linux.md](linux.md#progress)) |

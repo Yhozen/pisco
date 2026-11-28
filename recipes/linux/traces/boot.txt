@@ -87,7 +87,18 @@ Memory: (sizes)
 devtmpfs: initialized
 posixtimers hash table entries: 512 (order: 0, 4096 bytes, linear)
 futex hash table entries: 256 (6144 bytes on 1 NUMA nodes, total 6 KiB, linear).
+NET: Registered PF_NETLINK/PF_ROUTE protocol family
 clocksource: Switched to clocksource tsc-early
+NET: Registered PF_INET protocol family
+IP idents hash table entries: 4096 (order: 3, 32768 bytes, linear)
+tcp_listen_portaddr_hash hash table entries: 512 (order: 0, 4096 bytes, linear)
+Table-perturb hash table entries: 65536 (order: 6, 262144 bytes, linear)
+TCP established hash table entries: 2048 (order: 2, 16384 bytes, linear)
+TCP bind hash table entries: 2048 (order: 3, 32768 bytes, linear)
+TCP: Hash tables configured (established 2048 bind 2048)
+UDP hash table entries: 256 (order: 2, 16384 bytes, linear)
+UDP-Lite hash table entries: 256 (order: 2, 16384 bytes, linear)
+NET: Registered PF_UNIX/PF_LOCAL protocol family
 clocksource: tsc: mask: 0xffffffffffffffff max_cycles: 0x1cd42e4dffb, max_idle_ns: 881590591483 ns
 clocksource: Switched to clocksource tsc
 platform rtc_cmos: registered platform RTC device (no PNP device found)
@@ -97,11 +108,12 @@ io scheduler mq-deadline registered
 io scheduler kyber registered
 Serial: 8250/16550 driver, 1 ports, IRQ sharing disabled
 serial8250: ttyS0 at I/O 0x3f8 (irq = 4, base_baud = 115200) is a 16550A
+NET: Registered PF_PACKET protocol family
 microcode: Current revision: 0xffffffff
 sched_clock: Marking stable (times)
 Freeing initrd memory: 11488K
-Freeing unused kernel image (initmem) memory: 580K
+Freeing unused kernel image (initmem) memory: 604K
 Write protecting the kernel read-only data: 8192k
-Freeing unused kernel image (text/rodata gap) memory: 1764K
-Freeing unused kernel image (rodata/data gap) memory: 1476K
+Freeing unused kernel image (text/rodata gap) memory: 628K
+Freeing unused kernel image (rodata/data gap) memory: 1268K
 Run /init as init process

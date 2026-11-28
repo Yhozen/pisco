@@ -130,26 +130,32 @@ void apic_write(u32 r, u32 v) {
 // lifted code polled: the clock moves on, and an interrupt that is due and allowed is taken here
 void rt_poll(Cpu *c, u64 ip) {
   mc.now = rt_rdtsc(); mc_budget = CHUNK;
-  apic_tick(); console_poll();
+  apic_tick(); console_poll(); net_poll();
   if (!(mc_rflags & RFLAGS_IF)) return;
   int v = apic_pending(); if (v < 0) return;
   apic_take(v);
   cpu_deliver(c, (u32)v, 0, 0, ip, ip);
 }
 // hlt: until an interrupt. The clock jumps to the next timer; when someone types (or a pipe may still bring input),
-// the machine waits for it, until the next timer at most (its time on the host's clock when paced)
+// or a frame may arrive, the machine waits for it, until the next timer at most (its time on the host's clock when
+// paced). With a network it waits on the network ring's bell, which the host rings for keys too (read before the
+// devices are polled, so that a frame that arrives in between is not missed)
 void rt_hlt(Cpu *c, u64 next) {
   uart_flush();
+  volatile u32 *bell = net_bell();
   for (;;) {
-    mc.now = rt_rdtsc(); mc_budget = CHUNK; apic_tick(); console_poll();
+    u32 rung = bell ? *bell : 0;
+    mc.now = rt_rdtsc(); mc_budget = CHUNK; apic_tick(); console_poll(); net_poll();
     int v = (mc_rflags & RFLAGS_IF) ? apic_pending() : -1;
     if (v >= 0) { apic_take(v); cpu_deliver(c, (u32)v, 0, 0, next, next); return; }
     u64 d = apic_next_deadline();
-    int input = console && (!console->eof || console_pending()) && (mc_rflags & RFLAGS_IF);
+    int input = ((console && (!console->eof || console_pending())) || bell) && (mc_rflags & RFLAGS_IF);
     if (!(mc_rflags & RFLAGS_IF) || (d == ~0ull && !input)) rt_fatal("machine: the CPU halted at 0x%llx with nothing to wake it (interrupts %s)", next, mc_rflags & RFLAGS_IF ? "on, no timer" : "off");
     if (input && (mc_paced || d == ~0ull)) {
+      s64 wait = d == ~0ull ? -1 : (s64)(d > mc.now ? d - mc.now : 0);
       u32 w = console->w;
-      if (w == console->r) __builtin_wasm_memory_atomic_wait32((int *)&console->w, (int)w, d == ~0ull ? -1 : (s64)(d > mc.now ? d - mc.now : 0));
+      if (bell) __builtin_wasm_memory_atomic_wait32((int *)bell, (int)rung, wait);
+      else if (w == console->r) __builtin_wasm_memory_atomic_wait32((int *)&console->w, (int)w, wait);
       if (!mc_paced && d != ~0ull && d > mc.now) mc.now = d;
       continue;
     }
