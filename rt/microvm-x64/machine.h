@@ -53,9 +53,28 @@ void apic_tsc_deadline(u64 v); u64 apic_tsc_deadline_get(void);
 u32 ioapic_read(u32 off); void ioapic_write(u32 off, u32 v);
 void ioapic_line(int pin, int level);   // a device's interrupt line, high or low
 
-// ---- virtio's block device (virtio.c) ----
-void virtio_init(void); int virtio_present(void); u64 virtio_base(void);
-u32 virtio_read(u32 off); void virtio_write(u32 off, u32 v);
+// ---- virtio's devices on its MMIO transport (virtio.c): the block device (virtio.c), the network device (net.c) ----
+typedef struct { u32 num, ready; u64 desc, avail, used; u16 last; } VQueue;
+typedef struct { u64 addr; u32 len; u16 flags, next; } VDesc;   // (flags: 1 next, 2 the device writes it)
+typedef struct VDev {
+  u32 id; u64 features; unsigned nq; VQueue q[2];                 // the device's: its virtio ID, features, queues
+  u32 (*config)(struct VDev *d, u32 off);                         // its configuration space, a word at a time
+  void (*notify)(struct VDev *d, unsigned q);                     // the driver made buffers available on queue q
+  u64 base; u32 pin, status, isr, dev_sel, drv_sel, qsel, gen; u64 drv;   // the transport's
+} VDev;
+void virtio_add(VDev *d);                 // a device, at the next page and pin
+unsigned virtio_count(void); VDev *virtio_dev(unsigned i);
+VDev *virtio_at(u64 pa);                  // the device whose registers are at pa's page, if any
+u32 virtio_read(VDev *d, u32 off); void virtio_write(VDev *d, u32 off, u32 v);
+int virtio_pop(VQueue *q, u16 *head);     // the next chain the driver made available
+unsigned virtio_chain(VQueue *q, u16 head, VDesc *d, unsigned max);
+void virtio_push(VQueue *q, u16 head, u32 len);
+void virtio_interrupt(VDev *d);
+void virtio_init(void);                   // the block device, with SW_DISK
+void net_init(void);                      // the network device, with SW_NET
+void net_poll(void);                      // frames that arrived: into the driver's buffers
+int net_present(void);
+volatile u32 *net_bell(void);           // what an idle machine waits on with a network (0: none)
 
 // ---- devices (devices.c) ----
 void uart_flush(void);
@@ -66,6 +85,10 @@ void console_init(void);
 void console_poll(void);          // new bytes: the 16550's receive interrupt
 int console_pending(void);
 extern int mc_paced;              // someone types (SW_CONSOLE=tty): the clock is the host's, and idle waits for keys
+// the network's frames for the guest (net.c): a ring in this memory that the host writes. Records: a u32 length, then
+// the frame, to a multiple of 4 bytes; w and r count bytes (the host moves w, the machine r); the host adds 1 to
+// bell and wakes it for each frame and each key typed (what an idle machine with a network waits on)
+typedef struct { volatile u32 w, r, cap, bell; u8 data[1 << 18]; } NetRing;
 
 // ---- the tasks' host stacks and the loops that run lifted code (run.c) ----
 typedef struct Level {

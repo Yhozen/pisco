@@ -49,6 +49,7 @@ each **program**:
 | stb_truetype | MIT OR Unlicense | yes, in any build | yes |
 | stb_vorbis | MIT OR Unlicense | yes, in any build (Windows desktop titles) | yes |
 | stb_image | MIT OR Unlicense | yes, in any build (Windows x64 titles) | yes |
+| unkernel's network stack (`web/third_party/unkernel/`) | MIT | yes, in any build (host code: Node's network for a machine, `web/net-node.mjs`) | yes |
 | minimp3 | CC0-1.0 (public domain dedication) | yes, in any build (Windows desktop titles) | yes |
 | Liberation fonts | OFL-1.1 (a font embedded in a program: the OFL allows it with any software, the font itself staying under the OFL) | yes, in any build (Windows desktop titles) | yes |
 | XCL | GPL-2.0-only | only in a build with no GPL-3.0 or LGPL-3.0 code | yes (as today: `crates/shaders`) |

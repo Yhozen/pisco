@@ -14,7 +14,7 @@ module's functions, memory and table ([web/side.mjs](../../web/side.mjs)).
 
 ## `host` functions
 
-32 functions, by the runtime that imports them (a module imports only its base's).
+34 functions, by the runtime that imports them (a module imports only its base's).
 
 | Function | Signature (C) | Imported by | Means |
 |---|---|---|---|
@@ -31,6 +31,8 @@ module's functions, memory and table ([web/side.mjs](../../web/side.mjs)).
 | `link` | `s32 host_link(const char *name, u32 len, char *buf, u32 cap)` | linux-x64 | A Linux drive has symbolic links and executable bits (docs/spec/image.md#files): the target of the link at a name (its length; -1: not a link), and whether the file at a name is executable (1, 0; -1: the host does not know) |
 | `list` | `u32 host_list(const char *name, u32 len, char *buf, u32 cap)` | linux-x64, core | "name\n" lines, directories end in '/' |
 | `log` | `void host_log(const char *text, u32 len)` | core | a line for the host's log |
+| `net_open` | `void host_net_open(u32 ring)` | microvm-x64 | the host writes frames for the guest there |
+| `net_send` | `void host_net_send(u32 frame, u32 len)` | microvm-x64 | a frame the guest sends |
 | `now_us` | `double host_now_us(void)` | core | the host's clock, in microseconds |
 | `pipe_new` | `s32 host_pipe_new(void)` | linux-x64 | a pipe with one end of each kind |
 | `pipe_poll` | `u32 host_pipe_poll(s32 id, u32 end)` | linux-x64 | 1 when a read or write would not wait |
@@ -61,7 +63,8 @@ The Node host answers these 14 of `wasi_snapshot_preview1` (the page's worker th
 The GPU, sound and input go through rings in the module's memory, which a host reads and writes from other threads:
 the GPU ring ([rt/gpu_ring.h](../../rt/gpu_ring.h), its records [rt/d3d12_cmd.h](../../rt/d3d12_cmd.h); the host's back
 end [web/gpu/](../../web/gpu/)), the mixer's ring ([rt/mixer.h](../../rt/mixer.h)) and the input block
-([rt/input.h](../../rt/input.h)). Their layouts are those headers' and are version 0 too.
+([rt/input.h](../../rt/input.h)); a machine's console and network rings (`ConsoleRing`, `NetRing`:
+[rt/microvm-x64/machine.h](../../rt/microvm-x64/machine.h)). Their layouts are those headers' and are version 0 too.
 
 ## `SW_*` variables
 
@@ -99,6 +102,7 @@ of one run; **debug** is for finding a fault and may change at any time; **tool*
 | `SW_KEYS` | run | a scripted keyboard: `[[ms, code, keyCode, down], ...]` on the virtual clock |
 | `SW_MAX_FRAMES` | run | PS5: end the run after this many flips |
 | `SW_MEMORY` | run | the machine: its memory |
+| `SW_NET` | run | the machine: `1`, a virtio network (Node: the guest at 10.0.2.15, its TCP through this machine's sockets) |
 | `SW_NO_CARGO` | tool | pisco: do not build the lifter first |
 | `SW_PACE` | run | `off`: a present does not wait for the next 60 Hz frame |
 | `SW_PROGRAMS` | config | the machine: programs in modules of their own to load (the config's `side`, and `<name>.wasm` files beside the module) |

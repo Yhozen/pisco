@@ -125,6 +125,9 @@ function run(d) {
   let coEntry = null;
   if (machine) {
     host.program_image = () => 0;   // (programs lifted when they first run need the lifter: Node only, web/lift.mjs)
+    // (a network needs a host that terminates its frames: Node only for now, web/net-node.mjs)
+    host.net_open = () => bus.postMessage({ out: 'pisco: no network in the page yet (SW_NET is for Node)\n' });
+    host.net_send = () => {};
     const parked = new Map();
     host.co_switch = new WebAssembly.Suspending((from, to, begin, dead) => {
       const mine = new Promise((resolve) => { if (!dead) parked.set(from, resolve); });   // (a task that died is never resumed: its stack is dropped)

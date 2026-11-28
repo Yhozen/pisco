@@ -38,6 +38,7 @@ const SW = {
   SW_KEYS: ['run', 'a scripted keyboard: `[[ms, code, keyCode, down], ...]` on the virtual clock'],
   SW_TTY: ['run', 'a Linux app: the standard streams are a terminal (`1`, or `<columns>x<rows>`)'],
   SW_CONSOLE: ['run', 'the machine: `tty` when someone may type into its console'],
+  SW_NET: ['run', 'the machine: `1`, a virtio network (Node: the guest at 10.0.2.15, its TCP through this machine\'s sockets)'],
   SW_DISK: ['run', 'the machine: a virtio disk, a file or `<n>M` of zeros'],
   SW_MEMORY: ['run', 'the machine: its memory'],
   SW_ROOT: ['run', 'Node: a folder of this machine as a Linux app\'s root (without an image); for pisco, the repository'],
@@ -139,7 +140,8 @@ ${wasi.map((w) => `\`${w}\``).join(' ')}.
 The GPU, sound and input go through rings in the module's memory, which a host reads and writes from other threads:
 the GPU ring ([rt/gpu_ring.h](../../rt/gpu_ring.h), its records [rt/d3d12_cmd.h](../../rt/d3d12_cmd.h); the host's back
 end [web/gpu/](../../web/gpu/)), the mixer's ring ([rt/mixer.h](../../rt/mixer.h)) and the input block
-([rt/input.h](../../rt/input.h)). Their layouts are those headers' and are version 0 too.
+([rt/input.h](../../rt/input.h)); a machine's console and network rings (\`ConsoleRing\`, \`NetRing\`:
+[rt/microvm-x64/machine.h](../../rt/microvm-x64/machine.h)). Their layouts are those headers' and are version 0 too.
 
 ## \`SW_*\` variables
 

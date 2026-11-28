@@ -12,6 +12,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { Worker, isMainThread, workerData, parentPort } from 'node:worker_threads';
+import { startNet } from './net-node.mjs';
 import { sessionEnv, sessionSteps } from './session.mjs';
 import { isImageDir, openImageDir, driveName, blobPath } from './image.mjs';
 import { createKernel, processImports } from './kernel.mjs';
@@ -71,17 +72,22 @@ if (isMainThread) {
   if (process.stdin.isTTY) env.SW_CONSOLE = 'tty';
   const startConsole = (addr) => {
     const u32 = new Uint32Array(memory.buffer, addr, 4), i32 = new Int32Array(memory.buffer, addr, 4), data = new Uint8Array(memory.buffer, addr + 16, u32[2]);
-    const put = (bytes) => { for (const b of bytes) { if (u32[0] - Atomics.load(u32, 1) >= u32[2]) break; data[u32[0] % u32[2]] = b; Atomics.store(u32, 0, u32[0] + 1); } Atomics.notify(i32, 0); };
+    const put = (bytes) => { for (const b of bytes) { if (u32[0] - Atomics.load(u32, 1) >= u32[2]) break; data[u32[0] % u32[2]] = b; Atomics.store(u32, 0, u32[0] + 1); } Atomics.notify(i32, 0); net?.ring(); };
     if (process.stdin.isTTY) process.stdin.setRawMode(true);
     process.stdin.on('data', (b) => { if (process.stdin.isTTY && b.includes(0x1d)) { process.stdin.setRawMode(false); process.exit(0); } put(b); });
-    process.stdin.on('end', () => { Atomics.store(u32, 3, 1); Atomics.notify(i32, 0); });
+    process.stdin.on('end', () => { Atomics.store(u32, 3, 1); Atomics.notify(i32, 0); net?.ring(); });
   };
+  // a machine's network (SW_NET=1; rt/microvm-x64/net.c): its frames through web/net-node.mjs, on this thread
+  let net = null;
+  const startNetwork = (ring) => { net = startNet(memory, ring, { log: env.SW_TRACE ? say : null }); };
   const startProcess = (data) => {
     const w = new Worker(new URL(import.meta.url), { workerData: { t0: performance.timeOrigin, dir, imageDir, folder, saves, store, kernel, programs, side, tid: 0, ...data },
       resourceLimits: { stackSizeMb: STACK_MB } });
     w.on('error', (e) => { console.error(e); process.exit(121); });
     w.on('message', async (m) => {
       if (m.console !== undefined) startConsole(m.console);
+      if (m.net !== undefined) startNetwork(m.net);
+      if (m.frame) net?.send(m.frame);
       if (m.fork) startProcess({ module: m.fork.module, memory: m.fork.memory, pid: m.fork.pid, mode: 'fork', tids: new Int32Array(new SharedArrayBuffer(4)).fill(1), args: [], env });
       if (m.exec) {
         const mod = await moduleOf(m.exec.program);
@@ -229,6 +235,9 @@ if (isMainThread) {
     input_open: (block) => { inputBlock = block >>> 0; applyKeys(0); }, // SW_KEYS writes here; otherwise readings stay empty
     win32_input_open: () => {}, // the same for a Windows desktop title (its sessions come from SW_SESSION)
     console_open: (ring) => parentPort.postMessage({ console: ring >>> 0 }), // a machine's console (rt/microvm-x64): the main thread writes standard input there
+    // a machine's network (rt/microvm-x64/net.c): the main thread writes the frames for the guest there, and takes those it sends
+    net_open: (ring) => parentPort.postMessage({ net: ring >>> 0 }),
+    net_send: (frame, n) => { const b = new Uint8Array(memory.buffer, frame >>> 0, n >>> 0).slice(); parentPort.postMessage({ frame: b }, [b.buffer]); },
     exit: (code) => exit(code),
     ...imageFiles,
   };

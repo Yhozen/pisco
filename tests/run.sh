@@ -47,6 +47,9 @@
 #            program, typed into through the console (recipes/linux/console-input.txt): what it prints from there must
 #            be traces/console.txt. Then with a disk (SW_DISK=16M: virtio's block device): /init formats it, writes it
 #            and reads it again. KERNEL_RECORD=1 records the traces again
+#   net      the Linux title with a network (SW_NET=1: virtio's network device, unkernel's network stack in Node), when
+#            out/linux is built: typed into, the shell gets a DHCP lease, looks a name up and fetches a page from a web
+#            server on this machine's loopback (the guest's gateway, 10.0.2.2)
 #   changelog  tools/changelog.mjs: every entry in changelog/ (the changelog on GitHub Pages) is well formed
 #   chrome   hello, threads and cxx again in headless Chrome (WebGPU on SwiftShader), the 32-bit titles and linux-hello
 #   nd       Narbacular Drop, when the installed game is there (ND: its folder; default: the oracle's prefix):
@@ -255,6 +258,25 @@ kernel() {
   grep -qx 'disk: a program run from the disk' $d/disk.txt || { echo "with a disk, /init did not run a program from it ($d/disk.txt)"; return 1; }
   echo "lifted (pisco run): $(wc -l < $boot) lines of boot to /init, twice the same, equal to $boot; /init's programs print what they print on QEMU; a shell typed into answers as $con; 500 programs in a row; a virtio disk formatted, written and read again"
 }
+net() {
+  local d=out/linux port pid
+  target/release/pisco build recipes/linux --out out/images/linux > $d/image.log 2>&1 || { echo "pisco build recipes/linux failed ($d/image.log)"; tail -3 $d/image.log; return 1; }
+  # a web server on this machine's loopback, which the guest reaches through its gateway (10.0.2.2)
+  rm -f $d/net-port; node -e 'const s = require("http").createServer((q, r) => r.end("hello from the host\n")).listen(0, "127.0.0.1", () => require("fs").writeFileSync(process.argv[1], String(s.address().port)))' $d/net-port & pid=$!
+  for _ in $(seq 50); do [ -s $d/net-port ] && break; sleep 0.1; done; port=$(cat $d/net-port)
+  # the shell first, typed into: a lease (DHCP, a packet socket), the address set by hand, a name looked up (DNS: the
+  # host's resolver), a page fetched (TCP through this machine's sockets), then the machine's exit port
+  printf '%s\n' 'mount -t devtmpfs dev /dev' 'ip link set eth0 up' 'udhcpc -i eth0 -n -q -f -s /bin/true 2>&1 | grep -o "lease of [0-9.]* obtained"' \
+    'ip addr add 10.0.2.15/24 dev eth0' 'ip route add default via 10.0.2.2' \
+    'nslookup localhost 10.0.2.3 | grep -A1 "^Name:" | tail -1' "wget -qO- http://10.0.2.2:$port/" \
+    'printf "\000" | dd of=/dev/port bs=1 seek=244 count=1 2>/dev/null' \
+    | SW_NET=1 SW_CMDLINE="$(cat recipes/linux/cmdline) rdinit=/bin/sh" timeout 300 target/release/pisco run out/images/linux 2>&1 | tr -d '\r' > $d/net.txt
+  kill $pid 2> /dev/null
+  grep -qx 'lease of 10.0.2.15 obtained' $d/net.txt || { echo "no DHCP lease ($d/net.txt):"; grep -E 'udhcpc|virtio|eth0' $d/net.txt | tail -3; return 1; }
+  grep -qx 'Address: 127.0.0.1' $d/net.txt || { echo "the name server did not answer for localhost ($d/net.txt):"; tail -3 $d/net.txt; return 1; }
+  grep -qx 'hello from the host' $d/net.txt || { echo "the page was not fetched from the host ($d/net.txt):"; tail -3 $d/net.txt; return 1; }
+  echo "a network (SW_NET=1, virtio's network device): a DHCP lease, a name looked up, a page fetched from this machine"
+}
 neofetch() {
   local d=out/neofetch want=recipes/neofetch/traces/pipe.txt
   target/release/pisco build recipes/neofetch --out out/images/neofetch > out/neofetch.image.log 2>&1 || { echo "pisco build failed (out/neofetch.image.log)"; return 1; }
@@ -400,6 +422,7 @@ for s in ${*:-build layout spec node bench win32 linux microvm avx ffp glffp sm 
   fastfetch) if [ -x out/fastfetch/fastfetch ]; then step fastfetch fastfetch; else echo "skip  fastfetch: out/fastfetch/fastfetch is not built (tools/build-fastfetch.sh)"; fi ;;
   microvm) if command -v gcc > /dev/null && [ "$(uname -m)" = x86_64 ]; then step microvm microvm; else echo "skip  microvm: it needs gcc for x86-64 (fixtures/microvm-hello/build.sh)"; fi ;;
   kernel) if [ -f out/linux/vmlinux ]; then LINES_SHOWN=2 step kernel kernel; else echo "skip  kernel: out/linux is not built (tools/build-linux.sh)"; fi ;;
+  net)    if [ -f out/linux/vmlinux ]; then LINES_SHOWN=3 step net net; else echo "skip  net: out/linux is not built (tools/build-linux.sh)"; fi ;;
   chrome) LINES_SHOWN=6 step chrome chrome ;;
   nd)     if [ -f "$ND/Narbacular Drop.exe" ]; then LINES_SHOWN=3 step nd nd; else echo "skip  nd: the game is not installed (ND=$ND)"; fi ;;
   ffp)    if command -v naga > /dev/null; then step ffp tests/gfx/d3d9-ffp.sh; else echo "skip  ffp: naga is not installed (tools/setup-toolchain.sh naga)"; fi ;;

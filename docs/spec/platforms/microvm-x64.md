@@ -3,7 +3,7 @@
 **Experimental: this page may change in any pull request, without a new schema.** A builder must say, when it
 builds an app of this base, that the base is experimental.
 
-`base/microvm-x64` is a small x86-64 machine (long mode, page tables, a local APIC, a serial port, a virtio disk), so
+`base/microvm-x64` is a small x86-64 machine (long mode, page tables, a local APIC, a serial port, virtio's disk and network), so
 that the app is an operating system's kernel and the programs it runs: Linux 6.18 and busybox today
 ([docs/linux.md](../../linux.md)).
 
@@ -24,4 +24,4 @@ sees the initramfs, and a disk if the host gives it one. Programs the kernel run
 
 What `pisco` does for this base is its own: `[hints.pisco] programs` and `modules` (programs compiled ahead of time
 into the kernel's module, or into modules of their own), lifting a program when it first runs, the disk
-(`SW_DISK`). [docs/linux.md](../../linux.md) describes them.
+(`SW_DISK`), the network (`SW_NET`). [docs/linux.md](../../linux.md) describes them.

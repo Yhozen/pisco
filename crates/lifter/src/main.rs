@@ -992,7 +992,12 @@ fn decode_func(img: &Image, entry: u64, entries: &BTreeSet<u64>) -> (Func, BTree
                 let next = ins.next_ip();
                 match ins.flow_control() {
                     FlowControl::Next => {}
-                    FlowControl::Call if ins.mnemonic() == Mnemonic::Syscall => { f.leaders.insert(next); f.rets.insert(next); } // the runtime's (rt_syscall): it returns here
+                    FlowControl::Call if ins.mnemonic() == Mnemonic::Syscall => {
+                        f.leaders.insert(next); f.rets.insert(next); // the runtime's (rt_syscall): it returns here
+                        // a machine's program: the kernel restarts a system call a signal interrupted by sending the
+                        // program back to the `syscall` itself, after the handler (an address to enter, too)
+                        if img.machine { f.leaders.insert(ip); f.rets.insert(ip); }
+                    }
                     FlowControl::Call => {
                         if !m32 {
                             calls.insert(ins.near_branch_target());

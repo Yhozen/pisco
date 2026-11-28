@@ -41,7 +41,8 @@ module is then under GPL-2.0 ([LICENSING.md](../LICENSING.md)).
 | `cpu.c` | exceptions, interrupts and system calls as nested runs of lifted code, their return (`iretq`, `sysretq`), MSRs, control registers, the GDT, IDT and TSS |
 | `apic.c` | the local APIC (xAPIC): its timer (one-shot, periodic, TSC-deadline), priorities and EOI; the virtual clock; CPUID (an Intel CPU, the TSC at 1 GHz) |
 | `devices.c` | a 16550 at `0x3f8` (the console, both ways), the exit port at `0xf4` (as QEMU's `isa-debug-exit`), the CMOS clock, resets through `0x64` and `0xcf9` |
-| `virtio.c` | virtio's block device on its MMIO transport at `0xd0000000`, pin 5: a disk (`SW_DISK=<file>` beside the kernel, or `SW_DISK=<n>M` of zeros), its writes kept in memory; announced on the kernel's command line |
+| `virtio.c` | virtio's MMIO transport, a page from `0xd0000000` and a pin from 5 for each device, announced on the kernel's command line; its block device: a disk (`SW_DISK=<file>` beside the kernel, or `SW_DISK=<n>M` of zeros), its writes kept in memory |
+| `net.c` | virtio's network device (`SW_NET=1`): frames to the host as they are sent, and from a ring the host writes (K14) |
 | `run.c` | the loader (the ELF at its physical addresses, CR3 on `early_top_pgt`, entered at `common_startup_64`), the loops that enter lifted code by address, a host stack for each of the kernel's tasks |
 
 How it works:
@@ -340,6 +341,37 @@ tables), whose executable segments hold it. Its bias is where its first segment 
 already, so its image is taken as it is, and the address where it was met is a function start the lifter is told of
 (a constructor no symbol names).
 
+## What it took (K14): a network
+
+`SW_NET=1` gives the machine virtio's network device, and in Node the guest reaches the network as QEMU's user
+networking would let it: the guest is 10.0.2.15 behind a gateway at 10.0.2.2 and a name server at 10.0.2.3, and its
+TCP connections are made with the host's sockets (TCP to the gateway reaches the host's own 127.0.0.1).
+
+- **The kernel** gains IPv4, Unix and packet sockets and `CONFIG_VIRTIO_NET` (no IPv6, no other network device).
+- **The device** (`rt/microvm-x64/net.c`): two queues, the MAC in its configuration, no offloads. `virtio.c` is now
+  virtio's MMIO transport for several devices, a page and an IOAPIC pin each (the disk first when there is one), each
+  announced on the command line.
+- **The frames** go to the host as they are sent (`net_send`); the host writes those for the guest into a ring in the
+  module's memory (`NetRing`, rt/microvm-x64/machine.h), which the machine empties into the driver's buffers when it
+  polls. An idle machine waits on the ring's bell, which the host rings for a frame and for a key typed, and with a
+  network the machine is on the host's clock: the other end of a connection is.
+- **Not ours: unkernel's network stack** (MIT; `web/third_party/unkernel/`, its types stripped), which answers ARP,
+  DHCP, DNS and pings and terminates TCP, on the main thread of Node's host (`web/net-node.mjs`). Unkernel's kernel has a
+  device of its own (kwnet) where this machine has virtio's, but both speak Ethernet frames, and the stack needed no
+  change.
+
+Two things the network brought out, which were not the network's:
+
+- **A system call restarted.** `ping` waits in a system call that its own `SIGALRM` interrupts; after the handler the
+  kernel restarts the call by sending the program back to the `syscall` instruction itself, which was no address the
+  machine could enter. In a machine's program each `syscall` is one now, as the instruction after it already was.
+- **The lift cache's key** (`web/lift.mjs`) is the image's sha256 and the tools' (the lifter, `rt/cpu.h`): with the
+  image's alone, a program lifted before that change would have been taken from the cache as it was.
+
+`tests/run.sh net` types into a shell: `udhcpc` gets its lease, `nslookup localhost` an answer from the host's resolver,
+and `wget` a page from a web server on the host's loopback. The page has no network yet: it needs a host that
+terminates the frames there (unkernel's own does it through a Wisp server over a WebSocket).
+
 ## Limits
 
 - In the page only programs lifted when the image is built run; in Node any program or library is lifted when its
@@ -353,7 +385,8 @@ already, so its image is taken as it is, and the address where it was met is a f
   the fault; with one CPU and no other task in between, the same.
 - On QEMU without the PIT the kernel has no timer interrupt (its emulated CPU has no TSC-deadline timer): `/init`
   ends all the same, but that boot says nothing of the timer the machine will have.
-- One CPU and no network. The disk's writes stay in memory: the file it was read from does not change.
+- One CPU. The network only in Node, IPv4 only, and of UDP only DHCP and DNS (unkernel's stack has no more). The
+  disk's writes stay in memory: the file it was read from does not change.
 - Only what was lifted before the kernel starts can run: here the kernel and busybox.
 
 ## Progress
@@ -374,4 +407,4 @@ already, so its image is taken as it is, and the address where it was met is a f
 | K11 | programs lifted from their image in memory: from the disk, a pipe, anywhere | done |
 | K12 | a distribution's program, position-independent and dynamically linked: Alpine's busybox on musl's loader | done |
 | K13 | libraries: one a program is linked against, one it opens (`dlopen`), each lifted when its code is first met | done |
-| K14 | a network, snapshots | next |
+| K14 | a network: virtio's network device, unkernel's network stack in Node; a lease, a name and a page fetched | done |
