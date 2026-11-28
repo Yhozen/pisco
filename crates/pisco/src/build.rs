@@ -827,6 +827,7 @@ pub fn build(root: &Path, o: &Opts) -> R<()> {
             RegData::Dword(n) => json!({ "key": v.key, "name": v.name, "type": "dword", "value": n }),
             RegData::Sz(s) => json!({ "key": v.key, "name": v.name, "type": "sz", "value": s }) }).collect::<Vec<_>>(),
         "imports": lifted.imports,
+        "permissions": if r.network { json!({ "network": true }) } else { serde_json::Value::Null },
         "programs": if program_map.is_empty() { serde_json::Value::Null } else { json!(program_map) },
         "side": if side_map.is_empty() { serde_json::Value::Null } else { json!(side_map) },
         "source": { "sha256": sha, "extract": r.source.extract, "added": ex.added },

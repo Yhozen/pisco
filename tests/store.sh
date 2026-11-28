@@ -16,6 +16,8 @@
 #   6. a registry (tests/registry.mjs, with bearer tokens as ghcr.io's): hello32, made only from this repository's
 #      sources, pushed (not without credentials; a second push sends no blob), removed, pulled by tag and by digest
 #      into the store, and run. An app made from the user's files is refused: its layers are local-only
+#   7. permissions: SW_NET=1 is refused for hello32, which does not ask for a network, and given to a copy whose
+#      recipe says [permissions] network = true; pisco install says so
 # Needs hello's 32-bit build (tests/run.sh build).
 set -uo pipefail
 root=$(cd "$(dirname "$0")/.." && pwd); cd "$root"
@@ -123,7 +125,15 @@ $P pull $R/hello32@$digest --as hello-pinned > /dev/null 2>&1 || bad "pisco pull
 out=$(PISCO_REGISTRY_TOKEN=secret $P push hello-third $R/hello-third:1 2>&1) && bad "an app made of the user's files was pushed"
 echo "$out" | grep -q "local-only" || bad "a local-only app refused, but not saying why: $out"
 kill $reg 2>/dev/null
-$P remove hello-third > /dev/null; $P remove hello32 > /dev/null; $P remove hello-pinned > /dev/null
 
-[ $fail = 0 ] && echo "the store: installed by name, run from another folder, a base's layer shared by two apps, removed without what the other uses; a third party's recipe by URL, @ns and owner/repo, and what it may not do refused; inputs kept, and fetched from a url; pushed to a registry and pulled back, and the user's files never"
+# 7. permissions
+SW_NET=1 $P run hello32 > $T/net.txt 2>&1 && bad "SW_NET=1 given to hello32, which does not ask for a network"
+grep -q "does not ask for a network" $T/net.txt || bad "hello32 with SW_NET=1: refused, but not saying why: $(tail -1 $T/net.txt)"
+printf '\n[permissions]\nnetwork = true\n' >> $T/hello-again/recipe.toml
+$P install $T/hello-again > $T/perm.log 2>&1 || { tail -3 $T/perm.log; bad "installing an app that asks for a network"; }
+grep -q "may be given a network" $T/perm.log || bad "pisco install did not say the app may be given a network"
+SW_NET=1 $P run hello-again > $T/net.txt 2>&1; grep -q PASS $T/net.txt || bad "SW_NET=1 refused to an app that asks for a network: $(tail -2 $T/net.txt)"
+$P remove hello-third > /dev/null; $P remove hello32 > /dev/null; $P remove hello-pinned > /dev/null; $P remove hello-again > /dev/null
+
+[ $fail = 0 ] && echo "the store: installed by name, run from another folder, a base's layer shared by two apps, removed without what the other uses; a third party's recipe by URL, @ns and owner/repo, and what it may not do refused; inputs kept, and fetched from a url; pushed to a registry and pulled back, and the user's files never; a network only to an app that asks"
 exit $fail

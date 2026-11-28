@@ -54,6 +54,8 @@ pub struct Recipe {
     pub load: Vec<String>,
     /// [files]: small text files a setup step would write (settings), by their place on C:
     pub files: BTreeMap<String, String>,
+    /// [permissions] network: the app may be given a network (docs/spec/recipe.md#permissions)
+    pub network: bool,
     pub heap_fill: Option<u8>, // [quirks] heap_fill: the byte a heap block the app did not ask to be zeroed holds
     pub shaders: Option<Shaders>,
 }
@@ -135,7 +137,7 @@ pub const KEYS: &[&str] = &["schema", "name", "from", "libraries",
     "extract.kind", "extract.input", "extract.app", "extract.map", "extract.root", "extract.groups", "extract.from", "extract.files", "extract.to",
     "run.exe", "run.display", "run.args", "run.kernel", "run.initrd", "run.cmdline",
     "cpu.features", "dll", "registry", "files", "quirks",
-    "code.entries", "code.base", "code.load", "warmup.frames", "warmup.session", "hints"];
+    "code.entries", "code.base", "code.load", "warmup.frames", "warmup.session", "permissions.network", "hints"];
 /// pisco's own options, [hints.pisco] (docs/spec/recipe.md)
 pub const HINTS: &[&str] = &["split", "opt", "programs", "modules"];
 pub const EXTRACT_KINDS: &[&str] = &["innosetup", "zip", "wise", "installshield", "file", "folder", "cab", "copy"];
@@ -183,7 +185,7 @@ pub fn load_recipe(dir: &Path) -> R<Recipe> {
     if !slug(&name) { return Err(format!("{at}: name = \"{name}\": lower-case letters, digits and -")); }
     let from = s(&t, "from").ok_or(format!("{at}: no from (a base, e.g. \"base/windows-x86:1\")"))?;
     let platform = platform_of(&from).to_string();
-    for k in ["about", "run", "cpu", "code", "warmup"] { if let Some(x) = table(&t, k)? { only(x, k, &at)?; } }
+    for k in ["about", "run", "cpu", "code", "warmup", "permissions"] { if let Some(x) = table(&t, k)? { only(x, k, &at)?; } }
     let about = table(&t, "about")?.cloned().unwrap_or_default();
     if let Some(v) = about.get("revision") { if !matches!(v, Value::Integer(n) if *n >= 1) { return Err(format!("{at}: about.revision: an integer from 1")); } }
     for k in ["display_name", "version", "notes"] { if about.get(k).is_some_and(|v| !v.is_str()) { return Err(format!("{at}: about.{k}: a string")); } }
@@ -285,7 +287,9 @@ pub fn load_recipe(dir: &Path) -> R<Recipe> {
     let micro = |k: &str| -> R<Vec<String>> { let v = strs(&ours, k)?.unwrap_or_default(); if !v.is_empty() && platform != "microvm-x64" { return Err(format!("{at}: [hints.pisco] {k}: for a machine's app (base/microvm-x64)")); } Ok(v) };
     let mut files = BTreeMap::new();
     for (k, v) in table(&t, "files")?.into_iter().flatten() { files.insert(k.clone(), v.as_str().ok_or(format!("{at}: [files] {k}: a string"))?.to_string()); }
+    let network = match table(&t, "permissions")?.and_then(|p| p.get("network")) { None => false, Some(Value::Boolean(b)) => *b, Some(_) => return Err(format!("{at}: permissions.network: true or false")) };
     Ok(Recipe {
+        network,
         display_name: s(&about, "display_name"), version: s(&about, "version"), revision: about.get("revision").and_then(|v| v.as_integer()),
         libraries: strs(&t, "libraries")?.unwrap_or_default(),
         display: s(run, "display"),

@@ -55,6 +55,10 @@ if (isMainThread) {
   const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => k.startsWith('SW_')));
   // the image's settings for the runtime (its registry values: SW_REGISTRY), with the environment's after them
   if (image) for (const [k, v] of Object.entries(image.settings.env)) env[k] = k === 'SW_REGISTRY' && env[k] ? `${v}\n${env[k]}` : env[k] ?? v;
+  // what the app may be given (docs/spec/image.md#the-config, permissions): a network only to an app that asks for one
+  if (image && env.SW_NET && env.SW_NET !== '0' && !image.config.permissions?.network) {
+    console.error(`pisco: ${image.config.name} does not ask for a network ([permissions] network in its recipe): SW_NET not given`); process.exit(2);
+  }
   const imageDir = image ? path.resolve(first) : null, folder = image ? image.settings.folder : null;
   if (process.env.SW_SESSION) { const s = JSON.parse(fs.readFileSync(process.env.SW_SESSION, 'utf8')); env.SW_SESSION_STEPS = sessionSteps(s); for (const [k, v] of Object.entries(sessionEnv(s))) if (!(k in env)) env[k] = v; }
   GPU_OPEN.onmessage = async (e) => {

@@ -69,6 +69,10 @@
       }
     },
     "imports": { "type": "array", "items": { "type": "string" } },
+    "permissions": {
+      "type": ["object", "null"], "additionalProperties": false,
+      "properties": { "network": { "type": "boolean" } }
+    },
     "programs": { "type": ["object", "null"], "additionalProperties": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" } },
     "side": { "type": ["object", "null"], "additionalProperties": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" } },
     "build": { "type": "object" }

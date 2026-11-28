@@ -23,6 +23,10 @@ kind = "folder"
 input = "root"
 app = "/"
 
+[permissions]
+# its virtio network device, when a run asks for it (SW_NET=1: tests/run.sh net)
+network = true
+
 [run]
 kernel = "/vmlinux"
 initrd = "/initramfs.cpio"
