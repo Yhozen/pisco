@@ -315,6 +315,10 @@ reasoning and the measurements: [research/kernel-as-a-title.md](research/kernel-
   first met (`fixtures/linux-dyn`), as on QEMU.
 - **K14, done**: a network in Node (`SW_NET=1`): virtio's network device and unkernel's network stack; a DHCP
   lease, a name looked up and a page fetched from the host.
+- **Research, speed and native paths** ([research/microvm-speed.md](research/microvm-speed.md)): lifted user code
+  on the machine is 2 to 3 times flat memory, most of it the TLB check on every access (a lifter fix); a lifted
+  x86-64 program runs as a task of unkernel's kernel with forks at 0.12 ms against 9; native hosts run the image's
+  own kernel under KVM or FEX, and the GPU ring stays the one GPU contract.
 - **Next**: the network in the page.
 
 ## Known limits
