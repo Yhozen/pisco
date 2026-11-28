@@ -189,7 +189,8 @@ and showed five gaps, each fixed:
    the function takes them back where it is entered (`GUEST_POLL_FLAGS` in rt/cpu.h): only where the lifter finds
    them live at the loop's head (read there before all of them are written, through direct jumps; a call ends the
    search), since passing them at every jump back kept every loop's flags alive and cost as much again (gzip 1.13 s
-   against 0.78 in Node, when a call at the head still counted as a read). 24 handshakes of 24 verified and two `apk update` runs
+   against 0.78 in Node, when a call at the head still counted as a read). The browser run with the final build matches the table's,
+   within noise (medians: awk 1.12 s, sha256 0.12, gzip 0.95, bench 1.78, fork 0.03, exec 0.20, 592 MiB idle). 24 handshakes of 24 verified and two `apk update` runs
    were clean (against 16 of 24 before), and in Node the compiled benchmark is back where it was: calls 65, bytes
    210, sort 900, float 120, memory 326 ms (against 66, 205, 820, 125, 325).
 9. **An interpreter's dispatch, one host frame deeper per opcode.** Lua 5.4 dispatches by GCC's computed goto,
