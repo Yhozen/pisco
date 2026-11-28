@@ -5,6 +5,8 @@
 #            the 32-bit titles: hello again for i686, and fixtures/x87
 #   layout   tests/layout.sh: the runtime's files are listed only by the bases, and every one is in some base
 #   spec     tests/spec.sh: the specification (docs/spec/) lists what pisco knows, and pisco refuses what it does not
+#   store    tests/store.sh: hello32 installed by name into a store of its own, run from another folder, a base's
+#            layer shared by two apps, and removed without what the other uses
 #   node     tests/regress.sh: every title in Node (XCL's title and Stockfish too when their files are there)
 #   bench    the benchmark title's checksums against the same work built natively
 #   win32    the 32-bit titles in Node: hello, and the x87 and crt32 titles against what they printed under Wine
@@ -105,7 +107,7 @@
 #            screens close to the oracle's screenshots (needs out/img-desire: the desireplay step; half an hour)
 #   xcl      tests/gfx/xcl.sh: XCL's console test title in Chrome, when it has been built into out/xcltitle-game
 #   audio    tests/audio/run.sh: the XMA2 / Opus decoders (builds FFmpeg's the first time)
-# Default: build layout spec node bench win32 linux microvm avx ffp glffp sm gdi changelog. Needs tools/setup-toolchain.sh to have run. Exit status 1 if a step fails.
+# Default: build layout spec store node bench win32 linux microvm avx ffp glffp sm gdi changelog. Needs tools/setup-toolchain.sh to have run. Exit status 1 if a step fails.
 set -uo pipefail
 root=$(cd "$(dirname "$0")/.." && pwd); cd "$root"; mkdir -p out
 MINGW=${MINGW:-$HOME/tools/llvm-mingw-20261117-ucrt-ubuntu-22.04-x86_64}; CXX=$MINGW/bin/x86_64-w64-mingw32-clang++
@@ -408,10 +410,11 @@ ND=${ND:-$HOME/.pisco/oracle/prefix-narbacular-drop/drive_c/Program Files (x86)/
 D3DX_DLL=${D3DX_DLL:-$HOME/untrusted/tag/cab/d3dx9_35.dll}
 REDIST=${REDIST:-$HOME/untrusted/vcredist/x/Contents/VC/Redist/MSVC/14.44.35112/x64/Microsoft.VC143.CRT}; export REDIST
 WINSDK=${WINSDK:-$HOME/winsdk}
-for s in ${*:-build layout spec node bench win32 linux microvm avx ffp glffp sm gdi changelog}; do case $s in
+for s in ${*:-build layout spec store node bench win32 linux microvm avx ffp glffp sm gdi changelog}; do case $s in
   build)  step build build ;;
   layout) step layout tests/layout.sh ;;
   spec) step spec tests/spec.sh ;;
+  store) step store tests/store.sh ;;
   node)   LINES_SHOWN=8 step node tests/regress.sh ;;
   bench)  step bench bench ;;
   win32)  LINES_SHOWN=4 step win32 win32 ;;

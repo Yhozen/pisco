@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
-# The tests that need no game files and no SDK (tests/run.sh's default steps: build, layout, spec, node, bench, win32, linux,
+# The tests that need no game files and no SDK (tests/run.sh's default steps: build, layout, spec, store, node, bench, win32, linux,
 # microvm, ffp, sm, gdi, changelog) and `reuse lint`, on every pull request. The steps with a game, the oracle or Chrome run on a developer's
 # machine (docs/plan.md, rule 3); here they are not asked for.
 name: tests

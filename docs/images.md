@@ -12,6 +12,7 @@ target/release/pisco run out/images/narbacular-drop --session recipes/narbacular
 target/release/pisco run out/images/narbacular-drop --chrome                                                    # headless Chrome
 target/release/pisco inspect out/images/narbacular-drop [--files]
 target/release/pisco census out/images/narbacular-drop      # or a title's .exe: what the base and its libraries answer for
+target/release/pisco install hello32 && target/release/pisco run hello32   # by name, from the store (below)
 ```
 
 The model is OCI's, with three differences:
@@ -127,6 +128,24 @@ sources (`rt/*.c`, `rt/windows-x86/*.c` less the libraries'), their optimisation
 `pisco base <base> --check` (in `tests/run.sh layout`) checks each `provides` against the `IMP(dll, ...)` of its
 sources. `pisco build` refuses an app that imports from a library its recipe does not name, and says which ones it
 needs (`pisco census <exe>`); it says so when a base is experimental.
+
+## The store
+
+`pisco install <recipe>` builds an app into the store, and `pisco run <name>` runs it from any folder; `pisco list`
+says what is installed and `pisco remove <name>` takes it away. `<recipe>` is a recipe's folder or the name of one in
+`recipes/`, the official ones ([spec/distribution.md](spec/distribution.md)). The store is `$PISCO_HOME`
+(`~/.pisco`):
+
+```
+blobs/sha256/<digest>   every app's blobs, once: apps FROM one base share its layer, apps that name a library its layer
+apps/<name>/            an image layout whose blobs/ is a link to ../../blobs: a host reads it as any image folder
+saves/<name>/           what the app keeps between runs (SW_SAVES; `--saves` says another place), kept across installs
+tmp/                    an install builds here, then moves the app into apps/ by one rename
+```
+
+`index.json`'s entry says where the app came from (`org.pisco.source`). `pisco inspect` and `pisco census` take an
+installed app's name too. Removing an app removes the blobs no other app names. `out/images` stays where the tests
+build.
 
 ## The build and its cache
 

@@ -2,7 +2,9 @@
 // pisco: builds, runs and inspects title images (docs/images.md).
 //   pisco build <recipe dir> [--input <id>=<path>]... [--source <path>] [--out <image dir>] [--cache <dir>] [--compare <installed folder>]
 //   pisco recipe <recipe dir> [--json | --keys]: the recipe as pisco reads it (JSON, for tools/recipe-gen.py), or the keys schema 1 knows
-//   pisco run <image> [--session <session.json>] [--saves <dir>] [--chrome] [-- app arguments]
+//   pisco install <recipe dir | name> [--input <id>=<path>]...: built into the store ($PISCO_HOME, ~/.pisco), by its name
+//   pisco list; pisco remove <name>
+//   pisco run <image | name> [--session <session.json>] [--saves <dir>] [--chrome] [-- app arguments]
 //   pisco census <image | title.exe> [--recipe <recipe dir> | --from base/windows-x86:1 --libraries a,b] [--dll-dir <system32>] [--all]
 //   pisco inspect <image> [--files]
 //   pisco sources <base | recipe dir> [--libraries a,b | --all-libraries]: the runtime files a title of that base links
@@ -12,6 +14,7 @@ mod census;
 mod installers;
 mod oci;
 mod recipe;
+mod store;
 
 use recipe::R;
 use serde_json::json;
@@ -26,7 +29,7 @@ fn root() -> PathBuf {
     PathBuf::from(".")
 }
 fn usage() -> ! {
-    eprintln!("usage:\n  pisco build <recipe dir> [--input <id>=<path>]... [--source <path>] [--out <image dir>] [--cache <dir>] [--compare <installed folder>]\n  pisco recipe <recipe dir> [--json | --keys]\n  pisco base <base> [--check]\n  pisco run <image> [--session <session.json>] [--saves <dir>] [--chrome] [-- app arguments]\n  pisco census <image | title.exe> [--recipe <recipe dir> | --from <base> --libraries a,b] [--all]\n  pisco inspect <image> [--files]\n  pisco sources <base | recipe dir> [--libraries a,b | --all-libraries]");
+    eprintln!("usage:\n  pisco build <recipe dir> [--input <id>=<path>]... [--source <path>] [--out <image dir>] [--cache <dir>] [--compare <installed folder>]\n  pisco recipe <recipe dir> [--json | --keys]\n  pisco base <base> [--check]\n  pisco install <recipe dir | name> [--input <id>=<path>]...\n  pisco list\n  pisco remove <name>\n  pisco run <image | name> [--session <session.json>] [--saves <dir>] [--chrome] [-- app arguments]\n  pisco census <image | title.exe> [--recipe <recipe dir> | --from <base> --libraries a,b] [--all]\n  pisco inspect <image> [--files]\n  pisco sources <base | recipe dir> [--libraries a,b | --all-libraries]");
     std::process::exit(2);
 }
 struct Args { pos: Vec<String>, opts: Vec<(String, Option<String>)>, rest: Vec<String> }
@@ -56,6 +59,9 @@ fn main() {
         "build" => { let a = parse(&args[1..], &["source", "out", "cache", "compare", "with", "input"]); let Some(p) = a.pos.first() else { usage() };
             build::build(&root, &build::Opts { recipe: p.into(), lock: a.flag("lock"), source: a.get("source"), out: a.get("out"), cache: a.get("cache"), compare: a.get("compare"),
                 with: a.opts.iter().filter(|(n, _)| n == "with" || n == "input").filter_map(|(_, v)| v.as_ref()?.split_once('=').map(|(k, p)| (k.to_string(), PathBuf::from(p)))).collect() }) }
+        "install" => install(&root, &parse(&args[1..], &["input", "with", "source", "cache"])),
+        "list" => list(),
+        "remove" => { let a = parse(&args[1..], &[]); let Some(n) = a.pos.first() else { usage() }; store::remove(n).map(|_| println!("{n}: removed")) }
         "run" => run(&root, &parse(&args[1..], &["session", "saves"])),
         "recipe" => recipe_cmd(&parse(&args[1..], &[])),
         "base" => base_cmd(&root, &parse(&args[1..], &[])),
@@ -70,14 +76,16 @@ fn main() {
 
 /// The image in Node (web/run-node.mjs) or in headless Chrome (tools/run-chrome.mjs): both read it with web/image.mjs
 fn run(root: &Path, a: &Args) -> R<()> {
-    let Some(image) = a.pos.first() else { usage() };
-    let image = PathBuf::from(image);
-    oci::open(&image)?;
+    let Some(what) = a.pos.first() else { usage() };
+    let image = store::resolve_image(what)?;
+    let img = oci::open(&image)?;
+    // an installed app keeps what it writes in the store (saves/<name>), unless --saves says where
+    let saves = a.get("saves").or_else(|| image.starts_with(store::home().join("apps")).then(|| store::home().join("saves").join(img.config["name"].as_str().unwrap_or("app"))));
     let script = if a.flag("chrome") { "tools/run-chrome.mjs" } else { "web/run-node.mjs" };
     let mut cmd = Command::new("node");
     cmd.arg(root.join(script)).arg(&image).args(&a.rest);
     if let Some(s) = a.get("session") { cmd.env("SW_SESSION", s); }
-    if let Some(s) = a.get("saves") { cmd.env("SW_SAVES", s); }
+    if let Some(s) = saves { std::fs::create_dir_all(&s).map_err(|e| format!("{}: {e}", s.display()))?; cmd.env("SW_SAVES", s); }
     let st = cmd.status().map_err(|e| format!("node: {e}"))?;
     std::process::exit(st.code().unwrap_or(1));
 }
@@ -133,9 +141,37 @@ fn recipe_cmd(a: &Args) -> R<()> {
     Ok(())
 }
 
+/// `pisco install <recipe dir | name>`: the recipe (a folder, or the name of one of this repository's recipes/, the
+/// official ones: docs/spec/distribution.md) built into the store, where `pisco run <name>` finds it
+fn install(root: &Path, a: &Args) -> R<()> {
+    let Some(what) = a.pos.first() else { usage() };
+    let (dir, source) = if Path::new(what).join("recipe.toml").is_file() || what.ends_with(".toml") { (PathBuf::from(what), format!("dir:{}", std::fs::canonicalize(what).map_err(|e| format!("{what}: {e}"))?.display())) }
+        else if store::check_name(what).is_ok() && root.join("recipes").join(what).join("recipe.toml").is_file() { (root.join("recipes").join(what), "official".to_string()) }
+        else { return Err(format!("{what}: not a recipe folder, and no recipe of that name in {}", root.join("recipes").display())); };
+    let r = recipe::load_recipe(&dir)?;
+    let staging = store::staging(&r.name)?;
+    let with = a.opts.iter().filter(|(n, _)| n == "with" || n == "input").filter_map(|(_, v)| v.as_ref()?.split_once('=').map(|(k, p)| (k.to_string(), PathBuf::from(p)))).collect();
+    let res = build::build(root, &build::Opts { recipe: dir.clone(), lock: false, source: a.get("source"), out: Some(staging.clone()), cache: a.get("cache"), compare: None, with });
+    if let Err(e) = res { let _ = std::fs::remove_dir_all(&staging); return Err(e); }
+    let app = store::adopt(&staging, &r.name, &[("org.pisco.source", source)])?;
+    println!("{}: installed in {} (pisco run {})", r.name, app.display(), r.name);
+    Ok(())
+}
+/// `pisco list`: the installed apps, their base, and the bytes they take (and of those, how many no other app shares)
+fn list() -> R<()> {
+    let apps = store::installed()?;
+    if apps.is_empty() { println!("no app is installed in {} (pisco install <recipe>)", store::home().display()); return Ok(()); }
+    let mb = |b: u64| format!("{:.1} MB", b as f64 / 1e6);
+    for (a, (all, own)) in apps.iter().zip(store::sizes(&apps)) {
+        let c = &a.image.config;
+        println!("{:24} {:28} {:24} {:>10} ({} its own)  {}", a.name, c["about"]["display_name"].as_str().unwrap_or("-"), c["base"].as_str().unwrap_or("?"), mb(all), mb(own), a.annotations["org.pisco.source"].as_str().unwrap_or("-"));
+    }
+    Ok(())
+}
+
 fn census(root: &Path, a: &Args) -> R<()> {
     let Some(target) = a.pos.first() else { usage() };
-    let target = PathBuf::from(target);
+    let target = store::resolve_image(target).unwrap_or(PathBuf::from(target));
     let (imports, base, libraries, shipped) = if oci::is_image(&target) {
         let img = oci::open(&target)?;
         let c = &img.config;
@@ -196,7 +232,7 @@ fn sources(root: &Path, a: &Args) -> R<()> {
 
 fn inspect(a: &Args) -> R<()> {
     let Some(image) = a.pos.first() else { usage() };
-    let img = oci::open(Path::new(image))?;
+    let img = oci::open(&store::resolve_image(image)?)?;
     let c = &img.config;
     println!("{image}: {} (manifest sha256:{})", img.manifest["annotations"][oci::TITLE].as_str().unwrap_or("?"), img.manifest_digest.trim_start_matches("sha256:"));
     println!("  FROM {}, libraries {}", c["base"].as_str().unwrap_or("?"), c["libraries"]);
