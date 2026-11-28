@@ -162,7 +162,7 @@ each, after a warm-up run; the packages from a local cache):
 
 | | arm64, kwemu | x86-64, PISCO (lifted) |
 |---|---|---|
-| `apk add` of the desktop (31 packages, from the cache) | 40 s | 24 to 27 s |
+| `apk add` of the desktop (from the cache) | 40 s | 24 to 27 s |
 | Xorg up | 1 s | 1 to 2 s |
 | `xsetroot` 200 times (a process start and a few requests each) | 3.8 s | 6.0 to 6.1 s |
 | xterm start, scroll of 20,000 lines | 0.84 to 1.36 s, 1.72 to 1.98 s | not run: `OpenFont` fails (below) |
@@ -171,9 +171,10 @@ Without an X server the process start is closer: `xsetroot` failing to connect, 
 against 1.6 to 2.3 s lifted; `/bin/true` 50 times, 0.43 to 0.51 s against 0.71 to 0.77 s. What a lifted process
 pays more at its start is not known yet (each new address space looks its programs up again: `programs_forget`).
 
-**Two bugs of the lifted desktop.** Lifted Xorg answers xterm's `X_OpenFont` with BadAlloc (with `-fn fixed`,
-`-fn 6x13` or `-fa monospace`), while twm, started before it, opens its font set; the same packages on arm64 open
-both. And once, Xorg was gone a few seconds after it started (`Can't open display`). Neither is found yet. The
+**Two bugs of the lifted desktop.** Lifted Xorg answers xterm's `X_OpenFont` with BadAlloc (by default, with
+`-fn 6x13`, with the font's full XLFD, with `-fa monospace`), while twm, started before it, opens its font set; the
+same packages on arm64 open both. And once (the run with `-fn fixed`), Xorg was gone a few seconds after it started
+(`Can't open display`). Neither is found yet. The
 first is in the server: with Xorg run on qemu-user (`/.pisco/qemu-x86_64 /usr/libexec/Xorg`) and every client
 lifted, xterm opens its font and shows its prompt beside twm, xeyes and xclock. That Xorg gets no input, though:
 qemu-user does not pass evdev's ioctls, so it has no keyboard or mouse (the lifted Xorg has both).
