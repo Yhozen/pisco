@@ -187,10 +187,11 @@ and showed five gaps, each fixed:
    and fnv 1.5 times: a function in a long loop never returned, and V8, which has no on-stack replacement for
    wasm, ran it in its first tier for ever. Now a poll at a jump back hands the runtime the function's flags, and
    the function takes them back where it is entered (`GUEST_POLL_FLAGS` in rt/cpu.h): only where the lifter finds
-   them live at the loop's head (read there before all of them are written), since passing them at every jump back
-   kept every loop's flags alive and cost as much again. 24 handshakes of 24 verified and two `apk update` runs
-   were clean (against 16 of 24 before), and in Node the compiled benchmark is back where it was: calls 70, bytes
-   210, sort 870, float 122, memory 330 ms (against 66, 205, 820, 125, 325).
+   them live at the loop's head (read there before all of them are written, through direct jumps; a call ends the
+   search), since passing them at every jump back kept every loop's flags alive and cost as much again (gzip 1.13 s
+   against 0.78 in Node, when a call at the head still counted as a read). 24 handshakes of 24 verified and two `apk update` runs
+   were clean (against 16 of 24 before), and in Node the compiled benchmark is back where it was: calls 65, bytes
+   210, sort 900, float 120, memory 326 ms (against 66, 205, 820, 125, 325).
 9. **An interpreter's dispatch, one host frame deeper per opcode.** Lua 5.4 dispatches by GCC's computed goto,
    merged into one shared `jmp rax`; the lifter does not see a table there, so each opcode was an indirect call one
    level deeper, until Chrome's stack ran out. Now a jump into another lifted function is a tail call (wasm's

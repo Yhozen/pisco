@@ -423,7 +423,8 @@ fn table_bound(prev: &[&Instruction], load_ip: u64, index: Register) -> Option<u
 /// The bound of a jump table whose block is reached by a branch from far away (GCC puts the table's block at the end
 /// of the function: `cmp I,N; jbe <block>` near its start): the compare before a conditional branch to the block.
 // whether the arithmetic flags may be read at t before all of them are written (a loop's carry, kept from one turn
-// to the next): the straight-line code from t, up to 64 instructions; anything else (a branch, a call) counts as a read
+// to the next): the code from t, up to 64 instructions, through direct jumps; a call ends it (no compiler reads the
+// flags a call leaves), anything else (an indirect jump, a return) counts as a read
 fn flags_live_at(insns: &BTreeMap<u64, Instruction>, t: u64) -> bool {
     use iced_x86::RflagsBits as R;
     const ALL: u32 = R::OF | R::SF | R::ZF | R::AF | R::CF | R::PF;
@@ -433,8 +434,12 @@ fn flags_live_at(insns: &BTreeMap<u64, Instruction>, t: u64) -> bool {
         if i.rflags_read() & ALL & !written != 0 { return true; }
         written |= i.rflags_modified() & ALL;
         if written == ALL { return false; }
-        if i.flow_control() != FlowControl::Next { return true; }
-        at = i.next_ip();
+        at = match i.flow_control() {
+            FlowControl::Next => i.next_ip(),
+            FlowControl::Call => return false,
+            FlowControl::UnconditionalBranch if is_near(i) => i.near_branch_target(),
+            _ => return true,
+        };
     }
     true
 }
