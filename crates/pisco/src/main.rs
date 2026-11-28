@@ -59,7 +59,7 @@ fn main() {
     let root = root();
     let r = match cmd.as_str() {
         "build" => { let a = parse(&args[1..], &["source", "out", "cache", "compare", "with", "input"]); let Some(p) = a.pos.first() else { usage() };
-            build::build(&root, &build::Opts { recipe: p.into(), lock: a.flag("lock"), source: a.get("source"), out: a.get("out"), cache: a.get("cache"), compare: a.get("compare"),
+            build::build(&root, &build::Opts { recipe: p.into(), lock: a.flag("lock"), keep_inputs: false, source: a.get("source"), out: a.get("out"), cache: a.get("cache"), compare: a.get("compare"),
                 with: a.opts.iter().filter(|(n, _)| n == "with" || n == "input").filter_map(|(_, v)| v.as_ref()?.split_once('=').map(|(k, p)| (k.to_string(), PathBuf::from(p)))).collect() }) }
         "install" => install(&root, &parse(&args[1..], &["input", "with", "source", "cache", "rev"])),
         "search" => { let a = parse(&args[1..], &[]); sources::search(&root, &a.pos).map(|found| {
@@ -133,7 +133,7 @@ fn recipe_cmd(a: &Args) -> R<()> {
     let j = json!({
         "schema": 1, "name": r.name, "from": r.from, "platform": r.platform, "libraries": r.libraries,
         "about": { "display_name": r.display_name, "version": r.version, "revision": r.revision },
-        "inputs": r.inputs.iter().map(|i| json!({ "id": i.id, "kind": if i.folder { "folder" } else { "file" }, "file": i.file, "files": i.files, "pin": pin(&i.pin) })).collect::<Vec<_>>(),
+        "inputs": r.inputs.iter().map(|i| json!({ "id": i.id, "kind": if i.folder { "folder" } else { "file" }, "file": i.file, "files": i.files, "pin": pin(&i.pin), "url": i.url, "where": i.where_ })).collect::<Vec<_>>(),
         "run": { "exe": r.exe, "display": r.display, "args": r.args, "initrd": r.initrd, "cmdline": r.cmdline },
         "cpu": { "features": r.cpu }, "dll": r.dll, "files": r.files, "quirks": { "heap_fill": r.heap_fill },
         "registry": r.registry.iter().map(|v| match &v.data {
@@ -160,7 +160,7 @@ fn install(root: &Path, a: &Args) -> R<()> {
     }
     let staging = store::staging(&r.name)?;
     let with = a.opts.iter().filter(|(n, _)| n == "with" || n == "input").filter_map(|(_, v)| v.as_ref()?.split_once('=').map(|(k, p)| (k.to_string(), PathBuf::from(p)))).collect();
-    let res = build::build(root, &build::Opts { recipe: found.dir.clone(), lock: false, source: a.get("source"), out: Some(staging.clone()), cache: a.get("cache"), compare: None, with });
+    let res = build::build(root, &build::Opts { recipe: found.dir.clone(), lock: false, keep_inputs: true, source: a.get("source"), out: Some(staging.clone()), cache: a.get("cache"), compare: None, with });
     if let Err(e) = res { let _ = std::fs::remove_dir_all(&staging); return Err(e); }
     let app = store::adopt(&staging, &r.name, &[("org.pisco.source", found.source)])?;
     println!("{}: installed in {} (pisco run {})", r.name, app.display(), r.name);
