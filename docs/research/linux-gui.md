@@ -237,6 +237,12 @@ on it:
   oldest first, with no notion of what the desktop needs first. A task already past the harmless syscalls (JWM,
   after it has opened the display) cannot be re-executed on qemu-user, so it waits for every library it misses:
   on x86-64 xterm, xeyes and xclock came up at once while JWM waited for its cairo and pixman lifts.
+- **JWM on x86-64 does not come up yet.** After about 16 minutes of lifts it ran, then jumped to a function of
+  libharfbuzz (offset 0xa8660) reached only through a pointer (C++ virtual calls), which the static lift did not
+  find: the runtime's `enter` sends SIGILL for a miss inside a lifted program, and the screen went black (Xorg
+  went with it, or reset). The fix: on such a miss, lift the library again with the address as one more entry
+  (the module's key would take the entries, or a file of the entries met would grow with each miss), and until
+  then sleep and retry as for a library not lifted. twm, which needs no harfbuzz, is the desktop above.
 - **A large library's lift is heavy on the host.** A 3.6 MB library (1.2 million instructions) is 16 units of
   5.5 MB of C, each 1.6 GB and 4 to 50 minutes in clang; four at once on 8 GB had one killed, which ended the lift
   after 37 minutes (lift-side.sh now runs no more compiles than 2 GiB slots available).
