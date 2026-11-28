@@ -22,7 +22,7 @@ what makes it slow.
 - **A desktop in a tab.** Xorg (Alpine's `xorg-server`, the `fbdev` driver, `evdev` input) on unkernel's
   framebuffer, JWM as the window manager, xterm, xeyes and xclock, in headless Chrome: the page shows the picture
   and sends the keys and the pointer. Typed into xterm, `uname -a` answers from the guest; a click on JWM's button
-  opens its menu; the eyes follow the pointer. About 300 lines in tabc's page and supervisor
+  opens its menu; the eyes follow the pointer. About 150 lines in tabc's page and supervisor
   ([How](#1-a-desktop-in-a-tab)).
   ![JWM, xterm, xeyes and xclock in the tab](../img/linux-gui-arm64.png)
 - **Any x86-64 program, at once: a first tier.** A program PISCO has not lifted yet no longer waits for its lift
@@ -34,8 +34,13 @@ what makes it slow.
   on where the loader mapped it and on what other modules its relocations pointed at, so the same library was
   lifted again for each program that mapped it elsewhere: 23 of the 52 images an x86-64 desktop met were such
   repeats. Each library now gets an address of its own (from its path), and its image is made the same in every
-  program; RESULT_CANON.
-- **Fast.** RESULT_FAST
+  program: no large library is lifted twice any more (before: libraries of 0.1 to 1.4 MB, up to five times).
+- **Fast where it is lifted, with two holes.** The x86-64 desktop, lifted: Xorg, twm, xeyes and xclock draw and
+  answer (![](../img/linux-gui-x86-64.png)), apk installs the desktop in 24 s against 40 s for arm64 on kwemu; the
+  picture costs the kernel's thread 3 to 5 times less than with the SDK's `frame()`. The holes: a process starts
+  in 30 ms against 19 (`xsetroot` 200 times in the running desktop: 6.1 s against 3.8), and lifted Xorg answers
+  xterm's `OpenFont` with BadAlloc (twm's opens), so xterm does not run on the x86-64 desktop yet
+  ([Fast](#4-fast)).
 
 ## 1. A desktop in a tab
 
@@ -53,11 +58,14 @@ them. The patch (`tools/tabc-pisco/tabc.patch`):
 - **The page** (`page/main.js`): a canvas above the terminal; the rows to RGBA and `putImageData`, on the page's
   thread; pointer and key events over the canvas to the worker. `tabcInput()` sends the same messages, for a test.
 
-In the guest (`docs/research/linux-gui/start.sh`): `apk add xorg-server xf86-video-fbdev xf86-input-evdev jwm xterm
-font-misc-misc font-cursor-misc font-dejavu xeyes xclock`, an `xorg.conf` with the fbdev device and the three evdev
-devices, then `Xorg :0 vt7 -sharevts -novtswitch`, JWM and the apps. The kernel has no virtual consoles
-(`CONFIG_VT` is off): Xorg is given `/dev/console` as its console and never switches it. On arm64 (kwemu), the
-install takes 42 s (the packages from a cache) and Xorg is up in 1 s.
+In the guest (`docs/research/linux-gui/start.sh`): `apk add xorg-server xf86-video-fbdev xf86-input-evdev jwm twm
+xterm font-misc-misc font-cursor-misc font-dejavu xeyes xclock`, an `xorg.conf` with the fbdev device, the three
+evdev devices and GLX and glamor off (nothing uses them on a framebuffer, and GLX would load Mesa), then
+`Xorg :0 vt7 -sharevts -novtswitch`, the window manager (`WM`: JWM, or twm, which needs only the X libraries) and
+the apps. The kernel has no virtual consoles (`CONFIG_VT` is off): Xorg is given `/dev/console` as its console and
+never switches it. On arm64 (kwemu), the install takes 42 s (the packages from a cache) and Xorg is up in 1 s.
+The guest needs more than 512 MiB (the container's writable layer is in memory, and Xorg brings Mesa and LLVM):
+`-m 2048m`; for that PISCO's runtime moved from 1 GiB to 2 GiB in the kernel's memory (no change in speed).
 
 ## 2. Any program, at once: a first tier
 
@@ -73,14 +81,20 @@ That is the wait a person sees the first time anything new runs. The first tier 
   without waiting. The page asks the supervisor (a second, so that one lifted for an earlier container comes back
   at once), and otherwise has it lifted in the background and answers "later". A clean task is then made to
   `execve("/.pisco/qemu-x86_64", ["qemu-x86_64", "-0", argv0, path, args...], envp)` from where it is: the same
-  program, arguments and environment, on qemu-user (an aarch64 program under kwemu). A dirty task waits for the
-  lift, as before, and its lift goes ahead of the background ones.
+  program, arguments and environment, on qemu-user (an aarch64 program under kwemu).
+- **A dirty task sleeps.** It cannot be started again, so it waits for the lift, which goes ahead of the background
+  ones; but not in the page, which would stop the whole kernel (the page's answer suspends the kernel's one thread
+  through JSPI): the runtime makes the task `nanosleep` half a second and try again, RAX kept, and the kernel runs
+  the other tasks meanwhile. Xorg loading its modules with `dlopen` after it has started is such a task.
 - **What else is lifted.** At that moment musl's loader has usually mapped every library the program needs:
   `r_debug`'s `link_map` (through the program's `DT_DEBUG`) names them, and they are lifted in the background too.
   The next run finds them lifted.
-- **Lifts outlive the container.** The supervisor runs `lift-side.sh` in a session of its own, into a temporary
-  file renamed when done, with a lock file beside it: a lift started for a container that has exited is there
-  for the next one.
+- **Lifts outlive the container.** A lift for a later run is queued on disk by the supervisor (the image beside
+  the modules, `*.queued`) and answered at once (202); a runner of its own (a shell loop under `flock`, in a
+  session of its own) lifts the queue, oldest first, after the container and its supervisor are gone. A lift a
+  task waits for runs at once, into a temporary file renamed when done, with a lock file the runner respects.
+  (The first version kept the queue in the page and each lift's request open until it was done: six of them took
+  every connection the browser has to the supervisor, and the guest's file reads, which go the same way, stopped.)
 - **The tier, in the guest.** tabc's init bind-mounts `/tabc/bin` (x86load and qemu-x86_64) at `/.pisco` in the
   container's root. qemu-x86_64 is Alpine's (static, aarch64); `setup.sh` fetches it.
 
@@ -117,7 +131,10 @@ library:
   (`R_X86_64_RELATIVE`: base + addend) or to 0 (everything that depends on another module). The lifter reads code
   and the tables it needs from the image (jump tables are relative or `RELATIVE`), not other modules' addresses.
 
-With them, libfreetype is one image (`30af9415…`) for fc-cache, xterm and JWM; RESULT_CANON_COUNT
+With them, libfreetype is one image (`30af9415…`) for fc-cache, xterm and JWM. Over the runs that followed, 100
+images were met and none of the large ones repeats: the 9 images left of a size another one has are 12 to 33 KB
+(modules of the same size, as far as sizes tell). Before, libraries of 106 KB to 1.4 MB were lifted three to five
+times each.
 
 ## 4. Fast
 
@@ -138,7 +155,29 @@ machine also busy lifting, so the times are indicative):
 In the same runs xterm's start took 3.0 to 7.0 s against 7.9 to 13.3 s, and its scroll of 20,000 lines 9.7 to
 14.5 s against 13.2 to 18.7 s.
 
-RESULT_DESKTOP_BENCH
+### The desktops side by side
+
+`bench.sh` in the running desktop (twm on both, `WM=twm`; the lift runner paused, nothing else running; one run
+each, after a warm-up run; the packages from a local cache):
+
+| | arm64, kwemu | x86-64, PISCO (lifted) |
+|---|---|---|
+| `apk add` of the desktop (31 packages, from the cache) | 40 s | 24 to 27 s |
+| Xorg up | 1 s | 1 to 2 s |
+| `xsetroot` 200 times (a process start and a few requests each) | 3.8 s | 6.0 to 6.1 s |
+| xterm start, scroll of 20,000 lines | 0.84 to 1.36 s, 1.72 to 1.98 s | not run: `OpenFont` fails (below) |
+
+Without an X server the process start is closer: `xsetroot` failing to connect, 50 times, 1.2 to 1.4 s on arm64
+against 1.6 to 2.3 s lifted; `/bin/true` 50 times, 0.43 to 0.51 s against 0.71 to 0.77 s. What a lifted process
+pays more at its start is not known yet (each new address space looks its programs up again: `programs_forget`).
+
+**Two bugs of the lifted desktop.** Lifted Xorg answers xterm's `X_OpenFont` with BadAlloc (with `-fn fixed`,
+`-fn 6x13` or `-fa monospace`), while twm, started before it, opens its font set; the same packages on arm64 open
+both. And once, Xorg was gone a few seconds after it started (`Can't open display`). Neither is found yet.
+
+**Fixed on the way.** The runtime registered at most 64 programs (a desktop maps more: xterm's 65th library got
+SIGILL); now 1024. The lifter had no 16-bit `idiv` in 64-bit code (libfreetype's `idiv si`: fc-cache got
+SIGILL). Lifts, traps and exceptions in lifted code are logged with their address.
 
 ## What this says about the roadmap
 
@@ -174,12 +213,18 @@ on it:
 
 ## Limits
 
-- qemu-user under kwemu is slow for heavy programs: the first `update-mime-database` of an x86-64 Xorg install
-  took 10 min there. The first tier trades the wait for a lift against a slow first run; for a long-running
-  program the wait is the better trade, and nothing chooses between them yet.
-- A program loaded with `dlopen` after it has done work (Xorg's modules) waits for its lift: its task is dirty.
+- **The first run of a large x86-64 install is slow either way.** On qemu-user under kwemu a heavy program crawls
+  (`update-mime-database` 10 min); lifted, it waits for the host: the desktop and what apk's triggers run came to
+  about 150 images, 21 MB of x86-64 code, lifted one at a time (libstdc++ alone: 121 MB of C, half an hour on 4
+  cores). The first tier only trades one wait for the other; a shared cache of lifted modules is what removes it.
+- **The first tier and its queue are a proof of concept.** Nothing chooses between waiting and qemu-user by the
+  program's size; a lift a task waits for and the runner's lift of the same program wait on one lock file, so a
+  stopped runner stops that task (it happened while the runner was paused for a benchmark); the queue is lifted
+  oldest first, with no notion of what the desktop needs first.
+- **Lifted Xorg's two bugs** (above): xterm's fonts, and one exit.
+- A program loaded with `dlopen` after it has done work waits for its lift (asleep, the others run): lifted Xorg
+  waited about a minute for its five modules the first time.
 - PISCO needs the one-CPU kernel; the desktop runs on one CPU.
-- A lock file left by a lift that was killed stops that program's lifts until it is removed.
 - The display is the framebuffer: no GPU. unkernel also has virtio-gpu (virgl on WebGL2) and a Vulkan driver on
   WebGPU, not tried here.
 
@@ -187,12 +232,19 @@ on it:
 
 ```sh
 tools/tabc-pisco/setup.sh   # tabc with the patch, the kernel, PISCO's runtime, qemu-x86_64
-O=out/tabc-pisco
-# arm64 (kwemu): the desktop
-TABC_DISPLAY=1024x768 TABC_CHROMIUM_FLAGS="--remote-debugging-port=9333 --window-size=1100,1000" \
-  TABC_CHROMIUM=$(command -v google-chrome) TABC_SHARE=$O/share \
-  $O/tabc run -m 2048m -v $PWD/docs/research/linux-gui:/opt/gui alpine:3.24.4 /opt/gui/start.sh
-# amd64 (PISCO, the first tier): the same, with
-#   TABC_IMAGE_ARCH=amd64 TABC_PISCO_LIFT=$PWD/tools/tabc-pisco/lift-side.sh
-node docs/research/linux-gui/shot.mjs 9333 shot.png   # a screenshot of the tab
+O=out/tabc-pisco G=$PWD/docs/research/linux-gui
+run() {   # run <image arch> <command...>: the desktop in a headless Chrome, its DevTools on port 9333
+  env TABC_DISPLAY=1024x768 TABC_CHROMIUM_FLAGS="--remote-debugging-port=9333 --window-size=1100,1000" \
+    TABC_CHROMIUM=$(command -v google-chrome) TABC_SHARE=$O/share TABC_LOG_STDERR=1 \
+    TABC_PISCO_LIFT=$PWD/tools/tabc-pisco/lift-side.sh ${1:+TABC_IMAGE_ARCH=$1} \
+    $O/tabc run -m 2048m -v $G:/opt/gui alpine:3.24.4 "${@:2}"
+}
+run "" /opt/gui/start.sh                                 # arm64, kwemu: JWM, xterm, xeyes, xclock
+run amd64 env WM=twm /opt/gui/start.sh                   # x86-64, PISCO (the first runs on qemu-user, see above)
+run "" env WM=twm GUI_BENCH=1 /opt/gui/start.sh          # bench.sh once the desktop is up ("BENCH" lines)
+node $G/shot.mjs 9333 shot.png                           # a screenshot of the tab, from another terminal
 ```
+
+A package cache mounted at `/opt/apkcache` (`-v <dir>:/opt/apkcache`) makes the second install local. The lifted
+modules are kept in `$XDG_CACHE_HOME/tabc/pisco/lifted` by the sha256 of each image and `lift-side.sh --tools`;
+the background queue (`*.queued`, the images beside them) is in the same directory.

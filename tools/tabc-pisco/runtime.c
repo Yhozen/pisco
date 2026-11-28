@@ -57,7 +57,8 @@ typedef struct Ctx {
   struct kw_cpu *kc; struct kw_regs *kr; u64 rflags; int budget_polls; int depth; int live_flags;
 } Ctx;
 static Ctx *cur;
-static const ProgramDef *progs[64]; static unsigned n_progs;
+enum { MAX_PROGS = 1024 };   // (a desktop maps more than 64: Xorg, its modules, the X libraries, each client)
+static const ProgramDef *progs[MAX_PROGS]; static unsigned n_progs;
 
 static void logf_(const char *fmt, ...) { char b[512]; va_list ap; va_start(ap, fmt); int n = vsnprintf(b, sizeof b, fmt, ap); va_end(ap); if (n > (int)sizeof b - 1) n = sizeof b - 1; host_log(b, (u32)n); }
 static int trace;
@@ -169,7 +170,7 @@ typedef struct { uptr frame; u64 page, sample; const ProgramDef *p; } FrameSlot;
 static FrameSlot frames[4096];
 static u64 sample_of(const u8 *b) { u64 h = 0xcbf29ce484222325ull; for (int k = 0; k < 16; k++) { u64 w; memcpy(&w, b + 256 * k + 8 * k, 8); h = (h ^ w) * 0x100000001b3ull; } return h; }
 EXPORT("rt_program_register") void rt_program_register(const ProgramDef *p) {
-  if (n_progs < 64) progs[n_progs++] = p; else logf_("pisco: more than 64 programs");
+  if (n_progs < MAX_PROGS) progs[n_progs++] = p; else logf_("pisco: more than %d programs", MAX_PROGS);
   programs_forget();
   if (trace) logf_("pisco: program %s registered (0x%llx to 0x%llx, %u functions, %u resume points)", p->name, p->lo, p->hi, p->fn_count, p->resume_count);
 }

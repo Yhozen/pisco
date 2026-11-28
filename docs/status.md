@@ -327,6 +327,11 @@ reasoning and the measurements: [research/kernel-as-an-app.md](research/kernel-a
   with an amd64 image's programs lifted and run as tasks of its own kernel (`kw_run` patched to ask PISCO first),
   programs met for the first time lifted on the host by tabc's supervisor. Against tabc on the same machine and
   browser: compute 1.4 to 4 times faster, processes and memory about level, cold start about level.
+- **Research, a Linux desktop in a tab** ([research/linux-gui.md](research/linux-gui.md), `tools/tabc-pisco`):
+  tabc's page with a display (unkernel's framebuffer and evdev): Xorg, JWM or twm, xterm, xeyes and xclock, arm64
+  on kwemu and amd64 with PISCO. A program not lifted yet starts at once on qemu-user in the guest while the host
+  lifts it (and its libraries) for the next run; a library is lifted once for every program (an address from its
+  path, a canonical image).
 - **Next**: the network in the page.
 
 ## Known limits

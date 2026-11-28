@@ -5,7 +5,8 @@ for e in /sys/class/input/event*; do echo "$e: $(cat $e/device/name)"; done
 # (a package cache, when one is mounted at /opt/apkcache: a second start installs from it)
 [ -d /opt/apkcache ] && ln -sf /opt/apkcache /etc/apk/cache
 t0=$(date +%s)
-apk add -q xorg-server xf86-video-fbdev xf86-input-evdev jwm xterm font-misc-misc font-cursor-misc xeyes xclock xsetroot twm font-dejavu fontconfig 2>&1 | tail -3
+# (the window manager: JWM, which brings cairo, glib and librsvg, or WM=twm, only the X libraries)
+apk add -q xorg-server xf86-video-fbdev xf86-input-evdev ${WM:-jwm} xterm font-misc-misc font-cursor-misc xeyes xclock xsetroot font-dejavu fontconfig 2>&1 | tail -3
 echo "apk took $(( $(date +%s) - t0 )) s"
 # no virtual console in this kernel: Xorg shares a stand-in for one (-sharevts) and never switches (-novtswitch)
 [ -e /dev/tty0 ] || ln -sf /dev/console /dev/tty0; [ -e /dev/tty7 ] || ln -sf /dev/console /dev/tty7
@@ -15,6 +16,10 @@ Section "ServerFlags"
   Option "AutoAddDevices" "false"
   Option "AutoEnableDevices" "false"
   Option "DontVTSwitch" "true"
+EndSection
+Section "Module"
+  Disable "glx"
+  Disable "glamoregl"
 EndSection
 Section "Device"
   Identifier "fb"
@@ -55,7 +60,7 @@ echo "Xorg up in $(( $(date +%s) - t0 )) s"; tail -5 /tmp/xorg.out
 export DISPLAY=:0
 xsetroot -solid '#2e5a6b'
 sleep 1; ${WM:-jwm} &   # (WM=twm: a window manager that needs only the X libraries)
-xterm -geometry 80x24+40+40 &
+xterm ${XTERM_FONT:+-fn $XTERM_FONT} ${XTERM_FA:+-fa $XTERM_FA} -geometry 80x24+40+40 &
 xeyes -geometry 200x150+700+60 &
 xclock -geometry 200x200+700+260 &
 sleep 2; echo GUI-UP
