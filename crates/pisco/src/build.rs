@@ -778,6 +778,7 @@ pub fn build(root: &Path, o: &Opts) -> R<()> {
     let wasm = wasms[main_lift].clone();
 
     // 5. the image; with [warmup], written twice: once to run it and collect the shaders it compiles, then with them
+    let local = !r.inputs.iter().all(|i| matches!(i.pin, Pin::BuiltBy(_)));
     let write = |extra: Option<&Tree>| -> R<String> {
     let tmp_out = tmp_name(&out);
     let lay = Layout::create(&tmp_out)?;
@@ -789,22 +790,26 @@ pub fn build(root: &Path, o: &Opts) -> R<()> {
         placeholders(&mut tree, &base, &cen.dlls_of(l), &format!("library {l} of {}", base.reference()));
         layers.push(lay.put(LAYER, &tree.tar(), &[(ROLE, "library"), (TITLE, &format!("{}/{l}", base.reference()))])?);
     }
-    layers.push(lay.put(LAYER, &game.tar(), &[(ROLE, "app"), (TITLE, &r.name), (LOCAL, "true")])?);
-    if let Some(t) = extra { layers.push(lay.put(LAYER, &t.tar(), &[(ROLE, "shaders"), (TITLE, &format!("{} shaders", r.name)), (LOCAL, "true")])?); }
-    let module = lay.put(MODULE, &io(std::fs::read(&wasm), &wasm)?, &[(ROLE, "module"), (TITLE, "title.wasm"), (LOCAL, "true")])?;
+    // what is made of the user's files is theirs alone (docs/spec/distribution.md#what-may-be-published): every layer
+    // of the app, unless each of its inputs is made here from this repository's sources (built_by)
+    let own = |role: &'static str, title: String| -> Vec<(&'static str, String)> { let mut a = vec![(ROLE, role.to_string()), (TITLE, title)]; if local { a.push((LOCAL, "true".into())); } a };
+    let put = |media: &str, data: &[u8], a: Vec<(&'static str, String)>| { let v: Vec<(&str, &str)> = a.iter().map(|(k, v)| (*k, v.as_str())).collect(); lay.put(media, data, &v) };
+    layers.push(put(LAYER, &game.tar(), own("app", r.name.clone()))?);
+    if let Some(t) = extra { layers.push(put(LAYER, &t.tar(), own("shaders", format!("{} shaders", r.name)))?); }
+    let module = put(MODULE, &io(std::fs::read(&wasm), &wasm)?, own("module", "title.wasm".into()))?;
     // a Linux title's other programs: a module each (the first module above is the one its first process starts in)
     let mut program_layers = Vec::new(); let mut digest_of: BTreeMap<usize, String> = BTreeMap::new();
     digest_of.insert(main_lift, format!("sha256:{}", module.digest));
     for (k, w) in wasms.iter().enumerate() {
         if k == main_lift { continue; }
         let name = lift_of.iter().find(|(_, &v)| v == k).map(|(g, _)| format!("/{g}")).unwrap_or_default();
-        let b = lay.put(MODULE, &io(std::fs::read(w), w)?, &[(ROLE, "program"), (TITLE, &name), (LOCAL, "true")])?;
+        let b = put(MODULE, &io(std::fs::read(w), w)?, own("program", name.clone()))?;
         digest_of.insert(k, format!("sha256:{}", b.digest)); program_layers.push(b);
     }
     // a machine's side modules: a layer each, named in the config's `side`
     let mut side_map: BTreeMap<String, String> = BTreeMap::new();
     for (n, w) in &side_wasms {
-        let b = lay.put(MODULE, &io(std::fs::read(w), w)?, &[(ROLE, "program"), (TITLE, n), (LOCAL, "true")])?;
+        let b = put(MODULE, &io(std::fs::read(w), w)?, own("program", n.clone()))?;
         side_map.insert(n.clone(), format!("sha256:{}", b.digest)); program_layers.push(b);
     }
     let program_map: BTreeMap<String, String> = if base.os == "linux" { lift_of.iter().map(|(g, k)| (format!("/{g}"), digest_of[k].clone())).collect() } else { BTreeMap::new() };

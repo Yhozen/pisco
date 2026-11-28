@@ -1,6 +1,7 @@
 # Distribution
 
-How apps get to someone who does not have this repository: what may be published, and how an app is named.
+How apps get to someone who does not have this repository: what may be published, where recipes are kept, how an app
+is named, and registries.
 
 ## What may be published
 
@@ -11,7 +12,9 @@ files: the `app` layer, the `shaders` layer, and the modules (the app's code, tr
 `org.pisco.local-only` ([image.md](image.md#files)), and a builder or a store must not send them anywhere.
 
 This is how the AUR, Lutris and Flathub's `extra-data` work with programs that cannot be redistributed: what is
-shared is how to install them, not them.
+shared is how to install them, not them. An app whose inputs are all `built_by` (made from the source's own code:
+the hellos, fastfetch, cowsay, Linux, Doom with Freedoom) has no layer of the user's, and may be published whole, in
+a registry (below).
 
 ## Sources
 
@@ -58,4 +61,21 @@ installed, the app is known by its `name` alone, whatever name led to it; a seco
 the first, and keeps what the app saved.
 
 An installed image's entry in `index.json` says where its recipe came from, as `org.pisco.source`: `official`,
-`dir:<the folder>`, or `git:<url>#<app>@<commit>`.
+`dir:<the folder>`, `git:<url>#<app>@<commit>`, or `oci:<reference>@<digest>` (pulled from a registry, below).
+
+## Registries
+
+An image may be pushed to, and pulled from, any registry that speaks OCI's
+[distribution API](https://github.com/opencontainers/distribution-spec): its manifest under a tag, its config and
+layers as blobs. ghcr.io is where this repository's are kept (`ghcr.io/<owner>/<repository>:<tag>`).
+
+- A builder or store must refuse to push an image with a layer marked `org.pisco.local-only`, and a host must refuse
+  to pull one.
+- A pull checks every blob against its digest, and the manifest's `artifactType` (an app,
+  [image.md](image.md#media-types)). A manifest may be named by its digest (`@sha256:<hex>`), which then must be the
+  digest of what the registry gives.
+- A pulled app is installed by the `name` its manifest says (`org.opencontainers.image.title`) unless the user gives
+  another, and its `org.pisco.source` is `oci:<reference>@<manifest digest>`.
+
+A pulled module is code someone else compiled: a host runs it as it runs any app, in its sandbox, for the host
+interface version its config says ([host.md](host.md)).

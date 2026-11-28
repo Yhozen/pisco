@@ -13,6 +13,9 @@
 #   5. inputs: installed again, the third party's app needs no --input (the store's inputs keep it by sha256); an
 #      input with a url is fetched from a web server on this machine, checked, and kept; one whose url gives other
 #      bytes is refused and nothing of it kept
+#   6. a registry (tests/registry.mjs, with bearer tokens as ghcr.io's): hello32, made only from this repository's
+#      sources, pushed (not without credentials; a second push sends no blob), removed, pulled by tag and by digest
+#      into the store, and run. An app made from the user's files is refused: its layers are local-only
 # Needs hello's 32-bit build (tests/run.sh build).
 set -uo pipefail
 root=$(cd "$(dirname "$0")/.." && pwd); cd "$root"
@@ -98,7 +101,29 @@ echo "$out" | grep -q "the recipe wants" || bad "wrong bytes refused, but not sa
 $P install @someone/fetched > $T/fetch.log 2>&1 || { tail -3 $T/fetch.log; bad "an input with a url was not fetched"; }
 [ -f $PISCO_HOME/inputs/sha256/$sha ] || bad "the fetched input is not kept by its sha256"
 kill $web 2>/dev/null
-$P remove hello-third > /dev/null; $P remove fetched > /dev/null
+$P remove fetched > /dev/null
 
-[ $fail = 0 ] && echo "the store: installed by name, run from another folder, a base's layer shared by two apps, removed without what the other uses; a third party's recipe by URL, @ns and owner/repo, and what it may not do refused; inputs kept, and fetched from a url"
+# 6. a registry
+node tests/registry.mjs $T $T/rport & reg=$!
+for _ in $(seq 50); do [ -s $T/rport ] && break; sleep 0.1; done; R=127.0.0.1:$(cat $T/rport)/pisco
+$P install hello32 > /dev/null 2>&1 || bad "pisco install hello32 (for the registry)"
+$P push hello32 $R/hello32:1 > $T/push.log 2>&1 && bad "pushed without credentials"
+grep -q "no token\|credentials" $T/push.log || bad "refused without credentials, but not saying so: $(tail -1 $T/push.log)"
+export PISCO_REGISTRY_TOKEN=secret
+$P push hello32 $R/hello32:1 > $T/push.log 2>&1 || { tail -3 $T/push.log; bad "pisco push hello32"; }
+digest=$(grep -o 'sha256:[0-9a-f]*' $T/push.log | tail -1)
+$P push hello32 $R/hello32:1 2>&1 | grep -q "0 blobs sent" || bad "a second push sent blobs again"
+$P remove hello32 > /dev/null
+unset PISCO_REGISTRY_TOKEN
+$P pull $R/hello32:1 > $T/pull.log 2>&1 || { tail -3 $T/pull.log; bad "pisco pull by tag"; }
+$P run hello32 > $T/run4.txt 2>&1; grep -q PASS $T/run4.txt || bad "the pulled hello32 does not run: $(tail -3 $T/run4.txt)"
+grep -q "oci:$R/hello32:1@$digest" $PISCO_HOME/apps/hello32/index.json || bad "the pulled image does not say where it came from"
+$P pull $R/hello32@$digest --as hello-pinned > /dev/null 2>&1 || bad "pisco pull by digest"
+[ -d $PISCO_HOME/apps/hello-pinned ] || bad "pull --as did not name the app"
+out=$(PISCO_REGISTRY_TOKEN=secret $P push hello-third $R/hello-third:1 2>&1) && bad "an app made of the user's files was pushed"
+echo "$out" | grep -q "local-only" || bad "a local-only app refused, but not saying why: $out"
+kill $reg 2>/dev/null
+$P remove hello-third > /dev/null; $P remove hello32 > /dev/null; $P remove hello-pinned > /dev/null
+
+[ $fail = 0 ] && echo "the store: installed by name, run from another folder, a base's layer shared by two apps, removed without what the other uses; a third party's recipe by URL, @ns and owner/repo, and what it may not do refused; inputs kept, and fetched from a url; pushed to a registry and pulled back, and the user's files never"
 exit $fail

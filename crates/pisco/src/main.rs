@@ -4,6 +4,8 @@
 //   pisco recipe <recipe dir> [--json | --keys]: the recipe as pisco reads it (JSON, for tools/recipe-gen.py), or the keys schema 1 knows
 //   pisco install <name | recipe dir> [--rev <commit>] [--input <id>=<path>]...: built into the store ($PISCO_HOME,
 //     ~/.pisco). A name: tag (official), owner/repo/tag (GitHub), @ns/tag, <git url>#tag (docs/spec/distribution.md)
+//   pisco push <image | name> <ref>; pisco pull <ref> [--as <name>]: a registry (ghcr.io/<owner>/<name>:<tag>), for
+//     apps made only from this repository's sources (docs/spec/distribution.md#registries)
 //   pisco list; pisco remove <name>; pisco search [words]; pisco source add <@ns> <git url> | remove <@ns> | list
 //   pisco run <image | name> [--session <session.json>] [--saves <dir>] [--chrome] [-- app arguments]
 //   pisco census <image | title.exe> [--recipe <recipe dir> | --from base/windows-x86:1 --libraries a,b] [--dll-dir <system32>] [--all]
@@ -15,6 +17,7 @@ mod census;
 mod installers;
 mod oci;
 mod recipe;
+mod registry;
 mod sources;
 mod store;
 
@@ -31,7 +34,7 @@ fn root() -> PathBuf {
     PathBuf::from(".")
 }
 fn usage() -> ! {
-    eprintln!("usage:\n  pisco build <recipe dir> [--input <id>=<path>]... [--source <path>] [--out <image dir>] [--cache <dir>] [--compare <installed folder>]\n  pisco recipe <recipe dir> [--json | --keys]\n  pisco base <base> [--check]\n  pisco install <app | owner/repo/app | @ns/app | <git url>#app | recipe dir> [--rev <commit>] [--input <id>=<path>]...\n  pisco list\n  pisco remove <name>\n  pisco search [words]\n  pisco source add <@ns> <git url> | remove <@ns> | list\n  pisco run <image | name> [--session <session.json>] [--saves <dir>] [--chrome] [-- app arguments]\n  pisco census <image | title.exe> [--recipe <recipe dir> | --from <base> --libraries a,b] [--all]\n  pisco inspect <image> [--files]\n  pisco sources <base | recipe dir> [--libraries a,b | --all-libraries]");
+    eprintln!("usage:\n  pisco build <recipe dir> [--input <id>=<path>]... [--source <path>] [--out <image dir>] [--cache <dir>] [--compare <installed folder>]\n  pisco recipe <recipe dir> [--json | --keys]\n  pisco base <base> [--check]\n  pisco install <app | owner/repo/app | @ns/app | <git url>#app | recipe dir> [--rev <commit>] [--input <id>=<path>]...\n  pisco push <image | name> <registry>/<repository>:<tag>\n  pisco pull <registry>/<repository>[:<tag> | @sha256:<digest>] [--as <name>]\n  pisco list\n  pisco remove <name>\n  pisco search [words]\n  pisco source add <@ns> <git url> | remove <@ns> | list\n  pisco run <image | name> [--session <session.json>] [--saves <dir>] [--chrome] [-- app arguments]\n  pisco census <image | title.exe> [--recipe <recipe dir> | --from <base> --libraries a,b] [--all]\n  pisco inspect <image> [--files]\n  pisco sources <base | recipe dir> [--libraries a,b | --all-libraries]");
     std::process::exit(2);
 }
 struct Args { pos: Vec<String>, opts: Vec<(String, Option<String>)>, rest: Vec<String> }
@@ -67,6 +70,14 @@ fn main() {
             for (n, d, from, how) in found { println!("{n:24} {d:36} {from:22} pisco install {how}"); } }) }
         "source" => source_cmd(&parse(&args[1..], &[])),
         "list" => list(),
+        "push" => { let a = parse(&args[1..], &[]); let (Some(what), Some(to)) = (a.pos.first(), a.pos.get(1)) else { usage() };
+            store::resolve_image(what).and_then(|img| registry::push(&img, to)).map(|d| println!("{what}: pushed to {to} ({d})")) }
+        "pull" => { let a = parse(&args[1..], &["as"]); let Some(from) = a.pos.first() else { usage() };
+            registry::pull(from).and_then(|(dir, name, digest)| {
+                let name = a.get("as").map(|p| p.to_string_lossy().into_owned()).unwrap_or(name);
+                let r = store::adopt(&dir, &name, &[("org.pisco.source", format!("oci:{from}@{digest}"))]);
+                if r.is_err() { let _ = std::fs::remove_dir_all(&dir); }
+                r.map(|app| println!("{name}: pulled into {} (pisco run {name})", app.display())) }) }
         "remove" => { let a = parse(&args[1..], &[]); let Some(n) = a.pos.first() else { usage() }; store::remove(n).map(|_| println!("{n}: removed")) }
         "run" => run(&root, &parse(&args[1..], &["session", "saves"])),
         "recipe" => recipe_cmd(&parse(&args[1..], &[])),
