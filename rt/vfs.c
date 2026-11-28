@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-// The title's file system. Console paths map to mounts:
+// The app's file system. Console paths map to mounts:
 //   G:\ GAME:\ D:\ C:\title\ and relative paths -> "game": the title's folder, read-only, read through the host;
 //   S:\ -> "pls" (persistent local storage), T:\ -> "temp", any other drive -> "<letter>".
-// The rest of C:\ is read through the host too when the title runs from an image: its file layers make the drive
+// The rest of C:\ is read through the host too when the app runs from an image: its file layers make the drive
 // (web/image.mjs; C:\WINDOWS comes from the base). The title's folder is reached as C:\title.
 // Writes go to an in-memory overlay (a copy of the file is made on first write); deletes leave a whiteout;
-// listings merge the overlay with the folder. Nothing in the title's folder is ever changed.
-// What persists (the host keeps it between runs, below): S:\ for every title; for a Windows desktop title
+// listings merge the overlay with the folder. Nothing in the app's folder is ever changed.
+// What persists (the host keeps it between runs, below): S:\ for every app; for a Windows desktop app
 // (the desktop runtimes' glue.c set vfs_writable_game) also what it writes in its own folder, the top layer over its files
 // (Narbacular Drop's system.opt): the files it changed or made there, whole (files it deletes there are not recorded).
 #include <ctype.h>
@@ -17,7 +17,7 @@ static const char *static_mount(const char *d);
 
 HOST("stat") s64 host_stat(const char *name, u32 len);                        // size, -1 missing, -2 directory
 HOST("list") u32 host_list(const char *name, u32 len, char *buf, u32 cap);   // "name\n" lines, directories end in '/'
-// persistent local storage (S:\, mount "pls") survives the title: the host keeps its files (OPFS in the browser,
+// persistent local storage (S:\, mount "pls") survives the app: the host keeps its files (OPFS in the browser,
 // a folder in Node). It hands them over at the start; every change is sent back.
 HOST("store_info") s64 host_store_info(u32 index, char *name, u32 cap);          // size of stored file `index` and its path, -1 after the last
 HOST("store_read") void host_store_read(u32 index, void *dst);
@@ -96,7 +96,7 @@ static const char *static_mount(const char *d) {
   names[k][0] = (char)('a' + k); names[k][1] = 0;
   return names[k];
 }
-// what the host is asked for: a path in the title's folder ("game/a/b" -> "a/b"), or on the C: drive of a title image
+// what the host is asked for: a path in the app's folder ("game/a/b" -> "a/b"), or on the C: drive of an app image
 // ("c/windows/win.ini" -> "c:/windows/win.ini": the image's file layers, web/image.mjs; a host with no image has no
 // such files). Other mounts are the overlay's alone. `buf` holds the name when it has to be made.
 static const char *game_rel(const char *p, char *buf, size_t cap) {

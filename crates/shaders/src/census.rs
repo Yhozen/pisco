@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-only
-//! A census of the shader containers in a title's files (see the shader-census tool).
+//! A census of the shader containers in an app's files (see the shader-census tool).
 use crate::xbox;
 use std::collections::BTreeMap;
 use std::path::Path;

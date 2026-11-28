@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/Yhozen/pisco/docs/spec/config.schema.json",
-  "title": "The config of a PISCO image, schema 1 (docs/spec/image.md#the-config)",
+  "app": "The config of a PISCO image, schema 1 (docs/spec/image.md#the-config)",
   "type": "object",
   "required": ["schema", "name", "about", "platform", "base", "architecture", "os", "abi", "run", "libraries", "dll", "registry", "cpu", "tree", "source", "guest", "imports"],
   "additionalProperties": false,
@@ -69,6 +69,10 @@
       }
     },
     "imports": { "type": "array", "items": { "type": "string" } },
+    "permissions": {
+      "type": ["object", "null"], "additionalProperties": false,
+      "properties": { "network": { "type": "boolean" } }
+    },
     "programs": { "type": ["object", "null"], "additionalProperties": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" } },
     "side": { "type": ["object", "null"], "additionalProperties": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" } },
     "lifted": { "type": ["object", "null"], "additionalProperties": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" } },

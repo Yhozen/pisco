@@ -36,7 +36,7 @@ struct Image {
     exports: Vec<(String, u32, u64)>,   // name ("" if by ordinal only), ordinal, VA (forwarders left out)
     /// in a merged view of several images: each image's (base, end)
     ranges: Vec<(u64, u64)>,
-    /// an ELF (a Linux title): it has no imports and no exception table
+    /// an ELF (a Linux app): it has no imports and no exception table
     elf: bool,
     /// an ELF: the function starts its symbols and its unwind tables (.eh_frame) name
     seeds: Vec<u64>,
@@ -48,12 +48,12 @@ struct Image {
     patched: BTreeSet<u64>,
     /// an ELF: the C library's setjmp (1), sigsetjmp (2) and longjmp (3), by their symbols
     jumps: BTreeMap<u64, u8>,
-    /// a PS5 title (ps5.rs): imports from the system's libraries by NID, relocations whose values the image keeps
+    /// a PS5 app (ps5.rs): imports from the system's libraries by NID, relocations whose values the image keeps
     ps5: bool,
     /// --machine: the image of a machine's own software (an operating system's kernel, rt/microvm-x64): it stays at
     /// its link addresses, which are not addresses of the module's memory (the machine has page tables)
     machine: bool,
-    /// a PS5 title: the value each relocation (`relocs`, in the same order) makes, at the image's base
+    /// a PS5 app: the value each relocation (`relocs`, in the same order) makes, at the image's base
     reloc_values: Vec<u64>,
 }
 
@@ -159,7 +159,7 @@ impl Image {
         }
         Ok(img)
     }
-    /// A Linux title: a statically linked x86-64 ELF that is not position-independent. Its loadable segments are the
+    /// A Linux app: a statically linked x86-64 ELF that is not position-independent. Its loadable segments are the
     /// "sections"; the functions are found from its symbols and its unwind tables, then as in a PE (call targets,
     /// code addresses in data).
     fn from_elf(data: &[u8], machine: bool) -> Result<Image, String> {
@@ -171,7 +171,7 @@ impl Image {
         if h.e_machine(en) != elf::EM_X86_64 { return Err("an ELF for another machine than x86-64".into()); }
         let phdrs = h.program_headers(en, data).map_err(|e| e.to_string())?;
         if phdrs.iter().any(|p| matches!(p.p_type(en), elf::PT_INTERP | elf::PT_DYNAMIC)) || h.e_type(en) != elf::ET_EXEC {
-            return Err("a dynamically linked or position-independent ELF: a Linux title is linked with -static -no-pie".into());
+            return Err("a dynamically linked or position-independent ELF: a Linux app is linked with -static -no-pie".into());
         }
         let (mut sections, mut raw, mut text) = (Vec::new(), Vec::new(), Vec::new());
         for p in phdrs.iter().filter(|p| p.p_type(en) == elf::PT_LOAD) {
@@ -346,7 +346,7 @@ struct Func {
     bad: bool,
     /// 32-bit code: soft entries that sit inside this function. Each is one more way into its body
     alts: BTreeSet<u64>,
-    /// where a call or a system call returns to: a Linux title's function can be entered there (`c->resume`), as a
+    /// where a call or a system call returns to: a Linux app's function can be entered there (`c->resume`), as a
     /// forked process and a longjmp go on from a return address
     rets: BTreeSet<u64>,
 }
@@ -1597,7 +1597,7 @@ impl Emit<'_> {
                 format!("{{u{bits} t={}?{}:{};{}}}", cond(i.condition_code()), rd(i, 1), rd(i, 0), wr(i, 0, "t"))
             }
             M::Int3 | M::Ud2 | M::Hlt => format!("rt_trap(0x{:x}ull);", i.ip()),
-            M::Syscall => format!("rt_syscall(c,0x{:x}ull);", i.next_ip()), // a Linux title's way to the system (rt/linux-x64/syscall.c)
+            M::Syscall => format!("rt_syscall(c,0x{:x}ull);", i.next_ip()), // a Linux app's way to the system (rt/linux-x64/syscall.c)
             // SSE moves
             M::Movaps | M::Movups | M::Movapd | M::Movupd | M::Movdqa | M::Movdqu => format!("{}={};", xmm(i, 0), xmm(i, 1)),
             M::Movd | M::Movq => {
@@ -1760,8 +1760,8 @@ impl Emit<'_> {
     }
 
     /// 32-bit code: what differs from 64-bit code (4-byte stack slots, the direction flag, FS, addresses that wrap
-    /// at 4 GiB) and what only 32-bit titles use. None: the emitters shared with 64-bit code handle it.
-    /// 3DNow is not modelled: the virtual CPU of a 32-bit title does not report it (MMX: mmx(), above).
+    /// at 4 GiB) and what only 32-bit apps use. None: the emitters shared with 64-bit code handle it.
+    /// 3DNow is not modelled: the virtual CPU of a 32-bit app does not report it (MMX: mmx(), above).
     fn insn32(&mut self, i: &Instruction, f: &Func, entries: &BTreeSet<u64>, entry: u64) -> Option<String> {
         use Mnemonic as M;
         let m = i.mnemonic();
@@ -1900,7 +1900,7 @@ impl Emit<'_> {
                 }
             }
             M::Xlatb => "R[0]=(R[0]&~0xFFull)|M8((u32)(R[RBX]+(u8)R[0]));".into(),
-            // ---- integer forms the 64-bit titles did not need ----
+            // ---- integer forms the 64-bit apps did not need ----
             M::Rcl | M::Rcr => wr(i, 0, &format!("{}{bits}(&f,{},{})", if m == M::Rcl { "rcl" } else { "rcr" }, rd(i, 0), count())),
             M::Imul if i.op_count() == 1 && bits == 8 => format!("{{s16 p=(s16)(s8)R[0]*(s8){};R[0]=(R[0]&~0xFFFFull)|(u16)p;f.cf=f.of=p!=(s8)p;}}", rd(i, 0)),
             M::Imul if i.op_count() == 1 && bits == 16 => format!("{{s32 p=(s32)(s16)R[0]*(s16){};R[0]=(R[0]&~0xFFFFull)|(u16)p;R[2]=(R[2]&~0xFFFFull)|(u16)(p>>16);f.cf=f.of=p!=(s16)p;}}", rd(i, 0)),
@@ -1923,7 +1923,7 @@ impl Emit<'_> {
                     }
                 }
             }
-            // ---- x87: precision control, and what the 64-bit titles did not use ----
+            // ---- x87: precision control, and what the 64-bit apps did not use ----
             M::Fadd | M::Faddp | M::Fiadd | M::Fsub | M::Fsubp | M::Fisub | M::Fsubr | M::Fsubrp | M::Fisubr | M::Fmul | M::Fmulp | M::Fimul | M::Fdiv | M::Fdivp | M::Fidiv | M::Fdivr | M::Fdivrp | M::Fidivr => farith(i, true),
             M::Fsqrt => "ST(0)=fprec(c,__builtin_sqrt(ST(0)));".into(),
             // (`fxch st(i)` decodes with two operands, st(0) first: the shared emitter exchanges st(0) with itself)
@@ -1974,7 +1974,7 @@ impl Emit<'_> {
             writeln!(w, "}}goto L_{entry:x};").unwrap();
             w
         } else if f.pads.is_empty() && self.img.elf {
-            // a Linux title: entered at a return address when c->resume says so (rt/linux-x64/start.c, a forked process
+            // a Linux app: entered at a return address when c->resume says so (rt/linux-x64/start.c, a forked process
             // and a longjmp go on from there)
             let mut w = format!("void f_{entry:x}(Cpu*__restrict c){{Flags f={{0}};(void)f;if(__builtin_expect(c->resume!=0,0)){{u64 at=c->resume;c->resume=0;switch(at){{");
             for r in f.rets.iter().filter(|r| f.insns.contains_key(r) && f.leaders.contains(r)) {
@@ -2144,7 +2144,7 @@ fn padding(bits: u32, b: &[u8], ip: u64) -> Option<u64> {
     pad.then(|| i.len() as u64)
 }
 
-/// What the function discovery of a 32-bit title found.
+/// What the function discovery of a 32-bit app found.
 struct Found {
     hard: BTreeSet<u64>,
     soft: BTreeSet<u64>,
@@ -2442,17 +2442,17 @@ fn lift() {
     let exe = std::path::Path::new(&args[1]);
     let dir = exe.parent().unwrap_or(std::path::Path::new("."));
     let listing: Vec<String> = std::fs::read_dir(dir).map(|d| d.filter_map(|e| e.ok()).map(|e| e.file_name().to_string_lossy().into_owned()).collect()).unwrap_or_default();
-    // --builtin name.dll: a DLL the title ships that is not lifted (the runtime answers for it: a recipe's choice)
+    // --builtin name.dll: a DLL the app ships that is not lifted (the runtime answers for it: a recipe's choice)
     let builtin: Vec<&String> = args.iter().enumerate().filter(|(_, a)| *a == "--builtin").filter_map(|(i, _)| args.get(i + 1)).collect();
     // --dll-dir <folder>=<guest folder>: where else an imported DLL is looked for after the exe's folder (an image's
-    // C:\WINDOWS\system32, given as c:/WINDOWS/system32): one found there is lifted with the title under its guest path
+    // C:\WINDOWS\system32, given as c:/WINDOWS/system32): one found there is lifted with the app under its guest path
     let dll_dirs: Vec<(std::path::PathBuf, String, Vec<String>)> = args.iter().enumerate().filter(|(_, a)| *a == "--dll-dir").filter_map(|(i, _)| args.get(i + 1)).map(|a| {
         let (host, guest) = a.split_once('=').expect("--dll-dir <folder>=<guest folder>");
         let list = std::fs::read_dir(host).map(|d| d.filter_map(|e| e.ok()).map(|e| e.file_name().to_string_lossy().into_owned()).collect()).unwrap_or_default();
         (std::path::PathBuf::from(host), guest.trim_end_matches('/').to_string(), list)
     }).collect();
-    // --load <file>=<name>: a DLL the title loads itself (LoadLibrary), which nothing imports: lifted with the title
-    // under its name (its path in the title's folder, "main/gamex86.dll"), loaded on demand (rt/process.c). The
+    // --load <file>=<name>: a DLL the app loads itself (LoadLibrary), which nothing imports: lifted with the app
+    // under its name (its path in the app's folder, "main/gamex86.dll"), loaded on demand (rt/process.c). The
     // DLLs only such a DLL imports are loaded on demand too.
     let loads: Vec<(String, std::path::PathBuf)> = args.iter().enumerate().filter(|(_, a)| *a == "--load").filter_map(|(i, _)| args.get(i + 1)).map(|a| {
         let (host, name) = a.split_once('=').expect("--load <file>=<name>");
@@ -2478,12 +2478,12 @@ fn lift() {
         for (_, imp) in &img.imports {
             let dll = imp.split('!').next().unwrap();
             if builtin.iter().any(|b| b.eq_ignore_ascii_case(dll)) { continue; }
-            // service libraries the GDK ships beside a title (HTTP, curl, PIX markers) stay the runtime's: offline,
+            // service libraries the GDK ships beside an app (HTTP, curl, PIX markers) stay the runtime's: offline,
             // their calls fail, nothing leaves the machine
             const RUNTIME: [&str; 3] = ["libhttpclient.dll", "xcurl.dll", "winpixeventruntime.dll"];
             if RUNTIME.contains(&dll.to_ascii_lowercase().as_str()) { continue; }
             if let Some(file) = listing.iter().find(|f| f.eq_ignore_ascii_case(dll)) {
-                queue.push((file.clone(), dir.join(file))); // a DLL the title ships: lifted with it
+                queue.push((file.clone(), dir.join(file))); // a DLL the app ships: lifted with it
             } else if let Some((host, guest, file)) = dll_dirs.iter().find_map(|(h, g, l)| l.iter().find(|f| f.eq_ignore_ascii_case(dll)).map(|f| (h, g, f))) {
                 queue.push((format!("{guest}/{file}"), host.join(file))); // a DLL of the image's system folder
             }
@@ -2510,7 +2510,7 @@ fn lift() {
     }
     let bits = mods[0].1.bits;
     if let Some((name, m)) = mods.iter().find(|(_, m)| m.bits != bits) {
-        panic!("{name}: a {}-bit image in a {bits}-bit title (32- and 64-bit images cannot be lifted together)", m.bits);
+        panic!("{name}: a {}-bit image in a {bits}-bit app (32- and 64-bit images cannot be lifted together)", m.bits);
     }
     // where each image goes in guest memory (see docs/memory.md): the exe at 0x10000000 (or --base), the DLLs after it
     let first = args.iter().position(|a| a == "--base").map(|i| u64::from_str_radix(args[i + 1].trim_start_matches("0x"), 16).expect("--base hex"));
@@ -2537,7 +2537,7 @@ fn lift() {
         }
     } else {
         // 64-bit: several images start at 0x10000000, above the runtime's data; a 32-bit exe keeps its own base (its
-        // layout leaves the runtime room below and above the images: tools/build-title.sh)
+        // layout leaves the runtime room below and above the images: tools/build-app.sh)
         let mut next = first.unwrap_or(if mods[0].1.base >= 0x1_0000_0000 || (mods.len() > 1 && bits == 64) || mods[0].1.ps5 { 0x1000_0000 } else { mods[0].1.base });
         for (name, img) in mods.iter_mut() {
             let from = img.base;
@@ -2654,7 +2654,7 @@ fn lift() {
     let mut em = Emit { trace_pc: args.iter().any(|a| a == "--trace-pc"), img: &img, unimpl: BTreeMap::new(), avx: 0, unresolved: 0, cut, counted: BTreeSet::new(), unresolved_at: BTreeSet::new(), pointer_jumps: BTreeSet::new() };
     let _ = em.img;
     let parts: usize = args.iter().position(|a| a == "--split").map(|i| args[i + 1].parse().expect("--split N")).unwrap_or(1).max(1);
-    // (a 64-bit title's files stay as they were: cpu.h takes GUEST_BITS as 64 when it is not defined)
+    // (a 64-bit app's files stay as they were: cpu.h takes GUEST_BITS as 64 when it is not defined)
     let mut header = String::from(if bits == 32 { "#define GUEST_BITS 32\n#include \"cpu.h\"\n" } else { "#include \"cpu.h\"\n" });
     for e in &entries {
         writeln!(header, "void f_{e:x}(Cpu*c);").unwrap();
@@ -2664,7 +2664,7 @@ fn lift() {
     let mut sizes = vec![0usize; parts];
     for (e, f) in &funcs {
         total += f.insns.len();
-        // a Linux title's sigsetjmp is its setjmp (no signal is ever delivered, so there is no mask to keep) and its
+        // a Linux app's sigsetjmp is its setjmp (no signal is ever delivered, so there is no mask to keep) and its
         // longjmp is the runtime's: it resumes in the lifted function that called setjmp (rt/linux-x64/jump.c)
         let body = match if img.machine { None } else { img.jumps.get(e) } {
             Some(2) if img.jumps.values().any(|k| *k == 1) => format!("void f_{e:x}(Cpu*__restrict c){{f_{:x}(c);}}\n", img.jumps.iter().find(|(_, k)| **k == 1).unwrap().0),
@@ -2683,7 +2683,7 @@ fn lift() {
     writeln!(out, "const u64 fn_addrs[]={{{}}};", entries.iter().map(|e| format!("0x{e:x}ull")).collect::<Vec<_>>().join(",")).unwrap();
     writeln!(out, "void(*const fn_ptrs[])(Cpu*)={{{}}};", entries.iter().map(|e| format!("f_{e:x}")).collect::<Vec<_>>().join(",")).unwrap();
     if img.elf {
-        // a Linux title: every return address, and the function (its index above) that can be entered there
+        // a Linux app: every return address, and the function (its index above) that can be entered there
         let index: BTreeMap<u64, usize> = entries.iter().enumerate().map(|(k, e)| (*e, k)).collect();
         let mut sites: BTreeMap<u64, usize> = BTreeMap::new();
         for (e, f) in &funcs {
@@ -2753,7 +2753,7 @@ fn lift() {
     writeln!(out, "const ModuleDef rt_modules[]={{{}}};const unsigned rt_module_count={};", defs.join(","), mods.len()).unwrap();
     writeln!(out, "const u64 import_base=0x{import_base:x}ull;const unsigned import_count={};", import_slots.len()).unwrap();
     if img.ps5 {
-        // a PS5 title: what its relocations hold once the image is at its base (the file has 0 there: RELA)
+        // a PS5 app: what its relocations hold once the image is at its base (the file has 0 there: RELA)
         writeln!(out, "const u64 rt_reloc_values[]={{{}0}};", mods.iter().flat_map(|(_, m)| m.reloc_values.iter()).map(|v| format!("0x{v:x}ull,")).collect::<String>()).unwrap();
     }
     writeln!(out, "const u64 import_slots[]={{{}0}};", import_slots.iter().map(|(s, _, _)| format!("0x{s:x}ull,")).collect::<String>()).unwrap();
@@ -2775,7 +2775,7 @@ fn lift() {
     for (k, b) in bodies.iter().enumerate().skip(1) {
         write(&format!("{stem}_{k}.c"), b);
     }
-    // what a build needs to know about the title, for the shell: the guest's width and where its images are
+    // what a build needs to know about the app, for the shell: the guest's width and where its images are
     write(&format!("{stem}.env"), &format!("GUEST_BITS={bits}\nIMAGE_LOW=0x{image_low:x}\nIMAGE_HIGH=0x{image_high:x}\nFIXED_BASE={}\nOS={}\n", u32::from(mods.iter().any(|(_, m)| m.fixed)), if img.machine { "microvm" } else if img.elf { "linux" } else if img.ps5 { "ps5" } else { "windows" }));
 
     if let Some(found) = &found32 {
@@ -2800,7 +2800,7 @@ fn lift() {
     }
 }
 
-/// The census of a 32-bit title: what was found and how, and what is left.
+/// The census of a 32-bit app: what was found and how, and what is left.
 fn census32(img: &Image, mods: &[(String, Image)], found: &Found, funcs: &BTreeMap<u64, Func>, em: &Emit, between: usize) {
     let debug = std::env::var_os("LIFTER_DEBUG").is_some();
     let total: usize = funcs.values().map(|f| f.insns.len()).sum();
@@ -2809,7 +2809,7 @@ fn census32(img: &Image, mods: &[(String, Image)], found: &Found, funcs: &BTreeM
         cover.add(f);
     }
     let unique = cover.map.iter().filter(|&&b| b == 1).count();
-    eprintln!("32-bit title: {} images, {} imports ({} between the images)", mods.len(), img.imports.len(), between);
+    eprintln!("32-bit app: {} images, {} imports ({} between the images)", mods.len(), img.imports.len(), between);
     let inside: usize = funcs.values().map(|f| f.alts.len()).sum();
     eprintln!("lifted {} functions: {} hard (entry points, exports, call targets), {} soft (code addresses in data and immediates; {} of them by their first bytes in code nothing referred to)",
         found.hard.len() + found.soft.len(), found.hard.len(), found.soft.len(), found.by_pattern);
@@ -2861,7 +2861,7 @@ fn census32(img: &Image, mods: &[(String, Image)], found: &Found, funcs: &BTreeM
     }
     eprintln!("{} AVX-or-later instructions avx.rs does not handle become traps (the virtual CPU does not report AVX)", em.avx);
     let missing: u32 = em.unimpl.values().sum();
-    eprintln!("not lifted, each stops the title if reached: {missing} instructions ({:.2} % of the distinct ones)", 100.0 * f64::from(missing) / unique.max(1) as f64);
+    eprintln!("not lifted, each stops the app if reached: {missing} instructions ({:.2} % of the distinct ones)", 100.0 * f64::from(missing) / unique.max(1) as f64);
     let mut v: Vec<_> = em.unimpl.iter().collect();
     v.sort_by(|a, b| b.1.cmp(a.1));
     for (m, n) in v.iter().take(200) {
@@ -2875,7 +2875,7 @@ fn sti(r: Register) -> u32 {
 fn is_st(i: &Instruction, n: u32) -> bool {
     i.op_kind(n) == OpKind::Register && (Register::ST0 as u32..=Register::ST7 as u32).contains(&(i.op_register(n) as u32))
 }
-/// An x87 memory operand as a register's value (rt/cpu.h fpx: a double, or for a Linux title 64 bits of precision).
+/// An x87 memory operand as a register's value (rt/cpu.h fpx: a double, or for a Linux app 64 bits of precision).
 fn fmem(i: &Instruction) -> String {
     use iced_x86::MemorySize as S;
     match i.memory_size() {
@@ -2907,7 +2907,7 @@ fn farith(i: &Instruction, prec: bool) -> String {
     if prec {
         format!("{{fpx r=fprec(c,{e});{dst}=r;{pop}}}")
     } else {
-        format!("{{fpx r=FXR(c,{e});{dst}=r;{pop}}}") // (FXR: a Linux title's precision control; nothing otherwise)
+        format!("{{fpx r=FXR(c,{e});{dst}=r;{pop}}}") // (FXR: a Linux app's precision control; nothing otherwise)
     }
 }
 

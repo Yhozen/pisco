@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-// The microvm-x64 runtime: a small x86-64 machine whose software is a title (docs/linux.md). Its kernel is lifted
+// The microvm-x64 runtime: a small x86-64 machine whose software is an app (docs/linux.md). Its kernel is lifted
 // ahead of time (lifter --machine) and runs on this machine: one CPU in long mode, its RAM, a software MMU over the
 // kernel's own page tables (mmu.c), exceptions, interrupts and system calls as nested runs of lifted code (cpu.c),
 // a local APIC and its timer on a virtual clock (apic.c), port devices: a 16550, an exit port (devices.c), and a

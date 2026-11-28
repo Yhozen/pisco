@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-// The title: imports gamelib.dll statically and finds it again by name.
+// The app: imports gamelib.dll statically and finds it again by name.
 #include <stdexcept>
 #include <cstring>
 extern "C" __declspec(dllimport) void *__stdcall GetStdHandle(unsigned long);

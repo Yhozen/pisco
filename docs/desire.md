@@ -137,7 +137,7 @@ implemented**. In Node, strict, it stops at the first of them (`_dclass`).
   methods; and the shaders, which `D3DCompile` only finds if they were compiled before the run.
 - **D2**: FH4 is not on the path to playing; it is checked with an asset taken away.
 - **D3**: the seeds come from Wine's log, so our run draws the same maze; the titles at each checkpoint are compared
-  without their figures; the virtual clock and the keyboard for 64-bit titles.
+  without their figures; the virtual clock and the keyboard for 64-bit apps.
 - **D4**: pixels against Wine on lavapipe: the logo and the maze before input are still screens.
 
 ## Play it
@@ -215,8 +215,8 @@ browser's storage, as on a PC it stays in `Assets/Maps`.
     DirectInput, and DXGI's `Present` plays the session. A `shot` step is each runtime's own (`rt_session_shot`):
     Direct3D 9's statistics and frame, or DXGI's, with the methods called since the last checkpoint
     (`SW_CALL_STATS=1`: every import's calls counted).
-  - **The virtual clock for 64-bit titles**: with `SW_CLOCK`, `QueryPerformanceCounter`, `GetTickCount`, the file
-    time and `Sleep` are the title's clock, and `Present` moves it a frame instead of waiting for the wall.
+  - **The virtual clock for 64-bit apps**: with `SW_CLOCK`, `QueryPerformanceCounter`, `GetTickCount`, the file
+    time and `Sleep` are the app's clock, and `Present` moves it a frame instead of waiting for the wall.
   - **`goal`** walks the maze of the Wine run with seeds `aee69d51` / `b9466b87` (the session's `"random"` gives our
     run the same seeds): W held 0.8 s a cell (2.5 units a second, cells of 2 units), the arrows 1 s a quarter turn.
     It is written for our virtual clock: under Wine on lavapipe the game runs at 2 to 6 frames a second, its
@@ -234,5 +234,5 @@ browser's storage, as on a PC it stays in `Assets/Maps`.
   first try ran at 18–21 frames a second; a Chrome trace put 25 s of the page's 45 in `queue.writeBuffer` (each
   draw's root CBV uploaded 64 KiB of the constant ring: 48 MB a frame). The back end now merges a buffer's ranges
   before upload and reuses bind groups within a segment: about 38 frames a second walking the maze (p50 20 ms).
-  The title is not the limit; where the time goes now is in [hosts.md](hosts.md#the-second-case-desire-in-chrome).
+  The app is not the limit; where the time goes now is in [hosts.md](hosts.md#the-second-case-desire-in-chrome).
   Still open: draws skipped as "a binding is missing" (193 in `start`, 253 later); the scene looks complete.

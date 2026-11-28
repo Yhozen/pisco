@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-// d3d9probe: asks the oracle's Direct3D 9 what a title can ask before and just after it creates its device, and
+// d3d9probe: asks the oracle's Direct3D 9 what an app can ask before and just after it creates its device, and
 // prints the answers one fact a line, so our own Direct3D 9 can give the same ones (tools/gen-d3d9-oracle.py turns
 // the output into rt/windows-x86/d3d9_oracle.gen.h):
 //   the adapter's identity and display modes, CheckDeviceFormat for the usual formats and uses, and a new device's
 //   state: every render state, texture stage state and sampler state, the viewport, the material, what a light is
 //   before it is set. The lines that start with "note" are behaviour checked once and kept for the record.
-// Build and run (32-bit, as the titles are):
+// Build and run (32-bit, as the apps are):
 //   $MINGW/bin/i686-w64-mingw32-clang tools/oracle-wine/d3d9probe.c -o out/caps32/d3d9probe.exe -ld3d9 -luser32
 //   tools/oracle-wine/oracle.sh run <title> out/caps32/d3d9probe.exe | tr -d '\r' > tools/oracle-wine/d3d9probe.txt
-// in a title's prefix: its 1024x768 virtual desktop decides the display modes (a prefix without one has a single mode).
+// in an app's prefix: its 1024x768 virtual desktop decides the display modes (a prefix without one has a single mode).
 #define COBJMACROS
 #include <d3d9.h>
 #include <stdio.h>
@@ -50,7 +50,7 @@ int main(void) {
 
   // a device like the title's: windowed, 640x480, hardware vertex processing (not pure, so that its state can be read)
   HWND w = CreateWindowA("static", "probe", WS_OVERLAPPEDWINDOW, 0, 0, 640, 480, 0, 0, 0, 0);
-  { // what CreateDevice fills in when the title leaves it open, and what it does to the x87 control word
+  { // what CreateDevice fills in when the app leaves it open, and what it does to the x87 control word
     RECT cr; GetClientRect(w, &cr); D3DPRESENT_PARAMETERS q = {0}; q.Windowed = TRUE; q.SwapEffect = D3DSWAPEFFECT_DISCARD; IDirect3DDevice9 *d2 = 0; DWORD z = 77;
     unsigned short cw0 = 0, cw1 = 0; __asm__("fnstcw %0" : "=m"(cw0));
     HRESULT h = IDirect3D9_CreateDevice(d3d, 0, D3DDEVTYPE_HAL, w, D3DCREATE_HARDWARE_VERTEXPROCESSING, &q, &d2); __asm__("fnstcw %0" : "=m"(cw1));
@@ -141,7 +141,7 @@ int main(void) {
   printf("note SetRenderTarget to a 256x256 texture: 0x%08lx, viewport then %lu %lu %lu %lu %g %g, texture references %lu\n", (unsigned long)hr, vp.X, vp.Y, vp.Width, vp.Height, vp.MinZ, vp.MaxZ, refs((IUnknown *)tex));
   hr = IDirect3DDevice9_SetRenderTarget(dev, 0, 0); printf("note SetRenderTarget(0, NULL): 0x%08lx\n", (unsigned long)hr);
   IDirect3DDevice9_SetRenderTarget(dev, 0, rt0); IDirect3DSurface9_Release(surf); IDirect3DTexture9_Release(tex); IDirect3DSurface9_Release(rt0); if (ds0) IDirect3DSurface9_Release(ds0);
-  // a volume texture as the title makes it
+  // a volume texture as the app makes it
   IDirect3DVolumeTexture9 *vt = 0; IDirect3DVolume9 *vol = 0; D3DVOLUME_DESC vd; D3DLOCKED_BOX lb;
   hr = IDirect3DDevice9_CreateVolumeTexture(dev, 256, 256, 4, 9, 0, D3DFMT_A8R8G8B8, D3DPOOL_MANAGED, &vt, 0); printf("note CreateVolumeTexture 256x256x4 with 9 levels: 0x%08lx, %lu levels\n", (unsigned long)hr, vt ? IDirect3DVolumeTexture9_GetLevelCount(vt) : 0);
   for (unsigned i = 0; vt && i < 9; i++) { IDirect3DVolumeTexture9_GetVolumeLevel(vt, i, &vol); IDirect3DVolume9_GetDesc(vol, &vd); hr = IDirect3DVolume9_LockBox(vol, &lb, 0, 0);

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-// A title's imports against what answers them: the DLLs it ships (lifted with it), the base's core, the base's
-// libraries (those the recipe names, and those it would need). Used by `pisco build` (a title that imports from a
+// An app's imports against what answers them: the DLLs it ships (lifted with it), the base's core, the base's
+// libraries (those the recipe names, and those it would need). Used by `pisco build` (an app that imports from a
 // library its recipe leaves out is refused) and `pisco census`.
 use crate::recipe::{self, Base, R};
 use std::collections::{BTreeMap, BTreeSet};

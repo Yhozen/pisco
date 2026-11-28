@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // One guest thread. Output and exit go through a BroadcastChannel: the page reads it, whichever worker writes.
-// The title's files come from its folder's URL (`dir`), or for a title image from its drive (`drive`: the file layers,
+// The app's files come from its folder's URL (`dir`), or for an app image from its drive (`drive`: the file layers,
 // served by tools/serve.mjs) where its folder is `folder` (web/image.mjs).
 import { loadSide } from '../side.mjs';
 import { driveName } from '../image.mjs';
@@ -27,7 +27,7 @@ function run(d) {
   const dec = new TextDecoder(), enc = new TextEncoder();
   const text = (p, n) => dec.decode(new Uint8Array(memory.buffer, p, n).slice());
   const exit = (code) => { bus.postMessage({ exit: code }); Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0); };
-  const argv = ['title.wasm', ...args], envv = Object.entries(env).map(([k, v]) => `${k}=${v}`);
+  const argv = ['app.wasm', ...args], envv = Object.entries(env).map(([k, v]) => `${k}=${v}`);
   const strings = (list, ptrs, buf) => { let p = buf; list.forEach((s, i) => { dv().setUint32(ptrs + 4 * i, p, true); const b = enc.encode(s + '\0'); u8().set(b, p); p += b.length; }); return 0; };
   const sizes = (list, a, b) => { dv().setUint32(a, list.length, true); dv().setUint32(b, list.reduce((n, s) => n + enc.encode(s).length + 1, 0), true); return 0; };
   const sleeper = new Int32Array(new SharedArrayBuffer(4));
@@ -56,17 +56,17 @@ function run(d) {
       Atomics.wait(sleeper, 0, 0, Number(ns) / 1e6); dv().setUint32(nevents, 0, true); return 0;
     },
   };
-  // the title's files, fetched on first use (a synchronous request: workers may block)
+  // the app's files, fetched on first use (a synchronous request: workers may block)
   const files = new Map();
   const enc_ = (p) => p.split('/').map(encodeURIComponent).join('/');
-  // a name the runtime asks for: in the title's folder, or "c:/..." on the drive (only a title image has one)
+  // a name the runtime asks for: in the app's folder, or "c:/..." on the drive (only an app image has one)
   const urlOf = (name) => (drive ? drive + enc_(driveName(name, folder)) : /^c:(\/|$)/i.test(name) ? null : dir + enc_(name));
   const file = (name) => {
     if (!files.has(name)) { const u = urlOf(name); let data = null; if (u) { const x = new XMLHttpRequest(); x.open('GET', u, false); x.responseType = 'arraybuffer'; x.send(); if (x.status === 200) data = new Uint8Array(x.response); } files.set(name, data); }
     return files.get(name);
   };
-  // a file's size or kind, or a folder's listing, asked once: the server's files never change while the title runs (its
-  // writes stay in rt/vfs.c's overlay), and each request blocks the title's thread for a round trip (Tag reopens its
+  // a file's size or kind, or a folder's listing, asked once: the server's files never change while the app runs (its
+  // writes stay in rt/vfs.c's overlay), and each request blocks the app's thread for a round trip (Tag reopens its
   // textures dozens of times a second: uncached, its thread spent most of its time waiting here)
   const answers = new Map();
   const ask = (name, what) => {
@@ -90,7 +90,7 @@ function run(d) {
       const b = enc.encode(r); if (buf && cap >= b.length) u8().set(b, buf); return b.length;
     },
     log: (p, n) => bus.postMessage({ out: `pisco: ${text(p, n)}\n` }),
-    // the title's persistent storage: the page loaded it from OPFS before the title started, and saves changes there
+    // the app's persistent storage: the page loaded it from OPFS before the app started, and saves changes there
     store_info: (i, name, cap) => { const f = store[i]; if (!f) return -1n; const b = enc.encode(f.name + '\0'); if (b.length <= cap) u8().set(b, name); return BigInt(f.data.length); },
     store_read: (i, dst) => { u8().set(store[i].data, dst); },
     store_save: (name, len, data, n) => bus.postMessage({ save: { name: text(name, len), data: new Uint8Array(memory.buffer, data, n).slice() } }),
@@ -104,7 +104,7 @@ function run(d) {
     console_open: (ring) => bus.postMessage({ console: ring >>> 0 }), // a machine's console (rt/microvm-x64): the page's keys go there
     exit: (code) => exit(code),
   };
-  // a Linux title's process (web/kernel.mjs): the page starts the workers of a fork and of an execve
+  // a Linux app's process (web/kernel.mjs): the page starts the workers of a fork and of an execve
   if (kernel) Object.assign(host, processImports(kernel, { pid, memory: () => memory, module, ask: (m) => postMessage(m), end: () => close(),
     program: (name) => { const p = '/' + name.replace(/^c:\//i, ''); return programs && programs[p] ? { blob: programs[p] } : null; } }), pid === 1 ? { exit: host.exit } : {});
   // a new guest thread: claim an idle pooled worker (the page cannot start one for us while we block)

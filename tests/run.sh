@@ -1,13 +1,15 @@
 #!/bin/bash
 # SPDX-License-Identifier: GPL-2.0-or-later
-# tests/run.sh [step...]: the one entry point. Builds the test titles from their sources, then runs the checks.
+# tests/run.sh [step...]: the one entry point. Builds the test apps from their sources, then runs the checks.
 #   build    pisco's unit tests; hello, threads, bench (cargo) and cxx, dll (llvm-mingw), where tests/regress.sh looks for them;
-#            the 32-bit titles: hello again for i686, and fixtures/x87
+#            the 32-bit apps: hello again for i686, and fixtures/x87
 #   layout   tests/layout.sh: the runtime's files are listed only by the bases, and every one is in some base
 #   spec     tests/spec.sh: the specification (docs/spec/) lists what pisco knows, and pisco refuses what it does not
-#   node     tests/regress.sh: every title in Node (XCL's title and Stockfish too when their files are there)
-#   bench    the benchmark title's checksums against the same work built natively
-#   win32    the 32-bit titles in Node: hello, and the x87 and crt32 titles against what they printed under Wine
+#   store    tests/store.sh: hello32 installed by name into a store of its own, run from another folder, a base's
+#            layer shared by two apps, and removed without what the other uses
+#   node     tests/regress.sh: every app in Node (XCL's app and Stockfish too when their files are there)
+#   bench    the benchmark app's checksums against the same work built natively
+#   win32    the 32-bit apps in Node: hello, and the x87 and crt32 apps against what they printed under Wine
 #            (fixtures/*/expected.txt; tools/oracle-wine/oracle.sh run makes them again)
 #   linux    fixtures/linux-hello, a Linux x86-64 program statically linked with musl (tools/setup-toolchain.sh musl;
 #            skipped without it): what it prints of its C library must be what it prints when run here, on Linux,
@@ -19,7 +21,7 @@
 #            built by `pisco build`, run by `pisco run` in strict mode on the virtual clock, its output as for a pipe;
 #            it must print recipes/neofetch/traces/pipe.txt (NEOFETCH_RECORD=1 records it again), and the same in
 #            headless Chrome
-#   fastfetch  fastfetch as a Linux title (docs/fastfetch.md), when tools/build-fastfetch.sh has built it into
+#   fastfetch  fastfetch as a Linux app (docs/fastfetch.md), when tools/build-fastfetch.sh has built it into
 #            out/fastfetch: lifted, run in Node in strict mode on the virtual clock with its logo left out and its
 #            output as for a pipe; what it prints must be recipes/fastfetch/traces/pipe.txt (FASTFETCH_RECORD=1
 #            records it again). Then its image, built by `pisco build` and run by `pisco run`, must print the same
@@ -33,11 +35,11 @@
 #            int3, ud2, the APIC's timer while halted, two tasks on their own stacks, a ring-3 task with system calls
 #            preempted by the timer. What it prints on the serial port must be fixtures/microvm-hello/expected.txt,
 #            which is what QEMU prints booting it (checked again when QEMU is there: tools/setup-toolchain.sh qemu)
-#   kernel   the Linux title's kernel (docs/linux.md), when tools/build-linux.sh has built it into out/linux: the
+#   kernel   the Linux app's kernel (docs/linux.md), when tools/build-linux.sh has built it into out/linux: the
 #            lifter must read vmlinux as a machine's image (--machine) and say what it does not lift yet. With QEMU
 #            (tools/oracle-qemu; said in one line without it) the kernel must run /init to its end there, and its
 #            programs must print recipes/linux/traces/programs.txt (KERNEL_RECORD=1 records it again) on QEMU's
-#            machine, and a machine without HPET, PIT and PIC (rt/microvm-x64's) must boot it to /init. Then the title's
+#            machine, and a machine without HPET, PIT and PIC (rt/microvm-x64's) must boot it to /init. Then the app's
 #            image (`pisco build recipes/linux`: the kernel and the initramfs's busybox lifted into one module, minutes
 #            the first time) booted by `pisco run` in Node: its console must be the same twice, its boot up to "Run
 #            /init as init process" recipes/linux/traces/boot.txt (the compiler's name and the kernel's sizes left
@@ -47,11 +49,11 @@
 #            program, typed into through the console (recipes/linux/console-input.txt): what it prints from there must
 #            be traces/console.txt. Then with a disk (SW_DISK=16M: virtio's block device): /init formats it, writes it
 #            and reads it again. KERNEL_RECORD=1 records the traces again
-#   net      the Linux title with a network (SW_NET=1: virtio's network device, unkernel's network stack in Node), when
+#   net      the Linux app with a network (SW_NET=1: virtio's network device, unkernel's network stack in Node), when
 #            out/linux is built: typed into, the shell gets a DHCP lease, looks a name up and fetches a page from a web
 #            server on this machine's loopback (the guest's gateway, 10.0.2.2)
 #   changelog  tools/changelog.mjs: every entry in changelog/ (the changelog on GitHub Pages) is well formed
-#   chrome   hello, threads and cxx again in headless Chrome (WebGPU on SwiftShader), the 32-bit titles and linux-hello
+#   chrome   hello, threads and cxx again in headless Chrome (WebGPU on SwiftShader), the 32-bit apps and linux-hello
 #   nd       Narbacular Drop, when the installed game is there (ND: its folder; default: the oracle's prefix):
 #            built with its recipe and run in strict mode. Its calls until it asks for Direct3D 9 must be the
 #            ones it makes under Wine (recipes/narbacular-drop/traces/start.txt). Then the menu-to-level session
@@ -64,7 +66,7 @@
 #            natively: the shaders of a representative set of state keys, validated with naga
 #   sm       tests/gfx/d3d9-sm.sh: Direct3D 9's shader translator (rt/windows-x86/d3d9_sm.c), built natively: shaders
 #            assembled to cover shader models 1.1 to 2.x, each one's WGSL validated with naga (SM_CAPTURED: a folder of
-#            a title's captured bytecode, translated too)
+#            an app's captured bytecode, translated too)
 #   d3dx     fixtures/d3dx: Microsoft's D3DX (the user's own d3dx9_35.dll: D3DX_DLL, default ~/untrusted/tag/cab/) lifted
 #            with a 32-bit program that preprocesses and compiles HLSL through it; what it prints must be what it prints
 #            under Wine with the same DLL (fixtures/d3dx/expected.txt). Skipped without the DLL
@@ -82,12 +84,12 @@
 #            the cage; its sound not silent and the same on a second run; its FMOD calls against Wine's +snoop trace
 #            when the oracle's is there), system.opt written by Quit and read again by a second run (SW_SAVES), then
 #            the same in Chrome: the session's screenshots, and a reload that finds system.opt in OPFS (minutes)
-#   images   tests/images.sh: title images (M6): `pisco build` of hello32 and, from the user's installer (ND_SETUP; skipped
+#   images   tests/images.sh: app images (M6): `pisco build` of hello32 and, from the user's installer (ND_SETUP; skipped
 #            without it), Narbacular Drop, each twice with empty caches (the same manifest digest), their shared base
 #            layer, a registry-only rebuild that lifts, compiles and links nothing, then `pisco run` of the menu-to-level
 #            session in Node with the nd step's checkpoints, and the image's registry read by advapi32 (minutes). The
-#            nd, ndgfx and ndplay steps keep building from the installed folder with tools/build-title.sh
-#   doom     tests/gfx/doom.sh: Doom as a console title in Node and Chrome (minutes)
+#            nd, ndgfx and ndplay steps keep building from the installed folder with tools/build-app.sh
+#   doom     tests/gfx/doom.sh: Doom as a console app in Node and Chrome (minutes)
 #   st       tests/gfx/st.sh: Microsoft's SimpleTriangleDesktop (Windows x64) in Chrome, and fixtures/msvc/eh.exe with
 #            the real vcruntime140.dll in Node; skipped without the user-built sample (out/gdk-samples/local, from
 #            tools/build-gdk-sample.sh) or the MSVC runtime DLLs (REDIST)
@@ -105,7 +107,7 @@
 #            screens close to the oracle's screenshots (needs out/img-desire: the desireplay step; half an hour)
 #   xcl      tests/gfx/xcl.sh: XCL's console test title in Chrome, when it has been built into out/xcltitle-game
 #   audio    tests/audio/run.sh: the XMA2 / Opus decoders (builds FFmpeg's the first time)
-# Default: build layout spec node bench win32 linux microvm avx ffp glffp sm gdi changelog. Needs tools/setup-toolchain.sh to have run. Exit status 1 if a step fails.
+# Default: build layout spec store node bench win32 linux microvm avx ffp glffp sm gdi changelog. Needs tools/setup-toolchain.sh to have run. Exit status 1 if a step fails.
 set -uo pipefail
 root=$(cd "$(dirname "$0")/.." && pwd); cd "$root"; mkdir -p out
 MINGW=${MINGW:-$HOME/tools/llvm-mingw-20261117-ucrt-ubuntu-22.04-x86_64}; CXX=$MINGW/bin/x86_64-w64-mingw32-clang++
@@ -121,7 +123,7 @@ build() {
   cargo build -q --release -p pisco-lifter -p pisco-shaders -p pisco || return 1
   cargo test -q --release -p pisco > out/test-pisco-unit.log 2>&1 || { tail -20 out/test-pisco-unit.log; return 1; }   # pisco's own (the zip reader)
   for t in hello threads bench bench-native; do (cd "fixtures/$t" && cargo build -q --release) || return 1; done
-  # one C++ runtime inside each image (-static): nothing but the title's own DLL is shipped beside it
+  # one C++ runtime inside each image (-static): nothing but the app's own DLL is shipped beside it
   "$CXX" -O2 -static fixtures/cxx/eh.cpp -o fixtures/cxx/eh.exe || return 1
   mkdir -p fixtures/dll/game
   "$CXX" -O2 -static -shared fixtures/dll/lib.cpp -o fixtures/dll/game/gamelib.dll -Wl,--out-implib,fixtures/dll/game/libgamelib.a || return 1
@@ -134,30 +136,30 @@ build() {
   fixtures/x87/build.sh out/x87 > /dev/null || return 1
   fixtures/crt32/build.sh out/crt32 > /dev/null || return 1
   fixtures/mmx/build.sh out/mmx > /dev/null || return 1
-  # the MSVC-ABI exceptions title, when clang-cl is there (tests/gfx/st.sh runs it)
+  # the MSVC-ABI exceptions app, when clang-cl is there (tests/gfx/st.sh runs it)
   local msvc=""; if command -v clang-cl > /dev/null && command -v lld-link > /dev/null; then fixtures/msvc/build.sh || return 1; msvc=", msvc's eh"; fi
   echo "built hello threads bench cxx dll$msvc, and hello, dll, x87 and crt32 as 32-bit programs"
 }
 win32() {
   local ok=0 exe=fixtures/hello/target/i686-pc-windows-msvc/release/hello.exe out pass
-  tools/build-title.sh "$exe" out/hello32 > out/hello32.build.log 2>&1 || { echo "hello32: build failed (out/hello32.build.log)"; return 1; }
-  out=$(SW_STRICT=1 node web/run-node.mjs out/hello32/title.wasm "$exe" 2>&1); pass=$(grep -c '^\[PASS\]' <<<"$out")
+  tools/build-app.sh "$exe" out/hello32 > out/hello32.build.log 2>&1 || { echo "hello32: build failed (out/hello32.build.log)"; return 1; }
+  out=$(SW_STRICT=1 node web/run-node.mjs out/hello32/app.wasm "$exe" 2>&1); pass=$(grep -c '^\[PASS\]' <<<"$out")
   echo "hello32: $pass passed, $(grep -c '^\[FAIL\]' <<<"$out") failed"; [ "$pass" = 7 ] || { tail -3 <<<"$out"; ok=1; }
-  tools/build-title.sh out/x87/x87.exe out/x87/wasm > out/x87.build.log 2>&1 || { echo "x87: build failed (out/x87.build.log)"; return 1; }
-  SW_STRICT=1 node web/run-node.mjs out/x87/wasm/title.wasm out/x87/x87.exe > out/x87/got.txt 2>&1
+  tools/build-app.sh out/x87/x87.exe out/x87/wasm > out/x87.build.log 2>&1 || { echo "x87: build failed (out/x87.build.log)"; return 1; }
+  SW_STRICT=1 node web/run-node.mjs out/x87/wasm/app.wasm out/x87/x87.exe > out/x87/got.txt 2>&1
   if cmp -s out/x87/got.txt fixtures/x87/expected.txt; then echo "x87: $(wc -l < fixtures/x87/expected.txt) lines equal what it prints under Wine"
   else echo "x87: differs from what it prints under Wine (< ours, > Wine):"; diff out/x87/got.txt fixtures/x87/expected.txt | head -12; ok=1; fi
   # the 32-bit exe and its DLL: all but the last check (a C++ exception thrown in the DLL: mingw's DWARF unwinding
   # for 32-bit code is not dispatched yet; MSVC's, which Windows games use, is T1's)
-  tools/build-title.sh fixtures/dll/game32/title.exe out/dll32 > out/dll32.build.log 2>&1 || { echo "dll32: build failed (out/dll32.build.log)"; return 1; }
+  tools/build-app.sh fixtures/dll/game32/title.exe out/dll32 > out/dll32.build.log 2>&1 || { echo "dll32: build failed (out/dll32.build.log)"; return 1; }
   out=$(SW_STRICT=1 timeout 120 node web/run-node.mjs out/dll32/title.wasm fixtures/dll/game32/title.exe 2>&1); pass=$(grep -c '^\[PASS\]' <<<"$out")
   echo "dll32: $pass passed, the exception across the DLL not yet (32-bit DWARF unwinding)"; [ "$pass" = 6 ] || { tail -3 <<<"$out"; ok=1; }
-  tools/build-title.sh out/mmx/mmx.exe out/mmx/wasm > out/mmx.build.log 2>&1 || { echo "mmx: build failed (out/mmx.build.log)"; return 1; }
-  SW_STRICT=1 node web/run-node.mjs out/mmx/wasm/title.wasm out/mmx/mmx.exe > out/mmx/got.txt 2>&1
+  tools/build-app.sh out/mmx/mmx.exe out/mmx/wasm > out/mmx.build.log 2>&1 || { echo "mmx: build failed (out/mmx.build.log)"; return 1; }
+  SW_STRICT=1 node web/run-node.mjs out/mmx/wasm/app.wasm out/mmx/mmx.exe > out/mmx/got.txt 2>&1
   if cmp -s out/mmx/got.txt fixtures/mmx/expected.txt; then echo "mmx: $(wc -l < fixtures/mmx/expected.txt) lines (MMX, and SSE on MMX registers) equal what it prints under Wine"
   else echo "mmx: differs from what it prints under Wine (< ours, > Wine):"; diff out/mmx/got.txt fixtures/mmx/expected.txt | head -12; ok=1; fi
-  tools/build-title.sh out/crt32/crt32.exe out/crt32/wasm > out/crt32.build.log 2>&1 || { echo "crt32: build failed (out/crt32.build.log)"; return 1; }
-  SW_STRICT=1 node web/run-node.mjs out/crt32/wasm/title.wasm out/crt32/crt32.exe > out/crt32/got.txt 2>&1
+  tools/build-app.sh out/crt32/crt32.exe out/crt32/wasm > out/crt32.build.log 2>&1 || { echo "crt32: build failed (out/crt32.build.log)"; return 1; }
+  SW_STRICT=1 node web/run-node.mjs out/crt32/wasm/app.wasm out/crt32/crt32.exe > out/crt32/got.txt 2>&1
   if cmp -s out/crt32/got.txt fixtures/crt32/expected.txt; then echo "crt32: $(wc -l < fixtures/crt32/expected.txt) lines (msvcrt.dll maths and printf, SList) equal what it prints under Wine"
   else echo "crt32: differs from what it prints under Wine (< ours, > Wine):"; diff out/crt32/got.txt fixtures/crt32/expected.txt | head -12; ok=1; fi
   return $ok
@@ -165,20 +167,20 @@ win32() {
 linux() {
   local d=out/linux-hello
   MUSL=$MUSL fixtures/linux-hello/build.sh $d > /dev/null || { echo "linux-hello: does not compile"; return 1; }
-  tools/build-title.sh $d/hello $d/wasm > out/linux-hello.build.log 2>&1 || { echo "linux-hello: build failed (out/linux-hello.build.log)"; return 1; }
+  tools/build-app.sh $d/hello $d/wasm > out/linux-hello.build.log 2>&1 || { echo "linux-hello: build failed (out/linux-hello.build.log)"; return 1; }
   # the C library: the program run here is the oracle
   $d/hello --pure one > $d/native.txt 2>&1; local want=$?
-  SW_STRICT=1 node web/run-node.mjs $d/wasm/title.wasm $d/hello --pure one > $d/pure.txt 2>&1; local got=$?
+  SW_STRICT=1 node web/run-node.mjs $d/wasm/app.wasm $d/hello --pure one > $d/pure.txt 2>&1; local got=$?
   cmp -s $d/pure.txt $d/native.txt && [ $got = $want ] || { echo "linux-hello --pure differs from its run on this machine (< ours, > native; exit $got, $want):"; diff $d/pure.txt $d/native.txt | head -12; return 1; }
   # the machine: on the virtual clock, so the date it prints is the clock's first day
-  SW_STRICT=1 SW_CLOCK=16667 node web/run-node.mjs $d/wasm/title.wasm $d/hello > $d/got.txt 2>&1
+  SW_STRICT=1 SW_CLOCK=16667 node web/run-node.mjs $d/wasm/app.wasm $d/hello > $d/got.txt 2>&1
   cmp -s $d/got.txt fixtures/linux-hello/expected.txt || { echo "linux-hello differs from expected.txt (< ours, > expected):"; diff $d/got.txt fixtures/linux-hello/expected.txt | head -12; return 1; }
   echo "linux-hello: $(wc -l < $d/native.txt) lines equal its run on this machine, $(wc -l < fixtures/linux-hello/expected.txt) lines with the machine the runtime describes"
   # processes: the fixture's root is the file system, its program's module beside it (SW_ROOT, web/run-node.mjs)
   local p=out/linux-proc
   MUSL=$MUSL fixtures/linux-proc/build.sh $p/root > /dev/null || { echo "linux-proc: does not compile"; return 1; }
-  tools/build-title.sh $p/root/bin/proc $p/wasm > out/linux-proc.build.log 2>&1 || { echo "linux-proc: build failed (out/linux-proc.build.log)"; return 1; }
-  cp $p/wasm/title.wasm $p/root/bin/proc.wasm
+  tools/build-app.sh $p/root/bin/proc $p/wasm > out/linux-proc.build.log 2>&1 || { echo "linux-proc: build failed (out/linux-proc.build.log)"; return 1; }
+  cp $p/wasm/app.wasm $p/root/bin/proc.wasm
   # natively: the same tree under its own path (the script's #! names /bin/proc there)
   rm -rf /tmp/pisco-linux-proc && mkdir -p /tmp/pisco-linux-proc/bin && cp $p/root/bin/proc /tmp/pisco-linux-proc/bin/ && printf '#!/tmp/pisco-linux-proc/bin/proc --script\n' > /tmp/pisco-linux-proc/bin/script && chmod +x /tmp/pisco-linux-proc/bin/script
   /tmp/pisco-linux-proc/bin/proc /tmp/pisco-linux-proc/bin/script > $p/native.txt 2>&1
@@ -198,8 +200,8 @@ linux() {
 microvm() {
   local d=out/microvm-hello want=fixtures/microvm-hello/expected.txt
   fixtures/microvm-hello/build.sh $d > /dev/null || { echo "microvm-hello: does not build"; return 1; }
-  tools/build-title.sh $d/hello $d/wasm > out/microvm-hello.build.log 2>&1 || { echo "microvm-hello: build failed (out/microvm-hello.build.log)"; return 1; }
-  timeout 120 node web/run-node.mjs $d/wasm/title.wasm $d/hello 2>&1 | tr -d '\r' > $d/got.txt
+  tools/build-app.sh $d/hello $d/wasm > out/microvm-hello.build.log 2>&1 || { echo "microvm-hello: build failed (out/microvm-hello.build.log)"; return 1; }
+  timeout 120 node web/run-node.mjs $d/wasm/app.wasm $d/hello 2>&1 | tr -d '\r' > $d/got.txt
   cmp -s $d/got.txt $want || { echo "microvm-hello differs from expected.txt (< ours, > expected):"; diff $d/got.txt $want | head -12; return 1; }
   local q="lifted, in Node"
   if command -v "${QEMU:-qemu-system-x86_64}" > /dev/null; then
@@ -214,7 +216,7 @@ microvm() {
 kernel() {
   local d=out/linux want=recipes/linux/traces/programs.txt fns left
   mkdir -p $d/census
-  target/release/lifter $d/vmlinux $d/census/title.c --split 16 --machine > $d/census.txt 2>&1 || { echo "the lifter does not read vmlinux:"; tail -3 $d/census.txt; return 1; }
+  target/release/lifter $d/vmlinux $d/census/app.c --split 16 --machine > $d/census.txt 2>&1 || { echo "the lifter does not read vmlinux:"; tail -3 $d/census.txt; return 1; }
   fns=$(sed -n 's/^lifted \([0-9]*\) functions.*/\1/p' $d/census.txt); left=$(sed -n 's/^not lifted yet, in the other functions: \([0-9]*\) instructions.*/\1/p' $d/census.txt)
   [ "${fns:-0}" -gt 5000 ] || { echo "the lifter found only ${fns:-0} functions in vmlinux ($d/census.txt)"; return 1; }
   echo "vmlinux: $fns functions read as a machine's image, $left instructions not lifted yet ($d/census.txt)"
@@ -230,7 +232,7 @@ kernel() {
   ORACLE_RUN=$d/oracle-small ORACLE_QEMU_MACHINE=q35,hpet=off,pit=off,pic=off ORACLE_TIMEOUT=60 tools/oracle-qemu/oracle.sh run linux tsc_early_khz=2900000 > $d/oracle-small.txt 2>&1
   grep -q '^init: Linux' $d/oracle-small.txt || { echo "on QEMU without HPET, PIT and PIC the kernel did not reach /init ($d/oracle-small.txt):"; tail -4 $d/oracle-small.txt; return 1; }
   echo "QEMU: /init ran to its end, $(wc -l < $want) lines from its programs equal the recorded trace; without HPET, PIT and PIC it boots to /init"
-  # lifted, on the machine: the title's image, its boot up to the first program, then the programs
+  # lifted, on the machine: the app's image, its boot up to the first program, then the programs
   target/release/pisco build recipes/linux --out out/images/linux > $d/image.log 2>&1 || { echo "pisco build recipes/linux failed ($d/image.log)"; tail -3 $d/image.log; return 1; }
   local boot=recipes/linux/traces/boot.txt k
   for k in 1 2; do timeout 600 target/release/pisco run out/images/linux < /dev/null 2>&1 | tr -d '\r' > $d/boot$k.txt; done
@@ -318,11 +320,11 @@ RUNS
 }
 fastfetch() {
   local d=out/fastfetch want=recipes/fastfetch/traces/pipe.txt
-  SPLIT=16 tools/build-title.sh $d/fastfetch $d/wasm > out/fastfetch.build.log 2>&1 || { echo "build failed (out/fastfetch.build.log)"; return 1; }
-  SW_STRICT=1 SW_CLOCK=16667 timeout 300 node web/run-node.mjs $d/wasm/title.wasm $d/fastfetch --pipe -l none > $d/got.txt 2>&1 || { echo "it ended with an error:"; tail -3 $d/got.txt; return 1; }
+  SPLIT=16 tools/build-app.sh $d/fastfetch $d/wasm > out/fastfetch.build.log 2>&1 || { echo "build failed (out/fastfetch.build.log)"; return 1; }
+  SW_STRICT=1 SW_CLOCK=16667 timeout 300 node web/run-node.mjs $d/wasm/app.wasm $d/fastfetch --pipe -l none > $d/got.txt 2>&1 || { echo "it ended with an error:"; tail -3 $d/got.txt; return 1; }
   [ -z "${FASTFETCH_RECORD:-}" ] || cp $d/got.txt $want
   # the system calls it makes, for the progress map (tools/progress.mjs --refresh)
-  SW_TRACE=1 SW_CLOCK=16667 timeout 300 node web/run-node.mjs $d/wasm/title.wasm $d/fastfetch --pipe -l none 2>&1 | sed -n 's/^pisco: \([a-z_0-9]*\)(.*/\1/p' | LC_ALL=C sort -u > $d/syscalls.txt
+  SW_TRACE=1 SW_CLOCK=16667 timeout 300 node web/run-node.mjs $d/wasm/app.wasm $d/fastfetch --pipe -l none 2>&1 | sed -n 's/^pisco: \([a-z_0-9]*\)(.*/\1/p' | LC_ALL=C sort -u > $d/syscalls.txt
   cmp -s $d/got.txt $want || { echo "what it prints is not $want (< this run, > recorded):"; diff $d/got.txt $want | head -12; return 1; }
   target/release/pisco build recipes/fastfetch --out out/images/fastfetch > out/fastfetch.image.log 2>&1 || { echo "pisco build failed (out/fastfetch.image.log)"; return 1; }
   SW_STRICT=1 SW_CLOCK=16667 timeout 300 target/release/pisco run out/images/fastfetch -- --pipe -l none > $d/got-image.txt 2>&1
@@ -330,44 +332,44 @@ fastfetch() {
   echo "fastfetch: $(wc -l < $want) lines as recorded, in strict mode, from the lifted program and from its image"
 }
 bench() {
-  tools/build-title.sh fixtures/bench/$R/bench.exe out/bench > out/bench.build.log 2>&1 || { echo "build failed (out/bench.build.log)"; return 1; }
+  tools/build-app.sh fixtures/bench/$R/bench.exe out/bench > out/bench.build.log 2>&1 || { echo "build failed (out/bench.build.log)"; return 1; }
   local want got; want=$(fixtures/bench-native/target/release/bench-native | grep -o 'checksum [0-9a-f]*')
-  got=$(node web/run-node.mjs out/bench/title.wasm fixtures/bench/$R/bench.exe 2>&1 | grep -o 'checksum [0-9a-f]*')
+  got=$(node web/run-node.mjs out/bench/app.wasm fixtures/bench/$R/bench.exe 2>&1 | grep -o 'checksum [0-9a-f]*')
   [ -n "$want" ] && [ "$want" = "$got" ] && echo "$(wc -l <<<"$want") checksums equal the native build's" || { echo "checksums differ from the native build's"; return 1; }
 }
 chrome() {
   local n exe out pass bad ok=0
   for n in hello threads cxx; do
     case $n in cxx) exe=fixtures/cxx/eh.exe ;; *) exe=fixtures/$n/$R/$n.exe ;; esac
-    [ -f "out/regress-$n/title.wasm" ] || tools/build-title.sh "$exe" "out/regress-$n" > "out/regress-$n.build.log" 2>&1 || { echo "$n: build failed"; ok=1; continue; }
-    out=$(TIMEOUT=300 node tools/run-chrome.mjs "out/regress-$n/title.wasm" "$exe" 2>&1); pass=$(grep -c '^\[PASS\]' <<<"$out"); bad=$(grep -c '^\[FAIL\]' <<<"$out")
+    [ -f "out/regress-$n/app.wasm" ] || tools/build-app.sh "$exe" "out/regress-$n" > "out/regress-$n.build.log" 2>&1 || { echo "$n: build failed"; ok=1; continue; }
+    out=$(TIMEOUT=300 node tools/run-chrome.mjs "out/regress-$n/app.wasm" "$exe" 2>&1); pass=$(grep -c '^\[PASS\]' <<<"$out"); bad=$(grep -c '^\[FAIL\]' <<<"$out")
     echo "$n: $pass passed, $bad failed"; { [ "$pass" -gt 0 ] && [ "$bad" = 0 ]; } || ok=1
   done
-  # the 32-bit titles, when the win32 step has built them
-  if [ -f out/hello32/title.wasm ]; then
+  # the 32-bit apps, when the win32 step has built them
+  if [ -f out/hello32/app.wasm ]; then
     out=$(TIMEOUT=300 node tools/run-chrome.mjs out/hello32/title.wasm fixtures/hello/target/i686-pc-windows-msvc/release/hello.exe 2>&1); pass=$(grep -c '^\[PASS\]' <<<"$out")
     echo "hello32: $pass passed, $(grep -c '^\[FAIL\]' <<<"$out") failed"; [ "$pass" = 7 ] || ok=1
   fi
-  # the Linux title, when the linux step has built it: the same text as in Node
-  if [ -f out/linux-hello/wasm/title.wasm ]; then
-    SW_STRICT=1 SW_CLOCK=16667 TIMEOUT=300 node tools/run-chrome.mjs out/linux-hello/wasm/title.wasm out/linux-hello/hello 2>&1 | grep -v -e '^$' -e '^gpu: ' > out/linux-hello/got-chrome.txt
+  # the Linux app, when the linux step has built it: the same text as in Node
+  if [ -f out/linux-hello/wasm/app.wasm ]; then
+    SW_STRICT=1 SW_CLOCK=16667 TIMEOUT=300 node tools/run-chrome.mjs out/linux-hello/wasm/app.wasm out/linux-hello/hello 2>&1 | grep -v -e '^$' -e '^gpu: ' > out/linux-hello/got-chrome.txt
     if cmp -s out/linux-hello/got-chrome.txt fixtures/linux-hello/expected.txt; then echo "linux-hello: equal to expected.txt"; else echo "linux-hello: differs from expected.txt"; ok=1; fi
   fi
   # the machine, when the microvm step has built it: each of its tasks on a stack of its own in the page too
-  if [ -f out/microvm-hello/wasm/title.wasm ]; then
-    TIMEOUT=300 node tools/run-chrome.mjs out/microvm-hello/wasm/title.wasm out/microvm-hello/hello 2>&1 | tr -d '\r' | grep -v -e '^$' -e '^gpu: ' > out/microvm-hello/got-chrome.txt
+  if [ -f out/microvm-hello/wasm/app.wasm ]; then
+    TIMEOUT=300 node tools/run-chrome.mjs out/microvm-hello/wasm/app.wasm out/microvm-hello/hello 2>&1 | tr -d '\r' | grep -v -e '^$' -e '^gpu: ' > out/microvm-hello/got-chrome.txt
     if cmp -s out/microvm-hello/got-chrome.txt fixtures/microvm-hello/expected.txt; then echo "microvm-hello: equal to what QEMU prints"; else echo "microvm-hello: differs from what QEMU prints"; ok=1; fi
   fi
-  if [ -f out/x87/wasm/title.wasm ]; then
-    TIMEOUT=300 node tools/run-chrome.mjs out/x87/wasm/title.wasm out/x87/x87.exe 2>&1 | grep -v -e '^$' -e '^gpu: ' > out/x87/got-chrome.txt   # the page's own first line names the GPU
+  if [ -f out/x87/wasm/app.wasm ]; then
+    TIMEOUT=300 node tools/run-chrome.mjs out/x87/wasm/app.wasm out/x87/x87.exe 2>&1 | grep -v -e '^$' -e '^gpu: ' > out/x87/got-chrome.txt   # the page's own first line names the GPU
     if cmp -s out/x87/got-chrome.txt fixtures/x87/expected.txt; then echo "x87: equal to what it prints under Wine"; else echo "x87: differs from what it prints under Wine"; ok=1; fi
   fi
   return $ok
 }
 nd() {
-  RECIPE=recipes/narbacular-drop/recipe.toml SPLIT=16 OPT=-O1 tools/build-title.sh "$ND/Narbacular Drop.exe" out/nd > out/nd.build.log 2>&1 || { echo "build failed (out/nd.build.log)"; return 1; }
+  RECIPE=recipes/narbacular-drop/recipe.toml SPLIT=16 OPT=-O1 tools/build-app.sh "$ND/Narbacular Drop.exe" out/nd > out/nd.build.log 2>&1 || { echo "build failed (out/nd.build.log)"; return 1; }
   # start-up, every call traced: a session of one empty step ends the run when the first frame has been presented
-  SW_STRICT=1 SW_TRACE=2 SW_SESSION_STEPS='wait 0' timeout 300 node web/run-node.mjs out/nd/title.wasm "$ND/Narbacular Drop.exe" > out/nd.run.log 2>&1
+  SW_STRICT=1 SW_TRACE=2 SW_SESSION_STEPS='wait 0' timeout 300 node web/run-node.mjs out/nd/app.wasm "$ND/Narbacular Drop.exe" > out/nd.run.log 2>&1
   grep -q 'Direct3DCreate9' out/nd.run.log || { echo "did not reach Direct3DCreate9:"; tail -3 out/nd.run.log; return 1; }
   python3 -I tools/oracle-wine/trace-diff.py recipes/narbacular-drop/traces/start.txt out/nd.run.log --until Direct3DCreate9 || return 1
   # the session: menu, story, tutorial, the first level
@@ -390,8 +392,8 @@ nd() {
 }
 d3dx() {
   fixtures/d3dx/build.sh out/d3dx "$D3DX_DLL" > /dev/null || return 1
-  tools/build-title.sh out/d3dx/d3dx.exe out/d3dx/wasm > out/d3dx.build.log 2>&1 || { echo "build failed (out/d3dx.build.log)"; return 1; }
-  SW_STRICT=1 timeout 600 node web/run-node.mjs out/d3dx/wasm/title.wasm out/d3dx/d3dx.exe > out/d3dx/got.txt 2>&1
+  tools/build-app.sh out/d3dx/d3dx.exe out/d3dx/wasm > out/d3dx.build.log 2>&1 || { echo "build failed (out/d3dx.build.log)"; return 1; }
+  SW_STRICT=1 timeout 600 node web/run-node.mjs out/d3dx/wasm/app.wasm out/d3dx/d3dx.exe > out/d3dx/got.txt 2>&1
   if cmp -s out/d3dx/got.txt fixtures/d3dx/expected.txt; then echo "the preprocessed text and 3 bytecodes equal what Microsoft's D3DX makes under Wine"
   else echo "differs from Wine's (< ours, > Wine):"; diff out/d3dx/got.txt fixtures/d3dx/expected.txt | head -8; return 1; fi
 }
@@ -403,15 +405,16 @@ gdi() {
   [ -f $probe ] || { echo "$(grep -c '^font ' out/gdi/fonts.txt) fonts measured; no answers of Wine's in $probe to compare with (tools/oracle-wine/gdiprobe.c)"; return 0; }
   python3 -I tools/oracle-wine/gdi-compare.py $probe out/gdi/fonts.txt
 }
-nd_session() { SW_STRICT=1 SW_CLOCK=16667 SW_D3D9_STATS=1 SW_SESSION=recipes/narbacular-drop/sessions/menu-to-level.json timeout 600 node web/run-node.mjs out/nd/title.wasm "$ND/Narbacular Drop.exe"; }
+nd_session() { SW_STRICT=1 SW_CLOCK=16667 SW_D3D9_STATS=1 SW_SESSION=recipes/narbacular-drop/sessions/menu-to-level.json timeout 600 node web/run-node.mjs out/nd/app.wasm "$ND/Narbacular Drop.exe"; }
 ND=${ND:-$HOME/.pisco/oracle/prefix-narbacular-drop/drive_c/Program Files (x86)/Narbacular Drop}
 D3DX_DLL=${D3DX_DLL:-$HOME/untrusted/tag/cab/d3dx9_35.dll}
 REDIST=${REDIST:-$HOME/untrusted/vcredist/x/Contents/VC/Redist/MSVC/14.44.35112/x64/Microsoft.VC143.CRT}; export REDIST
 WINSDK=${WINSDK:-$HOME/winsdk}
-for s in ${*:-build layout spec node bench win32 linux microvm avx ffp glffp sm gdi changelog}; do case $s in
+for s in ${*:-build layout spec store node bench win32 linux microvm avx ffp glffp sm gdi changelog}; do case $s in
   build)  step build build ;;
   layout) step layout tests/layout.sh ;;
   spec) step spec tests/spec.sh ;;
+  store) step store tests/store.sh ;;
   node)   LINES_SHOWN=8 step node tests/regress.sh ;;
   bench)  step bench bench ;;
   win32)  LINES_SHOWN=4 step win32 win32 ;;

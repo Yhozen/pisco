@@ -4,15 +4,15 @@ The short version is in the [README](../README.md#how-it-works); [plan.md](plan.
 change follows, and [journey.md](journey.md) how each part came to be.
 
 ```
-title (PE or ELF) ── lifter (native, once per build) ──► C, one function per guest function ──► clang ──► title.wasm
+app (PE or ELF) ── lifter (native, once per build) ──► C, one function per guest function ──► clang ──► app.wasm
                                                                                                    │ imports
 runtime (rt/, C on wasi-libc, linked into the same module) ◄───────────────────────────────────────┘
- what imitates no system, every title:
+ what imitates no system, every app:
   core.c      the log, guest memory, the virtual CPU (CPUID, the time stamp counter), the search of the lifted
               functions, random numbers, the end of the process
-  clock.c     the title's clock, real or virtual (SW_CLOCK)
+  clock.c     the app's clock, real or virtual (SW_CLOCK)
   builtins.c  the compiler-rt helpers lifted code needs
- the Windows core, every Windows and console title (the other rt/*.c):
+ the Windows core, every Windows and console app (the other rt/*.c):
   process.c   image loading, import binding, guest calls, handles and waits, threads, TEB / TLS
   kernel32.c  threads, sync objects (events, semaphores, mutexes, critical sections, SRW, condition variables),
               memory, time, modules, code pages, standard handles
@@ -20,10 +20,10 @@ runtime (rt/, C on wasi-libc, linked into the same module) ◄──────
   ucrt.c      the UCRT (api-ms-win-crt-*), falling back to msvcrt.c where the semantics match
   oleaut32.c  BSTRs and VARIANTs
   seh.c       x64 exception handling over the images' .pdata / .xdata: RaiseException, RtlUnwindEx, vectored handlers
-  vfs.c       the title's file system: console drives, the title's folder read-only, an in-memory overlay;
-              an image's file layers make C:, and what a desktop title writes in its folder is kept by the host
+  vfs.c       the app's file system: console drives, the app's folder read-only, an in-memory overlay;
+              an image's file layers make C:, and what a desktop app writes in its folder is kept by the host
   files.c     kernel32 / ntdll file functions over vfs.c
-  input.c     keys and the mouse for desktop titles, and the player of scripted sessions
+  input.c     keys and the mouse for desktop apps, and the player of scripted sessions
   mixer.c     the one sound output, shared by XAudio2, FMOD and the PS5's AudioOut (mixed to the virtual clock when
               there is one)
   gpu_ring.c  the ring of records a GPU back end reads (web/gpu/): what D3D12, Direct3D 9 and the PS5's VideoOut
@@ -40,36 +40,36 @@ runtime (rt/, C on wasi-libc, linked into the same module) ◄──────
               fixed-function pipeline as WGSL; d3d9_gpu.c: its draws)
   linux-x64/  Linux at its system calls (syscall.c): the start of a process, memory, files and a generated /proc,
               fork / exec / pipes with a worker per process. It links none of the Windows core
-  ps5/        the PS5's system libraries a homebrew title calls: libkernel, the C library, VideoOut, Pad, AudioOut.
+  ps5/        the PS5's system libraries a homebrew app calls: libkernel, the C library, VideoOut, Pad, AudioOut.
               It links none of the Windows core either
-  microvm-x64/ a small x86-64 machine whose title is a kernel (docs/linux.md): its MMU over the kernel's page
+  microvm-x64/ a small x86-64 machine whose app is a kernel (docs/linux.md): its MMU over the kernel's page
               tables, exceptions, interrupts and system calls as nested runs, a local APIC, a 16550, and a host
               stack (JSPI) for each of the kernel's tasks. It links none of the Windows core
-host (web/)   WASI calls, one worker per guest thread over one shared memory; image.mjs reads a title image
-pisco (crates/pisco) builds a recipe and the user's own copy of a title into a title image (OCI layout), and runs it
+host (web/)   WASI calls, one worker per guest thread over one shared memory; image.mjs reads an app image
+pisco (crates/pisco) builds a recipe and the user's own copy of an app into an app image (OCI layout), and runs it
 ```
 
-Imports of a Windows or console title that nothing implements become stubs that log their first call and return 0
+Imports of a Windows or console app that nothing implements become stubs that log their first call and return 0
 (E_NOTIMPL for the console's HRESULT APIs), as in XCL; a Linux system call nothing answers returns `-ENOSYS`.
 `SW_STRICT=1` stops at them instead.
 
 - **Images**: a Windows exe and every DLL it imports that sits beside it are lifted together, each rebased below
-  4 GiB; imports between them are bound at lift time. The runtime reads their bytes from the title's folder. A Linux
-  title is one statically linked ELF; a PS5 title is one native executable (an ELF of type 0xFE10), its imports
+  4 GiB; imports between them are bound at lift time. The runtime reads their bytes from the app's folder. A Linux
+  app is one statically linked ELF; a PS5 app is one native executable (an ELF of type 0xFE10), its imports
   named by NID.
 - **Lifter** (`crates/lifter`): functions from the exception table (a PE's `.pdata`, an ELF's `.eh_frame`), symbols
   where there are some, call targets, code pointers in data, jump tables, and landing pads from the
   language-specific exception data (GCC/LLVM LSDA, C scope tables, MSVC's FH3 and FH4). It reports what it could
   not lift.
-- **The virtual CPU**: CPUID reports up to SSE4.2 and POPCNT, so a title that asks picks its SSE paths. AVX, AVX2,
-  FMA and BMI are lifted all the same (`avx.rs`, `rt/avx.h`), for titles built for a CPU that has them, as PS5
+- **The virtual CPU**: CPUID reports up to SSE4.2 and POPCNT, so an app that asks picks its SSE paths. AVX, AVX2,
+  FMA and BMI are lifted all the same (`avx.rs`, `rt/avx.h`), for apps built for a CPU that has them, as PS5
   ones are; what `avx.rs` does not handle becomes a trap.
 - **Registers** live in a `Cpu` struct passed as `restrict`, so clang keeps them in wasm locals between calls.
-- **32-bit titles**: the same lifter in a 32-bit mode. Without an exception table, functions come from the
+- **32-bit apps**: the same lifter in a 32-bit mode. Without an exception table, functions come from the
   entry point and call targets, then from code addresses in data and immediates; `jmp [reg*4+table]`
   switches are recovered; x87 keeps its control word (rounding, 24-bit precision). The runtime is built for
   the guest's width (stdcall arguments on the stack, the TEB on `fs`). MMX and 3DNow are not lifted; the
-  recipe gives a title its virtual CPU's features, so a 32-bit title takes its x87 paths.
+  recipe gives an app its virtual CPU's features, so a 32-bit app takes its x87 paths.
 - **Guest memory** is linear memory: a guest address is a wasm address. Images are rebased below 4 GiB.
   wasm32 by default; see [memory.md](memory.md) for wasm64.
 - **Threads**: a guest thread is a pthread of the runtime, i.e. a worker. In the browser they come from a
@@ -83,21 +83,21 @@ Imports of a Windows or console title that nothing implements become stubs that 
 
 Needs Rust, Node 24, [wasi-sdk](https://github.com/WebAssembly/wasi-sdk) 34 in `~/tools`, and for the C++
 tests [llvm-mingw](https://github.com/mstorsjo/llvm-mingw). `tools/setup-toolchain.sh` fetches them (and the
-shader tools the Doom test needs, and musl for the Linux titles); `tests/run.sh` builds and runs every test title,
+shader tools the Doom test needs, and musl for the Linux apps); `tests/run.sh` builds and runs every test app,
 and skips in one line a step whose inputs are not on the machine.
 
-A title without a recipe, straight from its executable:
+An app without a recipe, straight from its executable:
 
 ```sh
 cargo build --release -p pisco-lifter
-(cd fixtures/hello && cargo build --release)                       # our own Windows-format test titles
-cargo build --release -p pisco                                      # build-title.sh asks it for the base's files
-tools/build-title.sh fixtures/hello/target/x86_64-pc-windows-msvc/release/hello.exe out/hello   # BASE=windows-x64 (64-bit default)
+(cd fixtures/hello && cargo build --release)                       # our own Windows-format test apps
+cargo build --release -p pisco                                      # build-app.sh asks it for the base's files
+tools/build-app.sh fixtures/hello/target/x86_64-pc-windows-msvc/release/hello.exe out/hello   # BASE=windows-x64 (64-bit default)
 node web/run-node.mjs out/hello/title.wasm fixtures/hello/target/x86_64-pc-windows-msvc/release/hello.exe
-node tools/run-chrome.mjs out/hello/title.wasm <the .exe>          # the same in headless Chrome
+node tools/run-chrome.mjs out/hello/app.wasm <the .exe>          # the same in headless Chrome
 ```
 
-A Windows PC title is built from its recipe and your own installer into a title image (an OCI image layout:
+A Windows PC app is built from its recipe and your own installer into an app image (an OCI image layout:
 [images.md](images.md)); the installer is checked by its sha256, extracted with innoextract
 (`tools/setup-toolchain.sh innoextract`), and never copied into the repository:
 
@@ -110,23 +110,23 @@ node tools/serve.mjs 8000 web out/images/narbacular-drop           # then http:/
 target/release/pisco build recipes/tag --source ~/Downloads/Tag_setup.exe                          # -> out/images/tag, the same way
 target/release/pisco build recipes/desire --source ~/Downloads/DESI-Re-v0.1-Windows-x64.zip --input redist=<the x64 C++ runtime DLLs>   # -> out/images/desire
 target/release/pisco inspect out/images/narbacular-drop               # its layers, config and registry
-target/release/pisco census <a title's .exe>                          # what the base and its libraries answer for
+target/release/pisco census <an app's .exe>                          # what the base and its libraries answer for
 ```
 
-The Linux titles are built from their sources ([fastfetch.md](fastfetch.md), [neofetch.md](neofetch.md),
+The Linux apps are built from their sources ([fastfetch.md](fastfetch.md), [neofetch.md](neofetch.md),
 [cowsay.md](cowsay.md)), the PS5 demo from its release ([ps5.md](ps5.md)).
 
 `SW_TRACE=1` logs missing imports and exception dispatch; `SW_TRACE=2` every import call. `SW_CLOCK=16667` makes
-time virtual (it moves by that many microseconds when a frame is presented). For Windows desktop titles,
+time virtual (it moves by that many microseconds when a frame is presented). For Windows desktop apps,
 `SW_SESSION=<session.json>` plays a scripted session of mouse and keyboard input (both hosts; in Chrome the frame
 presented at each of its `shot` steps is saved as a PNG beside the wasm, in `shots/`), and `SW_D3D9_STATS=1` and
-`SW_D3D9_FRAMES=1` print what the title asked Direct3D 9 for and the shaders made for it.
+`SW_D3D9_FRAMES=1` print what the app asked Direct3D 9 for and the shaders made for it.
 
-## What the test titles check
+## What the test apps check
 
-What each runtime runs and what comes next is in [status.md](status.md); this is the list by title.
+What each runtime runs and what comes next is in [status.md](status.md); this is the list by app.
 
-| Title | What it checks | Node | Chrome |
+| App | What it checks | Node | Chrome |
 |---|---|---|---|
 | `fixtures/hello` (Rust, no_std) | recursion, switch, pointers, SSE loop, f64 | 7/7 | 7/7 |
 | `fixtures/threads` (Rust, no_std) | 4 threads, `lock xadd`, critical sections, events, semaphores, TLS, ExitThread, timeouts | 9/9 | 9/9 |
@@ -138,7 +138,7 @@ What each runtime runs and what comes next is in [status.md](status.md); this is
 | **Stockfish 19, official Windows x64 build** (MinGW, 103 MB) | `bench`: 2.9 M instructions lifted, worker threads, NNUE (109 MB) in shared memory | **2,497,913 nodes = the published signature**, 105,700 nodes/s | **2,497,913 nodes**, 110,821 nodes/s, 22.5 s |
 | **SimpleTriangleDesktop** (Microsoft's GDK sample, clang-cl and real MSVC builds, with the MSVC C++ runtime DLLs lifted beside it) | the PC GDK's XGameRuntime, DXGI swap chains, vertex buffers, sRGB targets, MSVC C++ exceptions (`fixtures/msvc`: 6/6 with the real vcruntime140) | runs, null back end | frame read back from WebGPU = the colours and area computed from the sample's vertices, both builds (`tests/gfx/st.sh`) |
 | **SimplePBR** (Microsoft's GDK sample, clang-cl, all of DirectXTK12) | PBR with image-based lighting, HDR target and tone map, BC textures and cube maps, sprite fonts, the thread pool | runs, null back end | the sample's scene, stable frame to frame, no WebGPU error, ~2 fps on SwiftShader (`tests/gfx/pbr.sh`) |
-| **Doom as a console title** (`fixtures/doom`: doomgeneric + Freedoom on D3D12.X, GameInput, XAudio2, XGameSave; llvm-mingw) | D3D12.X → WebGPU, `PresentX` and the frame clock, sound, keyboard / gamepad, saves that survive a reload | `-timedemo` frames equal native on every deterministic frame (null GPU back end) | frames **read back from WebGPU** equal native's; ~35 fps on SwiftShader; video: `fixtures/doom/video.sh` |
+| **Doom as a console app** (`fixtures/doom`: doomgeneric + Freedoom on D3D12.X, GameInput, XAudio2, XGameSave; llvm-mingw) | D3D12.X → WebGPU, `PresentX` and the frame clock, sound, keyboard / gamepad, saves that survive a reload | `-timedemo` frames equal native on every deterministic frame (null GPU back end) | frames **read back from WebGPU** equal native's; ~35 fps on SwiftShader; video: `fixtures/doom/video.sh` |
 | **Tag: The Power of Paint** (2008; the user's own copy, `recipes/tag`) | Direct3D 9 shaders (shader model 2) as WGSL, Microsoft's own D3DX from its installer lifted beside it, FMOD Ex | its 16 effects compile at run time to the same 46 shaders as under Wine; FMOD Ex's calls as Wine's | its first level within 1.4 of 255 of Wine's screenshots on average; it plays into its second level ([tag.md](tag.md)) |
 | **Desire** (DESI:Re v0.1, 2026; `recipes/desire`) | a Direct3D 12 game on its author's own engine, MSVC's FH4 C++ exceptions, HLSL compiled when the image is built | given the seeds a Wine run drew, it builds Wine's maze byte for byte | logo to ending; its still screens within 0.3 of 255 of Wine's ([desire.md](desire.md)) |
 | **fastfetch 2.71.0** (built from source, static, musl) | the Linux runtime: system calls, files, a generated `/proc` | prints `recipes/fastfetch/traces/pipe.txt` in strict mode, from the wasm and from its image | its logo and colours in the page ([fastfetch.md](fastfetch.md)) |

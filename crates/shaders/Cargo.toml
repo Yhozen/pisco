@@ -4,7 +4,7 @@ name = "pisco-shaders"
 version = "0.1.0"
 edition = "2021"
 license = "GPL-2.0-only"
-description = "Xbox Series shader containers and RDNA2 code (from XCL), and a census of a title's shaders"
+description = "Xbox Series shader containers and RDNA2 code (from XCL), and a census of an app's shaders"
 [lib]
 name = "shaders"
 

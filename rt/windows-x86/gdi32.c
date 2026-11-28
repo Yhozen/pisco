@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-// gdi32 for Windows desktop titles: memory device contexts, DIB sections with real pixel memory, fonts, brushes
-// and the stock objects, the text state of a device context, and the text functions a title and D3DX's font
+// gdi32 for Windows desktop apps: memory device contexts, DIB sections with real pixel memory, fonts, brushes
+// and the stock objects, the text state of a device context, and the text functions an app and D3DX's font
 // code call. Rectangles are filled and text is drawn for real, into the DIB section a DC holds. Fonts, their
 // measurements and their glyphs are font.c's: Liberation Sans for every face name, measured and drawn as Wine's
 // GDI does on the oracle's machine. Uniscribe (usp10.dll) is absent, so D3DX takes its plain-GDI path
@@ -219,7 +219,7 @@ static int text_out(Cpu *c, u64 hdc, s32 x, s32 y, u32 options, u64 rect, const 
   if (!d || !f) return 0;
   FontTarget t; FontRect r, *rp = 0; s32 *adv = 0;
   if (rect) { r.left = (s32)M32(rect); r.top = (s32)M32(rect + 4); r.right = (s32)M32(rect + 8); r.bottom = (s32)M32(rect + 12); rp = &r; }
-  static s32 advances[2 * TEXT_MAX];   // (not from the heap, which is the title's too)
+  static s32 advances[2 * TEXT_MAX];   // (not from the heap, which is the app's too)
   if (dx) { u32 k = (options & 0x2000) ? 2 * n : n; adv = advances; for (u32 i = 0; i < k; i++) adv[i] = (s32)M32(dx + 4 * i); }
   if (d->text_align & 1) { x = d->x; y = d->y; }   // TA_UPDATECP
   s32 ex, ey;
@@ -330,7 +330,7 @@ IMP(gdi32, ChoosePixelFormat) { // the first format with at least the depth and 
 }
 IMP(gdi32, SetPixelFormat) { u32 i = (u32)ARG(1); if (i < 1 || i > FORMATS) { SET_LAST_ERROR(2000); RET(0); return; } window_format = i; RET(1); }   // ERROR_INVALID_PIXEL_FORMAT
 IMP(gdi32, GetPixelFormat) { RET(window_format); }
-// what OpenGL does at the end of a frame (opengl32.c, when a title links it)
+// what OpenGL does at the end of a frame (opengl32.c, when an app links it)
 __attribute__((weak)) void gl_swap_buffers(u32 hdc) { (void)hdc; }
 IMP(gdi32, SwapBuffers) { gl_swap_buffers((u32)ARG(0)); RET(1); }
 // GetDeviceCaps(dc, index): the screen's (user32's display mode)
@@ -348,7 +348,7 @@ IMP(gdi32, GetDeviceCaps) {
   default: RET(0); return;
   }
 }
-// No gamma ramp to set (as under Wine without a hardware one): titles fall back to their own
+// No gamma ramp to set (as under Wine without a hardware one): apps fall back to their own
 IMP(gdi32, GetDeviceGammaRamp) { RET(0); }
 IMP(gdi32, SetDeviceGammaRamp) { RET(0); }
 IMP(gdi32, CreateDCA) { RET(0x01000000u); }   // the screen's DC ("DISPLAY")

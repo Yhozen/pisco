@@ -1,22 +1,22 @@
 # The plan (2026-11-27)
 
-PISCO (PISCO Imitates Systems, Compiles Originals) runs x86 titles in WebAssembly. It is four kinds of parts (three
+PISCO (PISCO Imitates Systems, Compiles Originals) runs x86 apps in WebAssembly. It is four kinds of parts (three
 more runtimes, Linux x64, PS5 and Microvm x64, do not fit the drawing):
 
 ```
-PISCO     recompiler (crates/lifter)  ·  packages (pisco: recipe FROM a base -> title image)  ·  hosts (browser, Node)
+PISCO     recompiler (crates/lifter)  ·  packages (pisco: recipe FROM a base -> app image)  ·  hosts (browser, Node)
 runtimes  Xbox Series (GDK, D3D12.X)       Windows x64 (DXGI, D3D12, PC GDK)       Windows x86 (Win32, D3D9, DirectInput, FMOD)
-packages  Doom as a console title, XCL's   Stockfish, SimpleTriangleDesktop,       Narbacular Drop, Tag (next)
-          test title; goal: Minecraft      SimplePBR
+packages  Doom as a console app, XCL's   Stockfish, SimpleTriangleDesktop,       Narbacular Drop, Tag (next)
+          test app; goal: Minecraft      SimplePBR
 ```
 
-- **The recompiler** turns a title's x86 or x86-64 code into C, once per build (`crates/lifter`, both widths; a
+- **The recompiler** turns an app's x86 or x86-64 code into C, once per build (`crates/lifter`, both widths; a
   Windows PE, a static Linux ELF or a native PS5 executable).
 - **Packages**: `pisco build` reads a recipe (`recipes/<app>/recipe.toml`) and the user's own copy of the app, and
   writes the app's image (an OCI image layout) `FROM` one base. What a recipe, a base and an image mean, apart from
   `pisco`, is the specification: [spec/](spec/README.md).
 - **Runtimes** are peers. Each imitates one system and is one base (`bases/<runtime>/1/base.toml`), which lists its
-  files: the core (`rt/*.c`) every Windows and console title links, plus its own folder (and `rt/gdk/`, which the two
+  files: the core (`rt/*.c`) every Windows and console app links, plus its own folder (and `rt/gdk/`, which the two
   64-bit Windows-family runtimes share). The Linux runtime links only the core's files that imitate no system
   (`rt/core.c`, `rt/clock.c`, `rt/builtins.c`) and its own folder, and so does the PS5 runtime, with the GPU ring and the mixer. None of them is "the" runtime: what started as the goal, Minecraft on the Xbox Series runtime, is now that
   runtime's goal, one among several.
@@ -26,32 +26,32 @@ packages  Doom as a console title, XCL's   Stockfish, SimpleTriangleDesktop,    
 
 | Runtime | Base | Its files | Runs | Next | Its goal |
 |---|---|---|---|---|---|
-| Xbox Series | `base/xbox-series:1` | `rt/gdk/`, `rt/xbox-series/` | Doom (D3D12.X on WebGPU, XAudio2, GameInput, saves), XCL's console test title 50/50 | the rungs in [status.md](status.md#xbox-series) | Minecraft (Bedrock), the Xbox Series build |
+| Xbox Series | `base/xbox-series:1` | `rt/gdk/`, `rt/xbox-series/` | Doom (D3D12.X on WebGPU, XAudio2, GameInput, saves), XCL's console test app 50/50 | the rungs in [status.md](status.md#xbox-series) | Minecraft (Bedrock), the Xbox Series build |
 | Windows x64 | `base/windows-x64:1` | `rt/gdk/`, `rt/windows-x64/` | Stockfish 19, Microsoft's SimpleTriangleDesktop and SimplePBR | Desire, a small D3D12 game on its own engine ([desire.md](desire.md)) | desktop D3D12 titles |
 | Windows x86 | `base/windows-x86:1` | `rt/windows-x86/` | Narbacular Drop, playable; Tag: The Power of Paint into its second level (Direct3D 9 shaders as WGSL, D3DX's effects, FMOD Ex) | Medal of Honor: Allied Assault's demo, an OpenGL game on id Tech 3 ([mohaa.md](mohaa.md)) | 32-bit Direct3D 9 games of the 2000s |
 | Linux x64 | `base/linux-x64:1` | `rt/linux-x64/` | fastfetch 2.71.0; neofetch 7.1.0 on bash and busybox, its processes forked and executed; cowsay on perl 5.44 ([fastfetch.md](fastfetch.md), [neofetch.md](neofetch.md), [cowsay.md](cowsay.md)) | threads, signals, a file system that can be written | statically linked command-line programs |
 | Microvm x64 | `base/microvm-x64:1` | `rt/microvm-x64/` | Linux 6.18 and busybox lifted, an image: `/init`'s programs as on QEMU, a shell to type into, in Node and the page ([linux.md](linux.md)); a virtio disk; a network in Node | the network in the page | Linux itself, lifted, and its programs |
-| PS5 | `base/ps5:1` | `rt/ps5/` | the raymarching tech demo v1.4 (CPU-drawn, AVX2 and FMA): its three scenes, pad and music ([ps5.md](ps5.md)) | more system functions, a GPU (AGC) title, images by `pisco build` | PS5 homebrew |
+| PS5 | `base/ps5:1` | `rt/ps5/` | the raymarching tech demo v1.4 (CPU-drawn, AVX2 and FMA): its three scenes, pad and music ([ps5.md](ps5.md)) | more system functions, a GPU (AGC) app, images by `pisco build` | PS5 homebrew |
 
-A new runtime is a new folder and a new base; a new title of an existing runtime is a recipe.
+A new runtime is a new folder and a new base; a new app of an existing runtime is a recipe.
 
 ## The rules a change follows
 
-1. **A title links only its base.** The base lists the runtime's files; nothing else does (`tests/run.sh layout`
+1. **An app links only its base.** The base lists the runtime's files; nothing else does (`tests/run.sh layout`
    checks it). A recipe's `libraries` add files of its base only. The licence map (`LICENSING.md`) is by base.
-2. **Built by `pisco`.** A title is a recipe plus the user's copy; `pisco build` makes its image the same way every
-   time (two builds with empty caches give the same digest: `tests/run.sh images`). Workarounds for one title are
+2. **Built by `pisco`.** An app is a recipe plus the user's copy; `pisco build` makes its image the same way every
+   time (two builds with empty caches give the same digest: `tests/run.sh images`). Workarounds for one app are
    recipe options (`[quirks]`, `[cpu]`, `[registry]`, `[dll]`), not changes everyone gets.
 3. **Checked by `tests/run.sh`.** Every check has a step there; a step whose inputs (a game, an SDK) are not on the
-   machine says so in one line and is skipped. Windows titles are compared with Wine running the same files (the
-   oracle, `tools/oracle-wine/`); console behaviour follows XCL's findings; a Linux title is compared with itself,
+   machine says so in one line and is skipped. Windows apps are compared with Wine running the same files (the
+   oracle, `tools/oracle-wine/`); console behaviour follows XCL's findings; a Linux app is compared with itself,
    run on the Linux that builds it, for everything that does not depend on the machine.
-4. **Nothing of a title in the repository.** No game files, installers, Microsoft DLLs, lifted output, shader dumps
+4. **Nothing of an app in the repository.** No game files, installers, Microsoft DLLs, lifted output, shader dumps
    or screenshots: `out/` is ignored, and a recipe names a file by its sha256.
 5. **Licences checked.** Our own code is GPL-2.0-or-later with SPDX headers; `reuse lint` passes; code from others
    keeps its licence and has a row in `THIRD_PARTY.md`.
 6. **One pull request per milestone, none straight to `main`;** the docs (this file, `status.md`, `journey.md`, the
-   title's page, the progress map) change in the same pull request as the code, and so does its entry in the
+   app's page, the progress map) change in the same pull request as the code, and so does its entry in the
    changelog (`changelog/README.md`): a file there, a video only as a release.
 7. **The specification changes with what it describes.** A new recipe key, config field, layer role, base key, host
    function or `SW_*` variable lands with its text in [spec/](spec/README.md), in the same pull request
@@ -83,7 +83,7 @@ A new runtime is a new folder and a new base; a new title of an existing runtime
 | M4 | MOHAA's demo playable by hand: the docs and how to play it are done; playing it by hand on a real GPU is still to do | under way ([mohaa.md](mohaa.md#play-it)) |
 | B0 | experimental, optional: development on boat.dev sandboxes (a snapshot with everything built, the tests on several sandboxes at once); cowsay ported that way | done ([dev-machines.md](dev-machines.md)) |
 | B1 | the changelog on GitHub Pages drawn from `changelog/*.md` by a workflow on `main`, video releases published by it | done ([changelog/README.md](../changelog/README.md)) |
-| K0 | Linux itself as a title, the groundwork: the kernel built from a pinned source with our configuration, read by the lifter (`--machine`), booted on QEMU as the oracle; stacks, memory and hardware measured | done ([linux.md](linux.md#progress)) |
+| K0 | Linux itself as an app, the groundwork: the kernel built from a pinned source with our configuration, read by the lifter (`--machine`), booted on QEMU as the oracle; stacks, memory and hardware measured | done ([linux.md](linux.md#progress)) |
 | K1 | a sixth runtime, a small x86-64 machine (`rt/microvm-x64`, `base/microvm-x64`): its MMU, faults, interrupts and system calls as nested runs, the APIC's timer, a host stack per task; our own test kernel prints what QEMU prints, in Node and Chrome | done ([linux.md](linux.md#progress)) |
 | K2 | Linux 6.18 lifted on it, booted to `/init` in Node in 0.9 s, the same on every run (runtime constants, static calls, the boot protocol, the IOAPIC) | done ([linux.md](linux.md#progress)) |
 | K3 | busybox lifted with the kernel: `/init`'s programs (fork, exec, pipes, signals, files) print what they print on QEMU, in 2.5 s | done ([linux.md](linux.md#progress)) |
@@ -98,3 +98,4 @@ A new runtime is a new folder and a new base; a new title of an existing runtime
 | K12 | a distribution's program, position-independent and dynamically linked: Alpine's busybox, and musl's loader, lifted when they first run | done ([linux.md](linux.md#progress)) |
 | K13 | libraries: one a program is linked against and one it opens (`dlopen`), each found below the code first met in it, lifted and loaded | done ([linux.md](linux.md#progress)) |
 | K14 | a network: virtio's network device on the machine (`SW_NET`), unkernel's network stack (MIT) terminating its frames in Node; a lease, a name and a page fetched | done ([linux.md](linux.md#progress)) |
+| P0 to P4 | apps by name ([spec/distribution.md](spec/distribution.md)): a store (`pisco install`, `list`, `run <name>`, `remove`), recipe sources (official `recipes/`, `owner/repo/app`, `@ns/app`, any git URL; a third party's may not run scripts), inputs kept by sha256 and fetched from a `url`, a registry (`pisco push`/`pull`, ghcr.io) for apps made only from this repository's sources, `[permissions] network` | done (`tests/run.sh store`) |

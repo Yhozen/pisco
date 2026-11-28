@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // kernelx, the console's kernel library: what it adds to kernel32 (console type, OS version, memory status,
-// thread names). XMem is xmem.c. Behaviour follows XCL's findings on retail titles (github.com/ivall/xcl, GPL-2.0).
+// thread names). XMem is xmem.c. Behaviour follows XCL's findings on retail apps (github.com/ivall/xcl, GPL-2.0).
 #include "../gdk/gdk.h"
 
 // ---- kernelx ----
@@ -8,7 +8,7 @@ IMP(kernelx, GetConsoleType) { RET(6); }                       // Xbox Series X
 IMP(kernelx, GetSystemOSVersion) { u64 p = ARG(0); M8(p) = 10; M8(p + 1) = 0; M16(p + 2) = 25398; M16(p + 4) = 0; }
 IMP(kernelx, TitleMemoryStatus) {
   u64 p = ARG(0), total = 13824ull << 20;
-  // dwLength, dwReserved, then ullTotalMem, ullAvailMem, legacy..., title, ...
+  // dwLength, dwReserved, then ullTotalMem, ullAvailMem, legacy..., app, ...
   for (int i = 0; i < 9; i++) M64(p + 8 + 8 * i) = total / (i ? 2 : 1);
   RET(1);
 }

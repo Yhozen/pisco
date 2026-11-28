@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-// The stream between the graphics front ends (on the title's threads: rt/gdk/d3d12.c for Direct3D 12 and the
+// The stream between the graphics front ends (on the app's threads: rt/gdk/d3d12.c for Direct3D 12 and the
 // console's D3D12.X; rt/windows-x86/d3d9_gpu.c for Direct3D 9, with the explicit records further down) and the GPU back
 // end (web/gpu/backend.js on the page, web/gpu/null.js in Node). tools/gen-cmd-js.mjs turns every
 // `#define GPU_<NAME> <value>` line of this file into web/gpu/cmd.gen.js: keep one define per line.
@@ -27,7 +27,7 @@
 // id, dimension (0 buffer, 2 tex2d, 3 tex3d, 1 tex1d), format, width lo, width hi, height, depth or array size,
 // mip levels, sample count, flags, heap type, guest backing (0: none), gpu va lo, gpu va hi.
 // A buffer with backing: guest memory holds its bytes (the GPU's copy is uploaded before work reads it and
-// read back after work writes it). A texture with backing: its texels sit in guest memory in the title
+// read back after work writes it). A texture with backing: its texels sit in guest memory in the app
 // layout (subresources one after another, as GetCopyableFootprints places them) and the GPU follows them.
 #define GPU_R_RESOURCE 1
 // in its flags, beside D3D12's: a D3D12 buffer, which gets 64 KiB past its end on the GPU (a constant buffer view

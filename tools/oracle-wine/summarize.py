@@ -1,13 +1,13 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 # usage: summarize.py WINE_LOG [--image LO-HI] [--order N] [--exceptions]
-# Reads a Wine debug log (WINEDEBUG=+relay, +snoop, +seh, +d3d9 ...) and prints what the title asked for:
-#   - Win32 calls made from the title's own image (return address inside --image, default 0x400000-0x7fffff),
+# Reads a Wine debug log (WINEDEBUG=+relay, +snoop, +seh, +d3d9 ...) and prints what the app asked for:
+#   - Win32 calls made from the app's own image (return address inside --image, default 0x400000-0x7fffff),
 #     counted per function, DLL by DLL, in order of first call
 #   - with --order N, the first N such calls in order (the start-up sequence)
 #   - calls into native DLLs seen by +snoop, per function
 #   - Direct3D 9 methods seen by +d3d9, per method, with the values each numeric argument took (states by name)
-#   - exceptions raised (+seh), per code, on the title's threads and on the others
-# Prints names and counts only: nothing of the title's data.
+#   - exceptions raised (+seh), per code, on the app's threads and on the others
+# Prints names and counts only: nothing of the app's data.
 import re, sys, collections
 
 args = sys.argv[1:]; log = args[0]; lo, hi = 0x400000, 0x7fffff; order = 0
@@ -92,4 +92,4 @@ if methods:
         print(f"  {k[5:]} {a}: " + ', '.join(f'{v} x{n}' for v, n in top[:10]) + more)
 print(f'== exceptions (+seh): {sum(excs.values())}')
 for (tid, code, name, module), n in sorted(excs.items(), key=lambda t: -t[1]):
-    print(f"  {n:6d}  code {code} {name:28s} in {module or '?':20s} thread {tid.decode()} {'(the title)' if tid in title_threads else ''}")
+    print(f"  {n:6d}  code {code} {name:28s} in {module or '?':20s} thread {tid.decode()} {'(the app)' if tid in title_threads else ''}")

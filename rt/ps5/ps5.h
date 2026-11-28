@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-// The PS5 runtime (base/ps5): what a native PS5 executable finds of its system. The title is built as ps5-payload-sdk
+// The PS5 runtime (base/ps5): what a native PS5 executable finds of its system. The app is built as ps5-payload-sdk
 // and ps5-native-tool build homebrew; its calls into the system's libraries (libkernel, libSceLibcInternal,
 // libSceVideoOut, libScePad, libSceAudioOut, ...) are answered here, in the System V calling convention: arguments in
 // rdi, rsi, rdx, rcx, r8, r9, the result in rax. AnyPS5 (github.com/boykopovar/AnyPS5, core/libs/prx) is the

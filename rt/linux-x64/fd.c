@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-// File descriptors: the three standard streams (the host's), files of the title's folder (read from the host as
+// File descriptors: the three standard streams (the host's), files of the app's folder (read from the host as
 // they are read), the runtime's generated files (their bytes made when they are opened), directories, and pipes,
 // which are the host's (they join processes, each of which has memory of its own).
 #include <unistd.h>
@@ -279,7 +279,7 @@ s64 sys_fcntl(s64 fd, u64 cmd, u64 arg) {
   return -L_EINVAL;
 }
 // poll: a file or a device can always be read; the terminal's input never has anything (no keyboard is wired to
-// a title yet), so a wait for it lasts as long as it was asked to
+// an app yet), so a wait for it lasts as long as it was asked to
 s64 sys_poll(u64 list, u64 n, s64 ms) {
   s64 ready = 0;
   for (u64 i = 0; i < n; i++) {

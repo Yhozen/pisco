@@ -2,7 +2,7 @@
 // The `syscall` instruction: the number in RAX, the arguments in RDI, RSI, RDX, R10, R8 and R9, the result (or a
 // negated errno) back in RAX. A process has one thread: clone for a thread says no. fork, execve, wait4 and pipes
 // are the host's (process.c, fd.c). A call the runtime does not know says ENOSYS and is
-// logged once; with SW_STRICT=1 it stops the title. SW_TRACE=1 logs every call.
+// logged once; with SW_STRICT=1 it stops the app. SW_TRACE=1 logs every call.
 #include <unistd.h>
 #include "linux.h"
 
@@ -57,7 +57,7 @@ static s64 sys_futex(u64 addr, u64 op, u64 val, u64 timeout) {
   switch (op & 0x7F) {
   case 0: case 9:   // FUTEX_WAIT, FUTEX_WAIT_BITSET: nobody else can change the word or wake us
     if (M32(addr) != (u32)val) return -L_EAGAIN;
-    if (!timeout) rt_fatal("futex: the title waits for a wake-up nobody can send (it has one thread)");
+    if (!timeout) rt_fatal("futex: the app waits for a wake-up nobody can send (it has one thread)");
     sleep_us(M64(timeout) * 1000000 + M64(timeout + 8) / 1000);
     return -L_ETIMEDOUT;
   case 1: case 10: return 0;   // FUTEX_WAKE: no one waits
@@ -148,8 +148,8 @@ void rt_syscall(Cpu *c, u64 next) {
   case 59: r = sys_execve(S(a), b, d); break;
   case 61: r = sys_wait4((s64)(s32)a, b, d); break;
   case 62: if (b == 0 || ((s32)a != (s32)host_proc_pid() && (s32)a > 0)) { r = 0; break; }   // kill: no signal reaches another process yet
-           rt_fatal("the title sent itself (or its group) signal %llu (abort is 6)", b);
-  case 200: case 234: if ((nr == 234 ? d : b) == 0) { r = 0; break; } rt_fatal("the title sent itself signal %llu (abort is 6)", nr == 234 ? d : b);
+           rt_fatal("the app sent itself (or its group) signal %llu (abort is 6)", b);
+  case 200: case 234: if ((nr == 234 ? d : b) == 0) { r = 0; break; } rt_fatal("the app sent itself signal %llu (abort is 6)", nr == 234 ? d : b);
   case 60: case 231: linux_exit((u32)a); r = 0; break;
   case 22: r = sys_pipe2(a, 0); break;
   case 293: r = sys_pipe2(a, b); break;

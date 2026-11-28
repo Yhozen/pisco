@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-// A 32-bit title that calls D3DX's HLSL preprocessor and compiler directly, as Tag's effects reach them: a source
-// with an #include answered by the title's own ID3DXInclude, preprocessed, then compiled for vs_2_0 and ps_2_0. It
+// A 32-bit app that calls D3DX's HLSL preprocessor and compiler directly, as Tag's effects reach them: a source
+// with an #include answered by the app's own ID3DXInclude, preprocessed, then compiled for vs_2_0 and ps_2_0. It
 // prints the preprocessed text, each bytecode's length and hash, and any error text. Run with Microsoft's
 // d3dx9_35.dll beside it (the user's own, from Tag's installer: never in this repository): what it prints under
 // Wine with that DLL is what PISCO's lifted copy must print (tests/run.sh d3dx). No C runtime of its own.

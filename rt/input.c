@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-// Input for Windows desktop titles: one state (keys by DirectInput scan code, the mouse's motion and buttons) with
+// Input for Windows desktop apps: one state (keys by DirectInput scan code, the mouse's motion and buttons) with
 // the events that changed it, read by DirectInput (rt/windows-x86/dinput8.c) and by user32's GetAsyncKeyState
 // (rt/gdk/window.c, through a table of virtual keys). And the session player, which feeds that state
-// from a session script on the title's clock, so a run can be driven without a person and repeated exactly.
+// from a session script on the app's clock, so a run can be driven without a person and repeated exactly.
 //
 // A session (tools/oracle-wine/README.md has the format) reaches the runtime as the host's SW_SESSION_STEPS
 // (web/session.mjs makes it from the JSON file SW_SESSION names): steps separated by ';', each one of

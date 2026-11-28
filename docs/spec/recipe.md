@@ -80,6 +80,8 @@ table and what `pisco` accepts are the same list (the rows between the two marke
 | `input.sha256` | string, or list of strings | one of three | the input's sha256 (a folder's: its tree digest), or several accepted ones |
 | `input.built_by` | string | one of three | the input is made on the builder's machine by this script of the repository (its bytes depend on the compiler) |
 | `input.unpinned` | string | one of three | the input is not pinned, and why (any version of a redistributable) |
+| `permissions.network` | boolean | no | the app may be given a network ([below](#permissions)) |
+| `input.url` | string | no | a file input pinned by `sha256`: where a builder may fetch it (`https://`, or `http://`) |
 | `input.where` | string | no | for a person: where the input comes from |
 | `extract.kind` | string | yes | what the step does: one of the [extract kinds](#extract-kinds) |
 | `extract.input` | string | some kinds | the input it reads, by `id` |
@@ -132,9 +134,15 @@ Each `[[input]]` is a file or a folder the user supplies. It has exactly one of:
   recipe: fastfetch, the hellos, Linux). Its bytes depend on the compiler, so the recipe has no lock.
 - `unpinned`: the input is any of several versions, and the recipe says why. Its recipe has no portable lock either.
 
-How the builder finds an input is not the recipe's business. `pisco` looks for `file` beside the recipe unless told
-(`pisco build <recipe> --input <id>=<path>`; `--source <path>` names the input the first step reads; `--with
-<ID>=<folder>` and the environment variable `<ID>`, upper-case, name a folder input).
+A file input pinned by its sha256 may say `url`: where anyone may fetch it (a freeware's or a shareware's own
+download, as Flathub's `extra-data`). A builder that fetches it must check its sha256 before it keeps it, and a
+recipe must not have a `url` for a file its makers do not give away ([distribution.md](distribution.md#what-may-be-published)).
+
+How the builder finds an input is otherwise not the recipe's business. `pisco` looks for it where the command line
+says (`pisco build <recipe> --input <id>=<path>`; `--source <path>` names the input the first step reads; `--with
+<ID>=<folder>` and the environment variable `<ID>`, upper-case, name a folder input), then for `file` beside the
+recipe, then in the store's inputs by its sha256 (`pisco install` keeps each pinned file input there), then at its
+`url`.
 
 ## Extract steps
 
@@ -196,6 +204,17 @@ Behaviour of the system that one app depends on and others must not get.
 
 A file of `[files]` is written as text: on the Windows platforms and the Xbox Series its lines end with CR LF, on the
 others with LF. It is placed after every extract step and replaces a file of the same path.
+
+## Permissions
+
+What an app may be given beyond its drive, its screen and its input. A host must not give an app what its config
+does not list (`permissions` in [image.md](image.md#the-config)), and a store should say what an app asks for when
+it is installed, as Flatpak's do. A permission is what an app may have, not what every run gives it: the user (or
+the host's settings) turns it on.
+
+| Permission | Means |
+|---|---|
+| `network` | a network device: the machine's virtio network ([platforms/microvm-x64.md](platforms/microvm-x64.md)); `pisco`'s Node host gives it with `SW_NET=1` |
 
 ## The lock
 

@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
-# usage: d3d12-compare.py WINE_LOG OUR_LOG: the Direct3D 12 methods a title called, under Wine (vkd3d's own trace:
+# usage: d3d12-compare.py WINE_LOG OUR_LOG: the Direct3D 12 methods an app called, under Wine (vkd3d's own trace:
 # VKD3D_DEBUG=trace; a method vkd3d has as a stub says so as a fixme) and in our run (SW_CALL_STATS=1: the
 # "calls before checkpoint ..." lines, rt/windows-x64/dxgi_swapchain.c). IUnknown's methods are left out. Every
 # method called here must be one vkd3d saw called; the ones only Wine's side has are printed (Wine's DXGI swap chain

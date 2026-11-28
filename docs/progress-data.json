@@ -1,6 +1,6 @@
 {
  "updated": "2026-11-27",
- "titles": {
+ "apps": {
   "Doom (our console title)": [
    "api-ms-win-crt-convert-l1-1-0.dll!atof",
    "api-ms-win-crt-convert-l1-1-0.dll!atoi",
@@ -82,7 +82,7 @@
    "xgameruntime.dll!XUserAddAsync",
    "xgameruntime.dll!XUserAddResult"
   ],
-  "XCL's console test title": [
+  "XCL's console test app": [
    "api-ms-win-core-synch-l1-2-0.dll!WaitOnAddress",
    "api-ms-win-core-synch-l1-2-0.dll!WakeByAddressAll",
    "api-ms-win-core-synch-l1-2-0.dll!WakeByAddressSingle",
@@ -2501,7 +2501,7 @@
    "pass": true
   },
   {
-   "check": "kernelx: unimplemented import becomes a stub and the title keeps running",
+   "check": "kernelx: unimplemented import becomes a stub and the app keeps running",
    "pass": true
   },
   {
@@ -2537,7 +2537,7 @@
    "pass": true
   },
   {
-   "check": "files: T:\\ title scratch storage",
+   "check": "files: T:\\ app scratch storage",
    "pass": true
   },
   {
@@ -2585,11 +2585,11 @@
    "pass": true
   },
   {
-   "check": "D3D12.X: frame clock + PresentX of the title's back buffer",
+   "check": "D3D12.X: frame clock + PresentX of the app's back buffer",
    "pass": true
   },
   {
-   "check": "D3D12.X: console device methods (placed title memory, DMA queue + list, page pools)",
+   "check": "D3D12.X: console device methods (placed app memory, DMA queue + list, page pools)",
    "pass": true
   },
   {
@@ -2629,7 +2629,7 @@
    "pass": true
   },
   {
-   "check": "D3D12.X: a texture in title memory (XG layout, #44) follows CPU writes",
+   "check": "D3D12.X: a texture in app memory (XG layout, #44) follows CPU writes",
    "pass": true
   },
   {
@@ -2658,7 +2658,7 @@
   },
   {
    "step": "Doom",
-   "note": "console title: D3D12.X, XAudio2, GameInput, saves",
+   "note": "console app: D3D12.X, XAudio2, GameInput, saves",
    "state": "done"
   },
   {

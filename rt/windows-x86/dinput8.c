@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-// DirectInput 8 for Windows desktop titles: the system mouse and the system keyboard, read from the runtime's
+// DirectInput 8 for Windows desktop apps: the system mouse and the system keyboard, read from the runtime's
 // input state (input.c) as immediate data (GetDeviceState: DIMOUSESTATE, DIMOUSESTATE2, the 256-byte keyboard)
-// and as buffered data (GetDeviceData, once the title has set a buffer size: the events since its last read). In the
+// and as buffered data (GetDeviceData, once the app has set a buffer size: the events since its last read). In the
 // browser the page's keyboard and the mouse under Pointer Lock feed that state (input_poll, before each read).
 // The title's window always has the focus, so a device is never lost. No game controller is attached.
 // The data formats understood are the three standard ones (by their size); others are refused.

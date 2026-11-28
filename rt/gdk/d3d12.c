@@ -6,7 +6,7 @@
 //
 // Two flavours of the same objects: a device from D3D12CreateDevice has the PC vtables (d3d12.h order,
 // rt/gdk/d3d12_layout.gen.h); one from D3D12XboxCreateDevice has the console's, whose differences follow
-// XCL's findings on retail titles (github.com/ivall/xcl, GPL-2.0): the command list's methods from
+// XCL's findings on retail apps (github.com/ivall/xcl, GPL-2.0): the command list's methods from
 // SetDescriptorHeaps on sit 4 slots later, the device's extensions start at #44 (frame clock #78-#80),
 // the queue's PresentX is #30, and descriptor heaps return their start handles in RAX.
 #include <time.h>
@@ -401,11 +401,11 @@ IMP(d3d12, Device_GetResourceAllocationInfo) { // hidden return pointer (PC), th
 }
 static u64 va_next = 0x200000000ull; // GPU addresses of PC buffers without guest backing: above every guest address
 // heap: D3D12_HEAP_TYPE (4 custom: cpu_page says whether the CPU sees it); at: where its memory is (a placed
-// resource: title memory or a heap's), else 0.
+// resource: app memory or a heap's), else 0.
 // PC device: upload / readback buffers have guest backing, the others live on the GPU only.
 // Console device (UMA): every buffer is guest memory in the GPU-visible region, its GPU address its CPU one;
 // upload and readback buffers up to 64 MiB go to the coherent window 3 (XCL's rule), the rest to window 0.
-// A texture placed at title memory (CreatePlacedResourceX) has its texels there.
+// A texture placed at app memory (CreatePlacedResourceX) has its texels there.
 u32 d3d12_create_resource(Obj *dev, u32 heap, u32 cpu_page, u64 desc, u64 at, u64 riid, u64 ppv) {
   Resource *r = obj_new(C_RESOURCE, sizeof(Resource), dev->console);
   memcpy(r->desc, (void *)GP(desc), 56);
@@ -442,7 +442,7 @@ IMP(d3d12, Device_CreatePlacedResource) { // (heap, offset, desc, state, clear, 
   u64 at = h && h->va && M32(ARG(3)) == 1 ? h->va + ARG(2) : 0;
   RET(d3d12_create_resource(d3d12_obj(ARG(0)), h ? h->type : 1, h ? h->cpu_page : 0, ARG(3), at, ARG(6), ARG(7)));
 }
-IMP(d3d12, Device_CreatePlacedResourceX) { // #44 (title address, desc, state, clear, riid, ppv): the resource is that memory
+IMP(d3d12, Device_CreatePlacedResourceX) { // #44 (app address, desc, state, clear, riid, ppv): the resource is that memory
   RET(d3d12_create_resource(d3d12_obj(ARG(0)), 1, 0, ARG(2), ARG(1), ARG(5), ARG(6)));
 }
 IMP(d3d12, Device_CreateHeap) { // ({size, properties {type, cpu page, pool, ...}, alignment, flags}, riid, ppv)
@@ -540,7 +540,7 @@ IMP(d3d12, Device_CreateGraphicsPipelineState) { RET(graphics_pso(d3d12_obj(ARG(
 IMP(d3d12, Device_CreateGraphicsPipelineStateX) { RET(graphics_pso(d3d12_obj(ARG(0)), ARG(1), ARG(4), ARG(5))); } // #60 (desc, flags, ?, riid, ppv)
 // #55 CreateDerivedPipelineStateX(base, count, patches, riid, ppv): the base's description with parts replaced.
 // A patch is {u32 part; payload} every 0x14C bytes; parts (XCL's findings): 0 depth-stencil, 1 rasterizer,
-// 2 blend, 3 sample mask; 5 is seen on retail titles and not understood (ignored); others fail.
+// 2 blend, 3 sample mask; 5 is seen on retail apps and not understood (ignored); others fail.
 IMP(d3d12, Device_CreateDerivedPipelineStateX) {
   Obj *d = d3d12_obj(ARG(0)), *bo = d3d12_obj(ARG(1)); u32 n = (u32)ARG(2); u64 patches = ARG(3);
   Pso *base = bo && bo->cls == C_PSO ? (Pso *)bo : 0;

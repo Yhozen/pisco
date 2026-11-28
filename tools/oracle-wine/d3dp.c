@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-// d3dp.dll: a stand-in for d3d9.dll's Direct3DCreate9 that writes every shader bytecode the title (and D3DX in it)
+// d3dp.dll: a stand-in for d3d9.dll's Direct3DCreate9 that writes every shader bytecode the app (and D3DX in it)
 // passes to IDirect3DDevice9::CreateVertexShader / CreatePixelShader, then calls Wine's real d3d9.
 // Files: %PISCO_SHADER_DIR%\NNN-vs.bin / NNN-ps.bin (the tokens up to and including the end token).
 // Build: i686-w64-mingw32-clang -shared tools/oracle-wine/d3dp.c -o d3dp.dll (docs/tag.md: how it is put in front of d3d9 for a capture)

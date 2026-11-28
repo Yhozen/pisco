@@ -1,6 +1,6 @@
 #!/bin/bash
 # SPDX-License-Identifier: GPL-2.0-or-later
-# oracle.sh: runs a Windows title under Wine without a screen, as the reference our own runs are compared with.
+# oracle.sh: runs a Windows app under Wine without a screen, as the reference our own runs are compared with.
 #   oracle.sh prefix <title> [installer.exe [installer arguments...]]
 #       makes the title's Wine prefix (a virtual desktop of ORACLE_SCREEN, so a full-screen title stays a window
 #       that keeps running when it loses focus) and runs the installer in it, if one is given
@@ -11,7 +11,7 @@
 #       runs a console program to its end and prints what it printed (Wine's own messages go to the run folder)
 #   oracle.sh stop <title>                     ends the title's Wine processes (and the recording of its sound)
 #   oracle.sh sound start|stop                  the sound device: a PipeWire daemon with a null sink (pipewire.conf),
-#       started by `start` and `run` when needed. While a title runs, what it plays is recorded to the run folder's
+#       started by `start` and `run` when needed. While an app runs, what it plays is recorded to the run folder's
 #       wine-audio.wav (48 kHz stereo, from the sink's monitor)
 #   oracle.sh reg <title> <reg arguments...>   `wine reg` in the title's prefix
 #   oracle.sh dir <title>                      prints the run folder
@@ -23,17 +23,17 @@
 set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd); root=$(cd "$here/../.." && pwd); . "$here/env.sh"
 cmd=${1:?usage: oracle.sh prefix|start|run|play|stop|reg|dir|sound <title> ...}
-if [ "$cmd" = sound ]; then title=-; else title=${2:?title}; shift; fi; shift
-export WINEPREFIX=${WINEPREFIX_OVERRIDE:-$ORACLE_HOME/prefix-$title}
+if [ "$cmd" = sound ]; then app=-; else app=${2:?app}; shift; fi; shift
+export WINEPREFIX=${WINEPREFIX_OVERRIDE:-$ORACLE_HOME/prefix-$app}
 export DISPLAY=${ORACLE_DISPLAY:-:77}; screen=${ORACLE_SCREEN:-1024x768}
-run=${ORACLE_RUN:-$root/out/oracle/$title}; [ "$title" = - ] || mkdir -p "$run"
-xserver() { # one X server per display, shared by every title
+run=${ORACLE_RUN:-$root/out/oracle/$app}; [ "$app" = - ] || mkdir -p "$run"
+xserver() { # one X server per display, shared by every app
   [ -e "/tmp/.X11-unix/X${DISPLAY#:}" ] && return
   Xvfb "$DISPLAY" -screen 0 ${screen}x24 -nolisten tcp > "$run/xvfb.log" 2>&1 &
   for _ in $(seq 50); do [ -e "/tmp/.X11-unix/X${DISPLAY#:}" ] && return; sleep 0.1; done
   echo "oracle.sh: Xvfb did not start on $DISPLAY" >&2; exit 1
 }
-sound() { # start: the PipeWire daemon and wireplumber, once for every title; stop: both
+sound() { # start: the PipeWire daemon and wireplumber, once for every app; stop: both
   local d=$ORACLE_SOUND_DIR; mkdir -p "$d"; chmod 700 "$d"
   local env="XDG_RUNTIME_DIR=$d PIPEWIRE_RUNTIME_DIR=$d XDG_STATE_HOME=$d/state XDG_CONFIG_HOME=$d/config DBUS_SESSION_BUS_ADDRESS=disabled:"
   if [ "$1" = stop ]; then
@@ -47,7 +47,7 @@ sound() { # start: the PipeWire daemon and wireplumber, once for every title; st
   sleep 1   # wireplumber finds the sink and makes it the default
   [ -S "$d/pulse/native" ] || { echo "oracle.sh: the sound device did not start ($d/pipewire.log)" >&2; exit 1; }
 }
-record() { # what the title plays, until `stop`
+record() { # what the app plays, until `stop`
   [ "$ORACLE_SOUND" = 0 ] && return
   ffmpeg -hide_banner -loglevel error -y -f pulse -i sw-null.monitor -ac 2 -ar 48000 "$run/wine-audio.wav" < /dev/null > "$run/record.log" 2>&1 &
   echo $! > "$run/record.pid"
@@ -77,7 +77,7 @@ case $cmd in
     echo $! > "$run/pid"; echo "started $(basename "$unix") on $DISPLAY (log: $run/wine.log$([ "$ORACLE_SOUND" = 0 ] || echo ", sound: $run/wine-audio.wav"))" ;;
   run)
     xserver; exe=$(realpath "${1:?program}"); shift
-    [ -f "$WINEPREFIX/system.reg" ] || "$0" prefix "$title" > /dev/null
+    [ -f "$WINEPREFIX/system.reg" ] || "$0" prefix "$app" > /dev/null
     WINEDEBUG=-all wine "$exe" "$@" 2> "$run/run.log" ;;
   play)
     session=${1:?session.json}

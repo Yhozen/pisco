@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-// Direct3D 9 on the GPU ring. The device of d3d9*.c keeps every object and state; this file turns what a title
+// Direct3D 9 on the GPU ring. The device of d3d9*.c keeps every object and state; this file turns what an app
 // asks to see (Clear, DrawPrimitive, DrawIndexedPrimitive, Present) into the explicit records of rt/d3d12_cmd.h,
 // which say what WebGPU should do: shaders as WGSL text (written by d3d9_ffp.c from the fixed-function state),
 // pipelines, samplers, buffer and texture bytes, passes, draws. Nothing of Direct3D 12 is involved. The same
@@ -27,7 +27,7 @@
 //  Winding         D3DCULL_CCW (the default) culls counter-clockwise triangles: the front face is the clockwise
 //                  one. pipeline(): front face clockwise always; CCW culls the back, CW culls the front.
 //  Depth bias      D3DRS_DEPTHBIAS is a float in depth units, WebGPU's an integer count of the smallest depth
-//                  step: times 2^24, for the 24-bit depth buffers titles ask for (pipeline()).
+//                  step: times 2^24, for the 24-bit depth buffers apps ask for (pipeline()).
 //  Triangle fans   WebGPU has none: fan_indices() draws them as indexed lists (0, i + 1, i + 2).
 //  Points          one pixel in WebGPU: a point list is drawn as instanced four-vertex strips (d3d9_ffp.c sizes them).
 //  Alpha test      not in WebGPU: the fragment shader discards.
@@ -145,7 +145,7 @@ static u32 buffer(Buffer9 *b) {
     u32 lo = b->gpu_pending ? b->gpu_lo & ~3u : 0, hi = b->gpu_pending ? (b->gpu_hi + 3) & ~3u : b->size;   // whole words, of the buffer's own bytes
     if (hi > b->size || hi < lo) hi = b->size;
     u32 mode = b->gpu_pending ? b->gpu_mode : GPU_WRITE_ORDERED;
-    // A lock of the whole buffer that keeps its bytes (NOOVERWRITE, or no flag) says nothing of which ones the title
+    // A lock of the whole buffer that keeps its bytes (NOOVERWRITE, or no flag) says nothing of which ones the app
     // wrote: Tag locks a 384 KiB vertex buffer whole a dozen times a frame to append a few vertices. From the second
     // such lock on, the buffer keeps a copy of what the GPU holds and only the bytes that differ are sent. A DISCARD
     // leaves the GPU's other bytes undefined, so the copy is dropped.
@@ -168,7 +168,7 @@ static u32 texture(Texture9 *t) {
     t->gpu_id = resource(t->o.kind == K_VOLUMETEXTURE ? 3 : 2, format, t->width, t->height, cube ? 6 : t->depth, t->levels, (t->usage & USAGE_RENDERTARGET) ? 1 : (t->usage & USAGE_DEPTHSTENCIL) ? 2 : 0);
     stat.textures++;
   }
-  // a render target's pixels are the GPU's, but a level the title wrote since (UpdateTexture) is sent as any other
+  // a render target's pixels are the GPU's, but a level the app wrote since (UpdateTexture) is sent as any other
   for (u32 i = 0; i < t->levels; i++) {
     if (cube) for (u32 f = 0; f < 6; f++) { Surface9 *s = t->surfaces[f * t->levels + i]; if (s->dirty != s->gpu_dirty) { write_texture_at(t->gpu_id, i, f, s->desc.width, s->desc.height, 1, s->bits, s->pitch); s->gpu_dirty = s->dirty; } }
     else if (t->o.kind == K_TEXTURE) { Surface9 *s = t->surfaces[i]; if (s->dirty != s->gpu_dirty) { write_texture(t->gpu_id, i, s->desc.width, s->desc.height, 1, s->bits, s->pitch); s->gpu_dirty = s->dirty; } }
@@ -187,7 +187,7 @@ static u32 target(Surface9 *s, u32 *mip) {
     s->gpu_id = resource(2, format, s->desc.width, s->desc.height, 1, 1, (s->desc.usage & USAGE_DEPTHSTENCIL) ? 2 : 1);
     stat.textures++;
   }
-  // bytes the title put there itself (UpdateSurface, ColorFill, a lockable back buffer): sent before it is drawn on
+  // bytes the app put there itself (UpdateSurface, ColorFill, a lockable back buffer): sent before it is drawn on
   if (s->dirty != s->gpu_dirty && !(s->desc.usage & USAGE_DEPTHSTENCIL)) { write_texture(s->gpu_id, 0, s->desc.width, s->desc.height, 1, s->bits, s->pitch); s->gpu_dirty = s->dirty; }
   return s->gpu_id;
 }
@@ -543,7 +543,7 @@ static void draw_with(Device9 *d, PipelineKey *pkp, const u8 *streams, const Bou
 }
 
 
-// ---- the shaders a title made: d3d9_sm.c's WGSL, made once for each bytecode and link key ----
+// ---- the shaders an app made: d3d9_sm.c's WGSL, made once for each bytecode and link key ----
 typedef struct { u64 hash; u32 count; SmLinkKey link; u32 id; SmInfo info; } SmShader;
 static SmShader *sm_shaders; static u32 sm_count, sm_cap;
 static int sm_shader(Shader9 *sh, const SmLinkKey *link, SmShader *out) {

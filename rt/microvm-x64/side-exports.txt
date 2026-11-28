@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
-# What the title's module of a machine exports for its programs in modules of their own (web/side.mjs), whatever
+# What the app's module of a machine exports for its programs in modules of their own (web/side.mjs), whatever
 # they are: a program lifted when it is first run must find everything a lifted program may import. The machine's
 # functions (rt/cpu.h's machine section), its data (GOT.mem), and what compiled C calls for long double (the x87 of
-# a Linux program), 128-bit integers and the C library's long double maths. (tools/build-title.sh, pisco build.)
+# a Linux program), 128-bit integers and the C library's long double maths. (tools/build-app.sh, pisco build.)
 mmu_read mmu_write mmu_ptr mmu_u mmu_k mc_budget mc_rflags
 rt_poll rt_call rt_check_return rt_exc rt_hlt rt_syscall_m rt_trap rt_unimpl rt_sti rt_cpuid rt_rdtsc rt_random64 flags_set64
 rt_swapgs rt_wrmsr rt_rdmsr rt_wcr rt_rcr rt_lgdt rt_lidt rt_sgdt rt_sidt rt_ltr rt_str rt_wseg rt_rseg rt_invlpg rt_in rt_out rt_iret rt_sysret

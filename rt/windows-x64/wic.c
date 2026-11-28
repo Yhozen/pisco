@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // ole32.dll's COM start-up and the Windows Imaging Component (windowscodecs.dll) for Windows desktop titles: PNG
-// files read into 32-bit pixels, which is what a title that loads its textures through WIC asks (Desire). The
+// files read into 32-bit pixels, which is what an app that loads its textures through WIC asks (Desire). The
 // objects: the imaging factory (CoCreateInstance with CLSID_WICImagingFactory or ...2), a decoder made from a file
 // name, its one frame, and a format converter to 32bppRGBA, 32bppBGRA or 32bppPBGRA. PNG is decoded by stb_image
 // (third_party/stb_image.h, Sean Barrett's, MIT or public domain); any other format fails as WIC's

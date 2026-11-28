@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-// ole32 for Windows desktop titles: COM starts and stops, and no class is registered (the DirectX SDK's check for
+// ole32 for Windows desktop apps: COM starts and stops, and no class is registered (the DirectX SDK's check for
 // XInput pads asks WMI, which is not there: the caller's fallback runs, as on a machine without WMI).
 #include "../rt.h"
 

@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // libkernel (memory, time, threads, sysctl), the C library's functions the system exports (libSceLibcInternal),
-// and the system and user services a title starts with.
+// and the system and user services an app starts with.
 #include "ps5.h"
 
 // ---- memory: direct memory is guest memory; an allocation's "physical address" is where it is mapped ----
-#define DIRECT_MEMORY (4ull << 30)   // what the system reports a title may allocate
+#define DIRECT_MEMORY (4ull << 30)   // what the system reports an app may allocate
 IMP(libkernel, sceKernelGetDirectMemorySize) { RET(DIRECT_MEMORY); }
 // (search start, search end, length, alignment, memory type, &physical address)
 IMP(libkernel, sceKernelAllocateDirectMemory) {
@@ -45,7 +45,7 @@ IMP(libkernel, scePthreadJoin) { u64 r = 0; int e = ps5_thread_join(A0, &r); if 
 IMP(libkernel, scePthreadYield) { sched_yield(); RET(0); }  // a yield is not a clock-wait loop: the virtual clock moves on a flip or a sleep, not here
 IMP(libkernel, scePthreadSelf) { RET((u64)(uptr)c); }
 
-// ---- the system, as a title asks for it by name ----
+// ---- the system, as an app asks for it by name ----
 static const char model[] = "PISCO WEBASSEMBLY - LIFTED X86-64";
 static int sysctl_out(u64 old, u64 lenp, const void *v, size_t n) {
   if (!lenp) return -1;
@@ -54,7 +54,7 @@ static int sysctl_out(u64 old, u64 lenp, const void *v, size_t n) {
   M64(lenp) = n;
   return 0;
 }
-// (name, old value, &old length, new value, new length). No path: a title cannot take the browser for a console
+// (name, old value, &old length, new value, new length). No path: an app cannot take the browser for a console
 IMP(libkernel, sysctlbyname) {
   const char *n = GSTR(A0); int r = -1;
   if (!strcmp(n, "hw.model")) r = sysctl_out(A1, A2, model, sizeof model);

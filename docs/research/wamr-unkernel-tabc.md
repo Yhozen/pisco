@@ -105,7 +105,7 @@ refuses both files as they are, and lifts the merged ELF below to the same count
    with the files' own bytes, for the runtime to load (the dynamic linker relocates them itself).
 2. In a scratch copy of `rt/`, the auxiliary vector's `AT_BASE` and `AT_ENTRY` came from the environment, so the
    process starts in musl's `_dlstart`, which relocates both and calls busybox.
-3. `tools/build-title.sh`: 4,166 functions, 284,285 instructions, 18 left out (x87 `fcmov`, `fpatan`, `fldenv`,
+3. `tools/build-app.sh`: 4,166 functions, 284,285 instructions, 18 left out (x87 `fcmov`, `fpatan`, `fldenv`,
    `fnstenv`); 55 s; a 6.8 MB module.
 4. The root's 304 symlinks to `/bin/busybox` became `#!/bin/busybox` scripts (the host does not follow a root's
    absolute symlinks).

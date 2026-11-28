@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-// The PC GDK's XGameRuntime objects (QueryApiImpl): how a Windows desktop title reaches XGameRuntime.
+// The PC GDK's XGameRuntime objects (QueryApiImpl): how a Windows desktop app reaches XGameRuntime.
 #include "../gdk/gdk.h"
 // the console-style functions (rt/gdk/xgameruntime.c) its methods forward to
 IMP(xgameruntime, XAsyncGetStatus); IMP(xgameruntime, XAsyncRun); IMP(xgameruntime, XGameGetXboxTitleId); IMP(xgameruntime, XSystemGetAnalyticsInfo); IMP(xgameruntime, XSystemGetXboxLiveSandboxId); IMP(xgameruntime, XThreadAssertNotTimeSensitive);
@@ -15,7 +15,7 @@ IMP(xgameruntime, InitializeApiImplEx) { RET(S_OK); }
 IMP(xgameruntime, InitializeApiImplEx2) { rt_log("XGameRuntime (PC): initialised (game version 0x%llx, SDK 0x%llx)", ARG(0), ARG(1)); RET(S_OK); }
 IMP(xgameruntime, UninitializeApiImpl) { RET(S_OK); }
 IMP(xgameruntime, XErrorReport) { rt_log("XGameRuntime: XErrorReport 0x%08x %s", (u32)ARG(0), ARG(1) ? GSTR(ARG(1)) : ""); }
-// the API families the PC library asks for, as its thunks use them (facts read from a desktop title's code:
+// the API families the PC library asks for, as its thunks use them (facts read from a desktop app's code:
 // class id, interface id, method slots); slots 0-2 are IUnknown's
 typedef struct { const char *clsid, *iid; const char *methods[32]; } PcApi;
 static const PcApi pc_apis[] = {

@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 # cowsay 3.8.4 (https://github.com/cowsay-org/cowsay, GPL-3.0 or Artistic), a Perl script, on perl 5.44.0, both static
-# x86-64 programs built by tools/build-cowsay.sh into out/cowsay/root, the title's root (docs/cowsay.md). Nothing of
+# x86-64 programs built by tools/build-cowsay.sh into out/cowsay/root, the app's root (docs/cowsay.md). Nothing of
 # them is in the repository. Every ELF there (perl, busybox for /usr/bin/env) is lifted into a module of its own.
 schema = 1
 name = "cowsay"

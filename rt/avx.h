@@ -111,7 +111,7 @@ static inline double v_round1d(double x, u8 imm, u32 mxcsr) {
 static inline V v_roundpd(V a, u8 imm, u32 mxcsr) { V r; for (int i = 0; i < 2; i++) r.pd[i] = v_round1d(a.pd[i], imm, mxcsr); return r; }
 static inline V v_sqrtpd(V a) { V r; for (int i = 0; i < 2; i++) r.pd[i] = __builtin_sqrt(a.pd[i]); return r; }
 static inline V v_movsldup(V a) { V r; r.d[0] = r.d[1] = a.d[0]; r.d[2] = r.d[3] = a.d[2]; return r; }
-// cvtps2dq rounds as MXCSR says (nearest-even unless the title changed it)
+// cvtps2dq rounds as MXCSR says (nearest-even unless the app changed it)
 static inline V v_cvtps2dq(V a, u32 mxcsr) { V r; for (int i = 0; i < 4; i++) r.sd[i] = cvt_f2i32(v_round1(a.ps[i], 4, mxcsr)); return r; }
 static inline V v_blendvpd(V a, V b, V m) { V r; for (int i = 0; i < 2; i++) r.q[i] = (s64)m.q[i] < 0 ? b.q[i] : a.q[i]; return r; }
 // vpermilps with a variable control: each element picks one of its own half's four

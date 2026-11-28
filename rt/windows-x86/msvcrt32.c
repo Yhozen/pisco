@@ -113,7 +113,7 @@ IMP(msvcrt, wcstombs) { // (dst, src, bytes): code page 1252's first 256 charact
 int rt_vsscanf(Cpu *c, const char *in, const char *fmt, u64 va);
 IMP(msvcrt, sscanf) { RET((s64)rt_vsscanf(c, GSTR(ARG(0)), GSTR(ARG(1)), R[RSP] + 12)); }   // (buffer, format, ...): cdecl, the pointers after them
 
-// ---- sorting with the title's comparison (cdecl: it leaves the arguments) ----
+// ---- sorting with the app's comparison (cdecl: it leaves the arguments) ----
 typedef struct { Cpu *c; u64 base, size, cmp; } Sort;
 static int compare(Sort *s, u64 i, u64 j) { return (s32)rt_guest_call(s->c, s->cmp, s->base + i * s->size, s->base + j * s->size, 0, 0); }
 static void swap_items(Sort *s, u64 i, u64 j) { u8 *a = (u8 *)GP(s->base + i * s->size), *b = (u8 *)GP(s->base + j * s->size); for (u64 k = 0; k < s->size; k++) { u8 t = a[k]; a[k] = b[k]; b[k] = t; } }
@@ -133,7 +133,7 @@ IMP(msvcrt, srand) { rand_state = (u32)ARG(0); }
 IMP(msvcrt, rand) { rand_state = rand_state * 214013u + 2531011u; RET((rand_state >> 16) & 0x7FFF); }
 
 // ---- the date and time as text, and temporary names ----
-static struct tm now_tm(void) { time_t t = (time_t)(rt_uptime_us() / 1000000) + 1199145600; struct tm m; gmtime_r(&t, &m); return m; } // the title's clock from 2008-01-01
+static struct tm now_tm(void) { time_t t = (time_t)(rt_uptime_us() / 1000000) + 1199145600; struct tm m; gmtime_r(&t, &m); return m; } // the app's clock from 2008-01-01
 IMP(msvcrt, _strdate) { struct tm m = now_tm(); snprintf(GSTR(ARG(0)), 9, "%02d/%02d/%02d", m.tm_mon + 1, m.tm_mday, m.tm_year % 100); RET(ARG(0)); }
 IMP(msvcrt, _strtime) { struct tm m = now_tm(); snprintf(GSTR(ARG(0)), 9, "%02d:%02d:%02d", m.tm_hour, m.tm_min, m.tm_sec); RET(ARG(0)); }
 IMP(msvcrt, _tempnam) { // (folder, prefix): a malloc'd name in the temporary folder

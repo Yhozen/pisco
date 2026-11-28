@@ -11,15 +11,15 @@ analysed:
 status: K0 done (docs/linux.md); the design is the plan of K1 and K2, not built yet
 ---
 
-# The kernel as a title: running Linux itself on PISCO
+# The kernel as an app: running Linux itself on PISCO
 
 [wamr-unkernel-tabc.md](wamr-unkernel-tabc.md) ended with a real kernel as the only way to run any amd64 program.
-This page answers how PISCO gets one: by lifting the kernel, as it lifts every other title. Everything measured
+This page answers how PISCO gets one: by lifting the kernel, as it lifts every other app. Everything measured
 below was measured on the 4-core x86-64 test machine, on the versions in the front matter.
 
 ## Short answer
 
-- **The kernel becomes a title.** A new runtime, `microvm-x64`, imitates the smallest x86-64 machine a kernel
+- **The kernel becomes an app.** A new runtime, `microvm-x64`, imitates the smallest x86-64 machine a kernel
   accepts, and the lifter recompiles a real `vmlinux` ahead of time. Its programs come later the same way.
 - **A microVM is that runtime, not another idea.** Firecracker hands the CPU to KVM and has none to port. What can be
   taken from it is the machine it shows a guest: a 64-bit entry, a local APIC, an IOAPIC, a serial port.
@@ -34,9 +34,9 @@ below was measured on the 4-core x86-64 test machine, on the versions in the fro
 
 | Route | The kernel | What PISCO must add | Why not |
 |---|---|---|---|
-| **The kernel as a title** (taken) | a real `vmlinux`, lifted | a machine runtime, ring-0 instructions, a software MMU | |
+| **The kernel as an app** (taken) | a real `vmlinux`, lifted | a machine runtime, ring-0 instructions, a software MMU | |
 | Compiled to wasm, as unkernel | built from source for `arch/wasm` | an x86-64 user ABI in that kernel, PISCO as its user CPU | a kernel port to keep up, wasm64, and PISCO does not run the kernel |
-| User-Mode Linux as a Linux title | a program for Linux | ptrace or seccomp, signal frames, shared file mappings | imitating Linux to run Linux; UML without an MMU only arrives in 7.4 |
+| User-Mode Linux as a Linux app | a program for Linux | ptrace or seccomp, signal frames, shared file mappings | imitating Linux to run Linux; UML without an MMU only arrives in 7.4 |
 
 The second route stays the fallback. Its user programs would need the same software MMU, so that work carries over.
 
@@ -45,12 +45,12 @@ The second route stays the fallback. Its user programs would need the same softw
 ### Stacks: each kernel task on its own (JSPI)
 
 unkernel runs each kernel task on its own wasm stack: its switch is a `WebAssembly.Suspending` import, with the C
-stack pointer saved across it. The same was built as a title is (wasi-sdk 34, wasm `setjmp`, shared imported
+stack pointer saved across it. The same was built as an app is (wasi-sdk 34, wasm `setjmp`, shared imported
 memory): four stacks, each with its own C stack, switching inside 20 to 47 nested C frames, a `longjmp` in each.
 
 - Every frame came back intact, and each `longjmp` landed in its own stack.
 - 200,008 switches took 54.5 ms in Node 24: **0.27 µs a switch**. JSPI is on by default there.
-- A JSPI stack is 984 KB by default where a title's thread has 64 MB today: deep recursion in a program needs an
+- A JSPI stack is 984 KB by default where an app's thread has 64 MB today: deep recursion in a program needs an
   answer (below).
 
 ### Memory: a software TLB that a fault can come back through

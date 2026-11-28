@@ -1,7 +1,7 @@
 # The Wine oracle
 
-Runs a Windows title under Wine with no screen, driven by a script, so that our own runs have something to be
-compared with: screenshots at named points, and traces of what the title asked Windows for. Nothing here runs
+Runs a Windows app under Wine with no screen, driven by a script, so that our own runs have something to be
+compared with: screenshots at named points, and traces of what the app asked Windows for. Nothing here runs
 in the final product.
 
 ```sh
@@ -14,15 +14,15 @@ $O stop   narbacular-drop
 ```
 
 Screenshots, Wine's log and what the title played (`wine-audio.wav`) go to the run folder, `out/oracle/<title>/`
-(`ORACLE_RUN` overrides it). `out/` is ignored by git: screenshots, sound and logs of a title never enter the repository.
+(`ORACLE_RUN` overrides it). `out/` is ignored by git: screenshots, sound and logs of an app never enter the repository.
 
 ## The sound device
 
 Wine plays into a PipeWire null sink, run as the user with no hardware and no root (`oracle.sh sound start`, which
-`start` and `run` do when needed; `ORACLE_SOUND=0` runs a title without a device, as before M5): one `pipewire`
+`start` and `run` do when needed; `ORACLE_SOUND=0` runs an app without a device, as before M5): one `pipewire`
 daemon with `pipewire.conf` (a null sink consumed in real time by PipeWire's dummy driver, and the PulseAudio
 protocol, which Wine's `winepulse.drv` speaks), and `wireplumber`, which links the streams. Its runtime folder is
-`$ORACLE_HOME/sound`. While a title runs, ffmpeg records the sink's monitor (48 kHz stereo) to the run folder's
+`$ORACLE_HOME/sound`. While an app runs, ffmpeg records the sink's monitor (48 kHz stereo) to the run folder's
 `wine-audio.wav`; `stop` ends the recording. ALSA's `null` plugin is not an alternative: it is not paced, and Wine
 then plays several times faster than real time.
 
@@ -46,23 +46,23 @@ session describes what a player does, not how a host does it. Its format, schema
 | Step | Meaning |
 |---|---|
 | `{"wait": ms}` | let time pass |
-| `{"focus": true}` | give the title the input focus (see below) |
+| `{"focus": true}` | give the app the input focus (see below) |
 | `{"move": [dx, dy], "ms": n}` | move the mouse by a relative amount, spread over `ms` |
 | `{"click": "left"\|"right", "ms": n}` | press and release a button |
 | `{"button": "right", "down": true\|false}` | press or release only |
 | `{"key": "w", "ms": n}` or `{"key": "w", "down": true\|false}` | a key by X keysym name, or `space`, `enter`, `esc`, `up`, ... |
-| `{"shot": "name"}` | save `<name>.png` (the title's client area) and `<name>.full.png` (the screen) |
+| `{"shot": "name"}` | save `<name>.png` (the app's client area) and `<name>.full.png` (the screen) |
 
 Beside `steps`, `"random": ["aee69d51", ...]` gives the values our runtime's random source (`rand_s`) answers first
-(`SW_RANDOM`): those a Wine run of the title got, so that a random world (Desire's maze) is that run's. Wine's
+(`SW_RANDOM`): those a Wine run of the app got, so that a random world (Desire's maze) is that run's. Wine's
 side ignores it.
 
 `play.py` turns X's pointer acceleration off first: X would otherwise scale every motion event of more than 4
-pixels, and the title under Wine would see other deltas than the session gives (our runtime passes them on unchanged).
+pixels, and the app under Wine would see other deltas than the session gives (our runtime passes them on unchanged).
 
-In our own runtime the same file drives the title through `SW_SESSION=<session.json>` (the Node host and
-`tools/run-chrome.mjs`; the steps reach the runtime's session player, `rt/input.c`, for 32-bit and 64-bit desktop titles). Time there is the
-title's clock: with `SW_CLOCK=16667` it is virtual and moves by that many microseconds a presented frame, so
+In our own runtime the same file drives the app through `SW_SESSION=<session.json>` (the Node host and
+`tools/run-chrome.mjs`; the steps reach the runtime's session player, `rt/input.c`, for 32-bit and 64-bit desktop apps). Time there is the
+app's clock: with `SW_CLOCK=16667` it is virtual and moves by that many microseconds a presented frame, so
 `wait` counts frames and a run is the same every time. `focus` does nothing (the title's window always has the
 focus), and `shot` writes a line `checkpoint <name> frame <n>` with the Direct3D 9 calls made since the checkpoint
 before. In headless Chrome the frame presented at a `shot` is also saved, as `<the wasm's folder>/shots/<name>.png`.
@@ -79,15 +79,15 @@ python3 tools/oracle-wine/summarize.py out/oracle/narbacular-drop/relay/wine.log
 
 | Channel | Shows | Note |
 |---|---|---|
-| `+relay` | calls into Wine's own DLLs | system processes log everything; `summarize.py --image` keeps the calls made from the title's image |
-| `+snoop` | calls into DLLs the title ships | a packed DLL must be unpacked first (`upx -d`): snoop skips exports whose first byte is 0 when the DLL loads |
+| `+relay` | calls into Wine's own DLLs | system processes log everything; `summarize.py --image` keeps the calls made from the app's image |
+| `+snoop` | calls into DLLs the app ships | a packed DLL must be unpacked first (`upx -d`): snoop skips exports whose first byte is 0 when the DLL loads |
 | `+d3d9` | every Direct3D 9 method with its arguments | about 0.5 GB for two minutes of play |
 | `+seh` | exceptions raised | |
 
 ## Comparing a run of ours with Wine's
 
 ```sh
-# once, from a +relay log: Wine's calls from the title's image, repeats folded (names and counts only)
+# once, from a +relay log: Wine's calls from the app's image, repeats folded (names and counts only)
 python3 tools/oracle-wine/trace-diff.py out/oracle/narbacular-drop/relay/wine.log --image 400000-57bfff \
   --until Direct3DCreate9 --record recipes/narbacular-drop/traces/start.txt
 # then, any time: our run (SW_TRACE=2) against the recording; it shows the first place the two differ
@@ -104,7 +104,7 @@ expected output of `fixtures/x87` is made.
 
 ## Direct3D 9: asking the oracle, and comparing with it
 
-A trace shows what a title asked, not what it was told. `d3d9caps.c` (the device's capabilities) and
+A trace shows what an app asked, not what it was told. `d3d9caps.c` (the device's capabilities) and
 `d3d9probe.c` (the adapter and its modes, `CheckDeviceFormat` for the usual formats and uses, every state of a new
 device, and corner cases one a line) are small Windows programs that print Direct3D's answers under Wine;
 `tools/gen-d3d9-oracle.py` turns `d3d9caps.txt` and `d3d9probe.txt` into `rt/windows-x86/d3d9_oracle.gen.h`, which our
@@ -112,7 +112,7 @@ Direct3D 9 answers from. A question our device cannot answer from them is a reas
 
 ```sh
 $MINGW/bin/i686-w64-mingw32-clang tools/oracle-wine/d3d9probe.c -o out/caps32/d3d9probe.exe -ld3d9 -luser32
-$O run narbacular-drop out/caps32/d3d9probe.exe | tr -d '\r' > tools/oracle-wine/d3d9probe.txt   # in a title's prefix: its virtual desktop decides the modes
+$O run narbacular-drop out/caps32/d3d9probe.exe | tr -d '\r' > tools/oracle-wine/d3d9probe.txt   # in an app's prefix: its virtual desktop decides the modes
 python3 tools/gen-d3d9-oracle.py > rt/windows-x86/d3d9_oracle.gen.h
 ```
 
@@ -122,7 +122,7 @@ phase lasts, not in what a frame of a phase calls):
 
 ```sh
 SW_STRICT=1 SW_CLOCK=16667 SW_D3D9_STATS=1 SW_D3D9_FRAMES=1 SW_SESSION=recipes/narbacular-drop/sessions/menu-to-level.json \
-  node web/run-node.mjs out/nd/title.wasm '<folder>/Narbacular Drop.exe' > out/nd.session.log
+  node web/run-node.mjs out/nd/app.wasm '<folder>/Narbacular Drop.exe' > out/nd.session.log
 python3 tools/oracle-wine/d3d9-compare.py out/oracle/narbacular-drop/d3d9/wine.log out/nd.session.log
 ```
 
@@ -161,8 +161,8 @@ A still screen should be all but equal. A scene that moves (a menu with flickeri
 a creature walking) is shot at another moment of its animation: the oracle's clock is the wall's, ours is virtual.
 Two of the oracle's own shots of such a scene (two runs, or a second apart) say how much that alone is worth.
 
-**The oracle's CPU is not the title's.** Wine runs on this machine's processor, with MMX and SSE; a recipe may give
-our virtual CPU less (Narbacular Drop's has neither). D3DX decodes and resamples a title's images with
+**The oracle's CPU is not the app's.** Wine runs on this machine's processor, with MMX and SSE; a recipe may give
+our virtual CPU less (Narbacular Drop's has neither). D3DX decodes and resamples an app's images with
 processor-specific code, and its plain code rounds differently: under Wine every still screen then differs from
 ours by a level or two for that reason alone. For a like-for-like reference, turn that code off in the oracle
 (three values D3DX reads, in the registry's 32-bit view), play the session into a folder of its own, and take the
@@ -180,11 +180,11 @@ $O reg narbacular-drop delete 'HKLM\Software\Microsoft\Direct3D' /f /reg:32
 ## What a headless run needs (found the hard way)
 
 - **The X focus.** With no window manager nothing gives Wine's window the input focus, and without it Wine
-  reads no raw mouse motion: a DirectInput title sees buttons but no movement. `{"focus": true}` sets it.
+  reads no raw mouse motion: a DirectInput app sees buttons but no movement. `{"focus": true}` sets it.
 - **Relative motion only.** An absolute pointer warp arrives as one huge movement.
-- **A virtual desktop** (`prefix` sets 1024x768, or `ORACLE_SCREEN`): a full-screen title otherwise minimises when it
+- **A virtual desktop** (`prefix` sets 1024x768, or `ORACLE_SCREEN`): a full-screen app otherwise minimises when it
   loses focus. A title whose window is larger takes a bigger screen on a display of its own (Desire: 1600x900 on
-  `:78`, docs/desire.md), since one X server serves every title on a display.
+  `:78`, docs/desire.md), since one X server serves every app on a display.
 - **Direct3D 12** runs through Wine's `d3d12` (vkd3d) on lavapipe, Mesa's software Vulkan driver:
   `VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.x86_64.json`.
 - **Window titles**: with `+relay` and `RelayInclude` holding `user32.SetWindowTextW`, `play.py` writes the title
@@ -194,7 +194,7 @@ $O reg narbacular-drop delete 'HKLM\Software\Microsoft\Direct3D' /f /reg:32
 - **A prefix whose first boot was interrupted is broken** (32-bit programs fail to load `kernel32`); `prefix`
   recreates one that has no `system.reg`.
 - **No crash debugger** (`winedbg.exe=d`): a crashing program otherwise waits in Wine's debugger for input.
-- **A sound device** (above): without one FMOD's `FSOUND_Init` fails, and a title loads no sounds.
+- **A sound device** (above): without one FMOD's `FSOUND_Init` fails, and an app loads no sounds.
 - **Heap filling** (`warn+heap`, always on in `start`): Wine's heap then fills new blocks with 0x55, as our runtime
-  fills a 32-bit title's with 0xCD. Narbacular Drop reads a field of a new block before it sets it; with sound
+  fills a 32-bit app's with 0xCD. Narbacular Drop reads a field of a new block before it sets it; with sound
   loaded, the zeroed blocks Wine handed out otherwise made it crash entering its first level.

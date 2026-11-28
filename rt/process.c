@@ -126,7 +126,7 @@ static void canon(char *out, const char *dll, const char *name) {
   strcat(out, "!"); strncat(out, name, 120);
 }
 static int dynamic_quiet;
-static pthread_mutex_t import_lock = PTHREAD_MUTEX_INITIALIZER;   // the table grows when a title asks for a function by name
+static pthread_mutex_t import_lock = PTHREAD_MUTEX_INITIALIZER;   // the table grows when an app asks for a function by name
 u64 rt_dynamic_import(const char *dll, const char *name) {
   char full[200]; canon(full, dll, name);
   ImportFn fn = find_import(full);
@@ -201,7 +201,7 @@ void rt_call_stats_print(const char *title, const char *dlls) { // dlls: "d3d12.
     size_t need = n + strlen(bang) + 24; if (need > cap) { cap = need * 2; out = realloc(out, cap); }
     n += (size_t)sprintf(out + n, "%s%s x%u", n ? ", " : "", bang + 1, k);
   }
-  rt_log("%s: %s", title, n ? out : "(no calls)"); free(out);
+  rt_log("%s: %s", app, n ? out : "(no calls)"); free(out);
 }
 void rt_call(Cpu *c, u64 t) {
   if (t >= import_base && t < import_base + 8ull * import_total) {
@@ -563,7 +563,7 @@ static void load_modules(void) {
 extern void rt_crt_init(void);
 extern const char *rt_command_line;
 int main(int argc, char **argv) {
-  // the title's command line: the program name, then the arguments the host was given
+  // the app's command line: the program name, then the arguments the host was given
   { size_t n = 16; for (int i = 1; i < argc; i++) n += strlen(argv[i]) + 3;
     char *cl = malloc(n + 300); snprintf(cl, 300, "\"C:\\title\\%s\"", rt_modules[0].name);
     for (int i = 1; i < argc; i++) { strcat(cl, strchr(argv[i], ' ') ? " \"" : " "); strcat(cl, argv[i]); if (strchr(argv[i], ' ')) strcat(cl, "\""); }
@@ -575,7 +575,7 @@ int main(int argc, char **argv) {
   for (unsigned k = 0; k < rt_module_count; k++) if (rt_modules[k].base + rt_modules[k].size > top) top = rt_modules[k].base + rt_modules[k].size;
   top = (top + 0xFFFF) & ~0xFFFFull;
   u64 have = (u64)__builtin_wasm_memory_size(0) * 65536;
-  // Two layouts (tools/build-title.sh picks). An image that must load low (32-bit titles: 0x400000, often with
+  // Two layouts (tools/build-app.sh picks). An image that must load low (32-bit apps: 0x400000, often with
   // no relocations) sits in a gap the link left for it, between the runtime's stack and its data; nothing of
   // the runtime reaches it. Otherwise the images are above the runtime and its heap has to jump over them.
   extern char __global_base, __stack_high;

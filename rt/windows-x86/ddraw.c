@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-// DirectDraw, as far as titles of the Direct3D 9 era ask it how much video memory there is (the DirectX SDK's
+// DirectDraw, as far as apps of the Direct3D 9 era ask it how much video memory there is (the DirectX SDK's
 // video-memory code, which Tag uses, tries it first: docs/tag.md): DirectDrawCreate / DirectDrawCreateEx give an
 // object whose GetAvailableVidMem answers for a 256 MB card, as the device's caps describe it (d3d9.c). The
 // interfaces IDirectDraw2 to 7 share that method's slot (23); every other method is a named stub.

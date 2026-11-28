@@ -2,7 +2,7 @@
 // From XCL (https://github.com/ivall/xcl, GPL-2.0-only), crates/xcl/src/gpu/xbox.rs at 6025201; module paths adapted.
 //! Xbox Series shader containers: precompiled console GPU code (RDNA2), no DXIL.
 //!
-//! Layout reverse-engineered from a retail title's shader pack (26 503 shaders, all
+//! Layout reverse-engineered from a retail app's shader pack (26 503 shaders, all
 //! stages, 2026-11-20). The outer DXBC container looks normal (SFI0, ISG1, OSG1, PSV0,
 //! HASH, DXIL, PRIV), but the DXIL part carries no LLVM bitcode:
 //!

@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
-# Microsoft's SimpleTriangleDesktop (Xbox-GDK-Samples, MIT), a Windows x64 desktop title, as the user builds it
+# Microsoft's SimpleTriangleDesktop (Xbox-GDK-Samples, MIT), a Windows x64 desktop app, as the user builds it
 # (tools/build-gdk-sample.sh) and tests/gfx/st.sh stages it with the MSVC runtime DLLs beside it (out/st-game/local).
 # Nothing of Microsoft's is in this repository: the folder is the user's.
 schema = 1

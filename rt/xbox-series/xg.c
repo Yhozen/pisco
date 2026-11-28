@@ -3,8 +3,8 @@
 #include "../gdk/d3d12.h"
 
 // ---- xg_xs.dll: the console's texture layout library. Our layout is the one the GPU back end reads texels
-// in title memory with: subresources one after another as GetCopyableFootprints places them (rows 256-byte
-// aligned). It is not the console's tiling: textures the title lays out through XG at run time come out
+// in app memory with: subresources one after another as GetCopyableFootprints places them (rows 256-byte
+// aligned). It is not the console's tiling: textures the app lays out through XG at run time come out
 // right; texels tiled ahead of time by Microsoft's tools would not. ----
 typedef struct { u64 vtbl; u32 magic; s32 refs; u8 desc[56]; } XgComputer;
 #define XGMAGIC 0x58474343u

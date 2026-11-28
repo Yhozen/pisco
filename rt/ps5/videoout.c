@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-// libSceVideoOut: the screen. A title registers frame buffers in its own memory (linear RGBA8 rows here: what a
-// CPU-drawn title writes) and flips between them. A flip sends the buffer's pixels to the GPU back end as a texture
+// libSceVideoOut: the screen. An app registers frame buffers in its own memory (linear RGBA8 rows here: what a
+// CPU-drawn app writes) and flips between them. A flip sends the buffer's pixels to the GPU back end as a texture
 // (GPU_R_WRITE_TEXTURE, in pieces that fit the ring) and presents it (GPU_R_PRESENT): web/gpu/backend.js draws it into
-// the page's canvas. Waiting for vertical blank paces the title at 60 frames a second on the host's clock (with a
+// the page's canvas. Waiting for vertical blank paces the app at 60 frames a second on the host's clock (with a
 // virtual clock, SW_CLOCK, the clock moves by a frame instead).
 #include "ps5.h"
 HOST("frame_dump") void host_frame_dump(u32 pixels, u32 width, u32 height, u32 frame);
@@ -10,7 +10,7 @@ HOST("frame_dump") void host_frame_dump(u32 pixels, u32 width, u32 height, u32 f
 #include "gpu_ring.h"
 
 #define MAX_BUFFERS 16
-// what sceVideoOutSetBufferAttribute2 writes into the title's attribute (80 bytes): ours, read back on registration
+// what sceVideoOutSetBufferAttribute2 writes into the app's attribute (80 bytes): ours, read back on registration
 typedef struct { u64 pixel_format; u32 tiling, width, height, pitch, magic; } Attr;
 #define ATTR_MAGIC 0x50534F56u
 static struct { u64 data[MAX_BUFFERS]; u32 width, height, pitch, tiling; u64 format; int open, texture; u64 flips; } vo;
@@ -54,7 +54,7 @@ IMP(libscevideoout, sceVideoOutRegisterBuffers) {   // (handle, first index, add
 static void show(u32 index) {
   if (!vo.width || !vo.height || index >= MAX_BUFFERS || !vo.data[index]) return;
   if (!vo.texture) {
-    // a 2D RGBA8 texture (DXGI_FORMAT_R8G8B8A8_UNORM, 28): the bytes as the title wrote them; an sRGB format's
+    // a 2D RGBA8 texture (DXGI_FORMAT_R8G8B8A8_UNORM, 28): the bytes as the app wrote them; an sRGB format's
     // values are already encoded, and the canvas shows them as they are
     vo.texture = 0x7001;
     u32 w[14] = { (u32)vo.texture, 2, 28, vo.width, 0, vo.height, 1, 1, 1, 0, 0, 0, 0, 0 };

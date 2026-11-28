@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // The null GPU back end (Node): consumes the ring, completes fences and presents at once, checks that every
-// pipeline's shaders were translated (shaders/<digest>.wgsl beside the title), and can write a text trace.
+// pipeline's shaders were translated (shaders/<digest>.wgsl beside the app), and can write a text trace.
 // Work that only moves bytes of guest memory runs for real (buffer copies between buffers with backing, the
 // console's memory operations); nothing is drawn.
 // The explicit records (Direct3D 9's) are checked for what WebGPU would refuse and counted: every shader a

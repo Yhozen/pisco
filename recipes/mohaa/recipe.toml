@@ -1,6 +1,6 @@
 # The recipe for the Medal of Honor: Allied Assault single-player demo (2001, 2015 Inc. / Electronic Arts; id Tech 3,
 # OpenGL): `pisco build recipes/mohaa --source mohaaspdemo.zip` makes its image (docs/images.md). What is known of the
-# title: docs/mohaa.md.
+# app: docs/mohaa.md.
 schema = 1
 name = "mohaa"
 from = "base/windows-x86:1"
@@ -26,7 +26,7 @@ app = 'C:\Program Files\EA GAMES\MOHAADemo'
 [[extract]]
 kind = "installshield"
 [extract.groups]
-# where the setup's file groups go below the title's folder, as the setup puts them under Wine ('-': not installed;
+# where the setup's file groups go below the app's folder, as the setup puts them under Wine ('-': not installed;
 # the <Engine>, <Support> and <Disk1> groups are the setup's own files)
 "Program Executable Files" = ''
 "Data Files Minimal" = 'main'

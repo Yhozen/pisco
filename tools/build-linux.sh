@@ -1,6 +1,6 @@
 #!/bin/bash
 # SPDX-License-Identifier: GPL-2.0-or-later
-# build-linux.sh [out dir, default out/linux]: the Linux title's files (docs/linux.md). Nothing of them is in the
+# build-linux.sh [out dir, default out/linux]: the Linux app's files (docs/linux.md). Nothing of them is in the
 # repository:
 #   vmlinux         Linux 6.18.65 (GPL-2.0-only), built from kernel.org's source with recipes/linux/kernel.config on
 #                   top of the kernel's own tinyconfig, without jump tables (KCFLAGS): what the lifter reads
@@ -9,7 +9,7 @@
 #   initramfs.cpio  /init (recipes/linux/init), busybox (tools/build-busybox.sh) and a link to it for each applet,
 #                   and /bin/hello (fixtures/linux-hello: a second program at busybox's addresses), uncompressed,
 #                   written by the kernel's own gen_init_cpio
-#   root/           the title's folder (recipes/linux): vmlinux, initramfs.cpio, and the programs lifted with the
+#   root/           the app's folder (recipes/linux): vmlinux, initramfs.cpio, and the programs lifted with the
 #                   kernel (busybox, hello)
 # The source is fetched once and checked by sha256. The build names no user, host or time, so two builds on one
 # machine give the same files.

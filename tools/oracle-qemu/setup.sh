@@ -5,7 +5,7 @@
 set -uo pipefail
 here=$(cd "$(dirname "$0")" && pwd); . "$here/env.sh"
 if command -v "$QEMU" > /dev/null; then echo "qemu: $("$QEMU" --version | head -1)"; exit 0; fi
-echo "setup.sh: $QEMU is missing (the oracle of the Linux title needs it):" >&2
+echo "setup.sh: $QEMU is missing (the oracle of the Linux app needs it):" >&2
 echo "  Fedora, Amazon Linux:  sudo dnf install qemu-system-x86-core" >&2
 echo "  Debian, Ubuntu:        sudo apt-get install qemu-system-x86" >&2
 exit 1

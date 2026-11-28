@@ -1,10 +1,10 @@
 #!/bin/bash
 # SPDX-License-Identifier: GPL-2.0-or-later
-# tests/images.sh: title images (milestone M6, docs/images.md), built by `pisco build` and run by `pisco run`.
+# tests/images.sh: app images (milestone M6, docs/images.md), built by `pisco build` and run by `pisco run`.
 #   1. hello32 (recipes/hello32) built twice, each time with an empty cache: the same manifest digest; its image run in
 #      Node passes its 7 checks
 #   1b. hello64 (Windows x64), Doom (Xbox Series, from out/doom/game) and linux-hello (Linux x86-64, with musl in MUSL)
-#      the same way: one title of every base
+#      the same way: one app of every base
 #   2. Narbacular Drop from the user's installer (ND_SETUP; skipped when it is not found), the same: two builds with
 #      empty caches give the same manifest digest. With the Wine-installed game there (ND) the extracted files are
 #      compared with it (the differences are printed)
@@ -49,7 +49,7 @@ pass=$(SW_STRICT=1 $SW run $T/hello32-a 2>&1 | grep -c '^\[PASS\]')
 [ "$pass" = 7 ] || { echo "hello32: its image passed $pass of 7"; exit 1; }
 echo "hello32: two builds with empty caches give manifest $a; the image passes 7 of 7 in Node"
 
-# 1b. one title of each other base: hello64 (Windows x64) and Doom (Xbox Series, when tests/gfx/doom.sh has built it)
+# 1b. one app of each other base: hello64 (Windows x64) and Doom (Xbox Series, when tests/gfx/doom.sh has built it)
 a=$(build hello64-a recipes/hello64 $T/hello64-a $T/cache-a) || exit 1
 b=$(build hello64-b recipes/hello64 $T/hello64-b $T/cache-b) || exit 1
 [ "$a" = "$b" ] || { echo "hello64: two builds with empty caches differ ($a, $b)"; exit 1; }

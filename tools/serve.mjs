@@ -6,7 +6,7 @@
 // time), the audio (POST /capture/audio, stereo float) is kept beside it, and POST /capture/end writes <out.mp4>
 // with both. With --shots, a frame the page sends under a name (POST /capture/shot: a session's checkpoint)
 // is saved as <dir>/<name>.png.
-// An extra dir that is a title image (web/image.mjs) is served as it is (index.json, blobs/...), and its C: drive, the
+// An extra dir that is an app image (web/image.mjs) is served as it is (index.json, blobs/...), and its C: drive, the
 // file layers stacked, below /files/<n>/c/ (with ?stat and ?list as for a folder).
 import { isImageDir, openImageDir } from '../web/image.mjs';
 import http from 'node:http'; import fs from 'node:fs'; import path from 'node:path'; import zlib from 'node:zlib'; import { spawn } from 'node:child_process';
@@ -15,7 +15,7 @@ const ci = argv.indexOf('--capture'); const captureOut = ci >= 0 ? argv.splice(c
 const si = argv.indexOf('--shots'); const shotsDir = si >= 0 ? argv.splice(si, 2)[1] : null;
 const [port, root, ...extra] = argv;
 const types = { '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/javascript', '.wasm': 'application/wasm', '.json': 'application/json', '.wgsl': 'text/plain' };
-const FPS = 35; // Doom's tic rate; other titles get every 35th of a second
+const FPS = 35; // Doom's tic rate; other apps get every 35th of a second
 let cap = null, audioChunks = [], marks = []; // audio chunks (with their times) may come before the first frame
 function captureFrame(meta, body) {
   // a frame cut short (the page stopped while sending it) or arriving after the end is dropped
@@ -103,7 +103,7 @@ http.createServer(async (req, res) => {
     res.writeHead(200, { ...head, 'Content-Type': types[path.extname(name)] || 'application/octet-stream', 'Content-Length': data.length }).end(data);
     return;
   }
-  // file names are matched without regard to case, as the title expects of Windows
+  // file names are matched without regard to case, as the app expects of Windows
   let file = path.resolve(base);
   for (const part of path.normalize(p).split(path.sep).filter(Boolean)) {
     let list = []; try { list = fs.readdirSync(file); } catch {}

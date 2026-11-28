@@ -17,13 +17,17 @@ pub struct RegValue { pub key: String, pub name: String, pub data: RegData }
 pub enum Pin { Sha256(Vec<String>), BuiltBy(String), Unpinned(String) }
 /// [[input]]: a file or folder the user supplies
 #[derive(Clone, Debug)]
-pub struct Input { pub id: String, pub folder: bool, pub file: String, pub files: Option<Vec<String>>, pub pin: Pin }
+pub struct Input { pub id: String, pub folder: bool, pub file: String, pub files: Option<Vec<String>>, pub pin: Pin,
+    /// where a builder may fetch it (a pinned file input only: docs/spec/recipe.md#inputs)
+    pub url: Option<String>,
+    /// for a person: where it comes from
+    pub where_: Option<String> }
 /// The recipe's steps as pisco runs them: the first ([[extract]] innosetup, zip, wise, file or folder) with what
 /// follows it (installshield, cab, copy)
-pub struct Source { pub file: String, pub extract: String, pub app: Option<String>, pub map: BTreeMap<String, String>, pub cabs: Vec<Cab>,
+pub struct Source { pub extract: String, pub app: Option<String>, pub map: BTreeMap<String, String>, pub cabs: Vec<Cab>,
     pub root: Option<String>, pub adds: Vec<Add>,
     /// [source.installshield] groups: where each file group of an InstallShield 5 / 6 setup inside the installer
-    /// goes, below the title's folder ("" the folder itself, "-" not installed); InstallShield's own script says
+    /// goes, below the app's folder ("" the folder itself, "-" not installed); InstallShield's own script says
     /// it, and is not read
     pub installshield: Option<BTreeMap<String, String>> }
 /// [[extract]] copy: the files of a folder input that the app needs and its download does not carry (Microsoft's
@@ -54,6 +58,8 @@ pub struct Recipe {
     pub load: Vec<String>,
     /// [files]: small text files a setup step would write (settings), by their place on C:
     pub files: BTreeMap<String, String>,
+    /// [permissions] network: the app may be given a network (docs/spec/recipe.md#permissions)
+    pub network: bool,
     pub heap_fill: Option<u8>, // [quirks] heap_fill: the byte a heap block the app did not ask to be zeroed holds
     pub shaders: Option<Shaders>,
 }
@@ -131,11 +137,11 @@ pub fn drive_path(p: &str) -> R<String> {
 /// Every key a recipe of schema 1 may have, "table.key" (docs/spec/recipe.md has the same list: tests/run.sh spec)
 pub const KEYS: &[&str] = &["schema", "name", "from", "libraries",
     "about.display_name", "about.version", "about.revision", "about.notes",
-    "input.id", "input.kind", "input.file", "input.files", "input.sha256", "input.built_by", "input.unpinned", "input.where",
+    "input.id", "input.kind", "input.file", "input.files", "input.sha256", "input.built_by", "input.unpinned", "input.url", "input.where",
     "extract.kind", "extract.input", "extract.app", "extract.map", "extract.root", "extract.groups", "extract.from", "extract.files", "extract.to",
     "run.exe", "run.display", "run.args", "run.kernel", "run.initrd", "run.cmdline",
     "cpu.features", "dll", "registry", "files", "quirks",
-    "code.entries", "code.base", "code.load", "warmup.frames", "warmup.session", "hints"];
+    "code.entries", "code.base", "code.load", "warmup.frames", "warmup.session", "permissions.network", "hints"];
 /// pisco's own options, [hints.pisco] (docs/spec/recipe.md)
 pub const HINTS: &[&str] = &["split", "opt", "programs", "modules", "lifted"];
 pub const EXTRACT_KINDS: &[&str] = &["innosetup", "zip", "wise", "installshield", "file", "folder", "cab", "copy"];
@@ -183,7 +189,7 @@ pub fn load_recipe(dir: &Path) -> R<Recipe> {
     if !slug(&name) { return Err(format!("{at}: name = \"{name}\": lower-case letters, digits and -")); }
     let from = s(&t, "from").ok_or(format!("{at}: no from (a base, e.g. \"base/windows-x86:1\")"))?;
     let platform = platform_of(&from).to_string();
-    for k in ["about", "run", "cpu", "code", "warmup"] { if let Some(x) = table(&t, k)? { only(x, k, &at)?; } }
+    for k in ["about", "run", "cpu", "code", "warmup", "permissions"] { if let Some(x) = table(&t, k)? { only(x, k, &at)?; } }
     let about = table(&t, "about")?.cloned().unwrap_or_default();
     if let Some(v) = about.get("revision") { if !matches!(v, Value::Integer(n) if *n >= 1) { return Err(format!("{at}: about.revision: an integer from 1")); } }
     for k in ["display_name", "version", "notes"] { if about.get(k).is_some_and(|v| !v.is_str()) { return Err(format!("{at}: about.{k}: a string")); } }
@@ -204,7 +210,12 @@ pub fn load_recipe(dir: &Path) -> R<Recipe> {
         if pins != 1 { return Err(format!("{at}: input {id}: say exactly one of sha256 (pinned), built_by (made here by a script) or unpinned (and why)")); }
         let pin = if let Some(v) = i.get("sha256") { Pin::Sha256(sha_list(v, &format!("{at}: input {id}: sha256"))?) }
             else if let Some(b) = s(i, "built_by") { Pin::BuiltBy(b) } else { Pin::Unpinned(s(i, "unpinned").ok_or(format!("{at}: input {id}: unpinned = \"why\""))?) };
-        inputs.push(Input { id: id.clone(), folder: kind == "folder", file: s(i, "file").ok_or(format!("{at}: input {id}: no file"))?, files, pin });
+        let url = s(i, "url");
+        if let Some(u) = &url {
+            if !matches!(pin, Pin::Sha256(_)) || kind != "file" { return Err(format!("{at}: input {id}: url is for a file input pinned by its sha256")); }
+            if !(u.starts_with("https://") || u.starts_with("http://")) { return Err(format!("{at}: input {id}: url = \"{u}\": an https:// (or http://) URL")); }
+        }
+        inputs.push(Input { id: id.clone(), folder: kind == "folder", file: s(i, "file").ok_or(format!("{at}: input {id}: no file"))?, files, pin, url, where_: s(i, "where") });
     }
     let input = |id: &Option<String>, step: &str| -> R<Input> {
         let id = id.as_ref().ok_or(format!("{at}: [[extract]] {step}: no input"))?;
@@ -233,7 +244,7 @@ pub fn load_recipe(dir: &Path) -> R<Recipe> {
                 if (kind == "folder") != i.folder { return Err(format!("{at}: [[extract]] {kind} reads input {}, a {}", i.id, if i.folder { "folder" } else { "file" })); }
                 let mut map = BTreeMap::new();
                 for (k, v) in table(e, "map")?.into_iter().flatten() { map.insert(k.clone(), v.as_str().ok_or(format!("{at}: [[extract]] map: strings"))?.to_string()); }
-                source = Some(Source { file: i.file.clone(), extract: kind.clone(), app: s(e, "app"), map, cabs: vec![],
+                source = Some(Source { extract: kind.clone(), app: s(e, "app"), map, cabs: vec![],
                     root: s(e, "root").map(|r| r.trim_matches('/').to_string()), adds: vec![], installshield: None });
                 primary = Some(i);
             }
@@ -280,7 +291,9 @@ pub fn load_recipe(dir: &Path) -> R<Recipe> {
     let micro = |k: &str| -> R<Vec<String>> { let v = strs(&ours, k)?.unwrap_or_default(); if !v.is_empty() && platform != "microvm-x64" { return Err(format!("{at}: [hints.pisco] {k}: for a machine's app (base/microvm-x64)")); } Ok(v) };
     let mut files = BTreeMap::new();
     for (k, v) in table(&t, "files")?.into_iter().flatten() { files.insert(k.clone(), v.as_str().ok_or(format!("{at}: [files] {k}: a string"))?.to_string()); }
+    let network = match table(&t, "permissions")?.and_then(|p| p.get("network")) { None => false, Some(Value::Boolean(b)) => *b, Some(_) => return Err(format!("{at}: permissions.network: true or false")) };
     Ok(Recipe {
+        network,
         display_name: s(&about, "display_name"), version: s(&about, "version"), revision: about.get("revision").and_then(|v| v.as_integer()),
         libraries: strs(&t, "libraries")?.unwrap_or_default(),
         display: s(run, "display"),

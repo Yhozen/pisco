@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-// A machine's programs in modules of their own (tools/build-title.sh SIDE_PROGRAMS): wasm side modules (position-
-// independent, the dylink.0 convention) loaded into the title's memory and function table, as a dynamic linker
-// loads a library. The title's module gives them what they import (its functions, its data's addresses, its C stack
+// A machine's programs in modules of their own (tools/build-app.sh SIDE_PROGRAMS): wasm side modules (position-
+// independent, the dylink.0 convention) loaded into the app's memory and function table, as a dynamic linker
+// loads a library. The app's module gives them what they import (its functions, its data's addresses, its C stack
 // pointer); each is then registered with the machine (rt/microvm-x64/run.c rt_program_register).
 const leb = (b, at) => { let v = 0, s = 0, x; do { x = b[at.i++]; v |= (x & 0x7f) << s; s += 7; } while (x & 0x80); return v >>> 0; };
 function dylink(module) {
@@ -15,7 +15,7 @@ function dylink(module) {
   }
   return info;
 }
-// bytes: the module's (or the module, compiled); main: the title's instance; memory: its memory. Returns the side module's instance.
+// bytes: the module's (or the module, compiled); main: the app's instance; memory: its memory. Returns the side module's instance.
 export function loadSide(bytes, main, memory, name) {
   const module = bytes instanceof WebAssembly.Module ? bytes : new WebAssembly.Module(bytes), dl = dylink(module), ex = main.exports;
   const memBase = dl.memSize ? ex.rt_side_alloc(dl.memSize, 2 ** dl.memAlign) : 0;
@@ -25,8 +25,8 @@ export function loadSide(bytes, main, memory, name) {
     __memory_base: new WebAssembly.Global({ value: 'i32', mutable: false }, memBase), __table_base: new WebAssembly.Global({ value: 'i32', mutable: false }, tableBase) };
   const got = {}, gotFunc = {};
   for (const i of WebAssembly.Module.imports(module)) {
-    if (i.module === 'env' && i.kind === 'function') { if (!ex[i.name]) throw new Error(`${name}: the title exports no ${i.name}`); env[i.name] = ex[i.name]; }
-    else if (i.module === 'GOT.mem') { if (!ex[i.name]) throw new Error(`${name}: the title exports no ${i.name}`); got[i.name] = new WebAssembly.Global({ value: 'i32', mutable: true }, ex[i.name].value); }
+    if (i.module === 'env' && i.kind === 'function') { if (!ex[i.name]) throw new Error(`${name}: the app exports no ${i.name}`); env[i.name] = ex[i.name]; }
+    else if (i.module === 'GOT.mem') { if (!ex[i.name]) throw new Error(`${name}: the app exports no ${i.name}`); got[i.name] = new WebAssembly.Global({ value: 'i32', mutable: true }, ex[i.name].value); }
     else if (i.module === 'GOT.func') { const at = table.length; table.grow(1); table.set(at, ex[i.name]); gotFunc[i.name] = new WebAssembly.Global({ value: 'i32', mutable: true }, at); }
   }
   const side = new WebAssembly.Instance(module, { env, 'GOT.mem': got, 'GOT.func': gotFunc });

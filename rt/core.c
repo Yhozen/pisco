@@ -64,7 +64,7 @@ void rt_pc(Cpu *c, u32 pc) {
   rt_log("  blocks before:%s", line);
 }
 
-// ---- the virtual CPU: what CPUID reports decides which code paths a title takes ----
+// ---- the virtual CPU: what CPUID reports decides which code paths an app takes ----
 // (weak: a machine's runtime, rt/microvm-x64, has its own CPU)
 __attribute__((weak)) void rt_cpuid(Cpu *c) {
   u32 leaf = (u32)R[RAX], sub = (u32)R[RCX], a = 0, b = 0, d = 0, cx = 0;
@@ -73,7 +73,7 @@ __attribute__((weak)) void rt_cpuid(Cpu *c) {
   case 0: a = 0xD; b = 0x756E6547; d = 0x49656E69; cx = 0x6C65746E; break; // GenuineIntel
   case 1:
     a = 0x000906EA; b = (8u << 16) | (8u << 8);
-    { unsigned f = rt_cpu_features; // the title's recipe may leave features out (an old title must not pick MMX paths)
+    { unsigned f = rt_cpu_features; // the app's recipe may leave features out (an old app must not pick MMX paths)
       cx = (f & CPU_SSE3 ? 1u << 0 : 0) | (f & CPU_PCLMUL ? 1u << 1 : 0) | (f & CPU_SSSE3 ? 1u << 9 : 0) | (f & CPU_CX16 ? 1u << 13 : 0)
          | (f & CPU_SSE41 ? 1u << 19 : 0) | (f & CPU_SSE42 ? 1u << 20 : 0) | (f & CPU_POPCNT ? 1u << 23 : 0);
       d = (f & CPU_FPU ? 1u << 0 : 0) | (f & CPU_TSC ? 1u << 4 : 0) | (f & CPU_CX8 ? 1u << 8 : 0) | (f & CPU_CMOV ? 1u << 15 : 0)
@@ -89,7 +89,7 @@ __attribute__((weak)) void rt_cpuid(Cpu *c) {
   R[RAX] = a; R[RBX] = b; R[RCX] = cx; R[RDX] = d;
 }
 #if GUEST_BITS == 32
-u64 rt_rdtsc(void) { return rt_uptime_us() * 3000; } // a 3 GHz counter on the title's clock
+u64 rt_rdtsc(void) { return rt_uptime_us() * 3000; } // a 3 GHz counter on the app's clock
 #else
 __attribute__((weak)) u64 rt_rdtsc(void) { return (u64)(host_now_us() * 3000.0); }
 #endif

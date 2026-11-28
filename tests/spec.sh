@@ -5,7 +5,7 @@
 #      the markers of docs/spec/recipe.md, and what `pisco recipe --keys` prints, the same in both directions
 #   2. the config's fields and the layer roles of docs/spec/image.md: the schema's (config.schema.json) and pisco's
 #   3. docs/spec/host.md is what tools/gen-host-spec.mjs makes of the sources, and every SW_* variable has a kind
-#   4. every recipe in recipes/ is read (schema 1); a recipe with a misspelt key in any of its tables, an unknown
+#   4. every recipe in recipes/ is read (schema 1), in the folder of its name; a recipe with a misspelt key in any of its tables, an unknown
 #      schema, an input pinned twice or a name not in a list is refused
 set -uo pipefail
 root=$(cd "$(dirname "$0")/.." && pwd); cd "$root"
@@ -28,7 +28,7 @@ same "quirks" "$(marked docs/spec/recipe.md quirks)" "$(of quirk)"
 same "base keys" "$(marked docs/spec/base.md base-keys)" "$(of base-key)"
 # the image: the config's fields (docs/spec/image.md) are the schema's, and the layer roles are the ones pisco writes
 same "config fields" "$(marked docs/spec/image.md config)" "$(node -e 'console.log(Object.keys(JSON.parse(require("fs").readFileSync("docs/spec/config.schema.json")).properties).join("\n"))')"
-same "layer roles" "$(marked docs/spec/image.md roles)" "$(grep -ohE '\(ROLE, "[a-z]+"\)' crates/pisco/src/build.rs | sed 's/(ROLE, "\(.*\)")/\1/')"
+same "layer roles" "$(marked docs/spec/image.md roles)" "$(grep -ohE '\(ROLE, "[a-z]+"\)|own\("[a-z]+"' crates/pisco/src/build.rs | sed -E 's/.*"([a-z]+)".*/\1/')"
 # sessions (docs/spec/sessions.md): the keys and steps are web/session.mjs's, every session of a recipe is read, and a
 # session with an unknown step, a key that does not go with its step, or no schema is refused
 same "session keys" "$(marked docs/spec/sessions.md session-keys)" "$(node --input-type=module -e 'import { SESSION_KEYS } from "./web/session.mjs"; console.log(SESSION_KEYS.join("\n"))')"
@@ -38,12 +38,14 @@ import fs from "node:fs"; import { checkSession } from "./web/session.mjs";
 let n = 0, bad = 0;
 for (const r of fs.readdirSync("recipes")) { const d = `recipes/${r}/sessions`; if (!fs.existsSync(d)) continue;
   for (const f of fs.readdirSync(d).filter((f) => f.endsWith(".json"))) { const s = JSON.parse(fs.readFileSync(`${d}/${f}`, "utf8")); try { checkSession(s); if (s.app !== r) throw new Error(`app ${s.app}, in recipes/${r}`); n++; } catch (e) { console.error(`${d}/${f}: ${e.message}`); bad++; } } }
-const wrong = [{ app: "x", steps: [] }, { schema: 1, app: "x", steps: [{ jump: 1 }] }, { schema: 1, app: "x", steps: [{ wait: 1, down: true }] }, { schema: 1, app: "x", title: "x", steps: [] }];
+const wrong = [{ app: "x", steps: [] }, { schema: 1, app: "x", steps: [{ jump: 1 }] }, { schema: 1, app: "x", steps: [{ wait: 1, down: true }] }, { schema: 1, app: "x", app: "x", steps: [] }];
 for (const w of wrong) { try { checkSession(w); console.error(`accepted, and must not be: ${JSON.stringify(w)}`); bad++; } catch {} }
 console.log(n); process.exit(bad ? 1 : 0);') || fail=1
 # the host interface (docs/spec/host.md) is what the sources give, and every SW_* variable has its kind
 node tools/gen-host-spec.mjs --check > $T/host.txt || { cat $T/host.txt; fail=1; }
-n=0; for r in recipes/*/; do $P recipe "$r" --json > /dev/null 2> $T/err || { echo "$r: $(cat $T/err)"; fail=1; }; n=$((n + 1)); done
+# every recipe is read, and is in the folder of its name (docs/spec/distribution.md#sources)
+n=0; for r in recipes/*/; do $P recipe "$r" --json > $T/r.json 2> $T/err || { echo "$r: $(cat $T/err)"; fail=1; }; n=$((n + 1))
+  [ "$(node -p 'JSON.parse(require("fs").readFileSync(process.argv[1])).name' $T/r.json 2>/dev/null)" = "$(basename $r)" ] || { echo "$r: not the folder of its name"; fail=1; }; done
 # refused: each line a change made to recipes/tag/recipe.toml (sed), and a word the error must have
 bad=0
 while IFS='|' read -r change want; do
@@ -72,6 +74,8 @@ s/^\[hints.pisco\]/[hint.pisco]/|hint is not a key of a recipe
 s/^sha256 = .*/&\nbuilt_by = "x"/|exactly one of sha256
 s/^sha256 = .*/sha256 = "abc"/|64 hex digits
 s/^name = "tag"/name = "Tag"/|lower-case
+s#^where = #url = "ftp://example.org/x"\n&#|an https://
+s#^sha256 = .*#unpinned = "any"\nurl = "https://example.org/x"#|url is for a file input pinned
 s/^\[registry\]/[quirks]\nheap_fil = 1\n[registry]/|heap_fil: not a quirk
 EOF
 [ $fail = 0 ] && echo "the spec's lists are pisco's ($(echo "$keys" | wc -l) names); $n recipes read; $bad wrong recipes refused, each saying why; $sessions sessions read"

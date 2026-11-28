@@ -1,13 +1,13 @@
 # fastfetch (2026-11-26)
 
-The first Linux title: [fastfetch](https://github.com/fastfetch-cli/fastfetch) 2.71.0 (MIT), the system-information
+The first Linux app: [fastfetch](https://github.com/fastfetch-cli/fastfetch) 2.71.0 (MIT), the system-information
 tool, as one statically linked x86-64 program on the Linux x64 runtime (`base/linux-x64:1`, `rt/linux-x64/`). It was
 chosen over neofetch, which is a bash script: running that means running bash and the programs it starts, and a
-title here is one process. Nothing of fastfetch is in the repository: `tools/build-fastfetch.sh` fetches its source
+app here is one process. Nothing of fastfetch is in the repository: `tools/build-fastfetch.sh` fetches its source
 (checked by sha256) and builds it.
 
 What it shows is the machine the runtime describes, which is what the machine is: a Linux x86-64 system imitated
-in WebAssembly, with the virtual CPU the lifter gives every title and the module's memory.
+in WebAssembly, with the virtual CPU the lifter gives every app and the module's memory.
 
 ## The files
 
@@ -38,7 +38,7 @@ its image; what it prints must be `recipes/fastfetch/traces/pipe.txt`.
 | | |
 |---|---|
 | Lifted | 1,764 functions (1,653 named by the symbols and the unwind tables, the rest call targets and code addresses in data), 314,314 instructions, none left unlifted; 100 jump tables |
-| Module | `title.wasm`, 5.8 MB; lifted and compiled in about a minute |
+| Module | `app.wasm`, 5.8 MB; lifted and compiled in about a minute |
 | System calls | 30 different ones in a run; all answered except `socket` (no network: `EAFNOSUPPORT`, and the Local IP line is left out) |
 | Files it reads | `/etc/os-release`, `/proc/cpuinfo`, `/proc/meminfo`, `/proc/uptime` (by `sysinfo`), `/proc/self/exe`, `/etc/passwd`, `/proc/mounts`, and about a hundred it looks for and does not find (other distributions' files, package databases, DMI entries) |
 
@@ -54,13 +54,13 @@ whose output from its C library must be what the same program prints when run na
   [neofetch.md](neofetch.md#what-it-took)).
 - **The x87 at 64 bits of precision**: musl's `printf` and `strtod` do their arithmetic in `long double`. With the
   registers kept as doubles (right for Windows code, which runs the x87 at 53 bits) `printf("%f")` truncated
-  instead of rounding. A Linux title's registers are the module's `long double` (binary128), each result rounded to
+  instead of rounding. A Linux app's registers are the module's `long double` (binary128), each result rounded to
   64 bits (`rt/cpu.h` `fpx`).
 - **The direction flag** (`std`: musl's `memmove` copies backwards with it) and `cvttpd2dq`.
 - **The machine**: `/proc`, `/sys`, `/dev` and the files of `/etc` every system has are generated
-  (`rt/linux-x64/proc.c`); the title's folder, or its image's drive, is the root, read-only.
-- **The page** shows a title's text in a terminal's colours (the SGR sequences; no cursor movement), and a Linux
-  title's image gets the page as its terminal (`SW_TTY`).
+  (`rt/linux-x64/proc.c`); the app's folder, or its image's drive, is the root, read-only.
+- **The page** shows an app's text in a terminal's colours (the SGR sequences; no cursor movement), and a Linux
+  app's image gets the page as its terminal (`SW_TTY`).
 
 ## Limits
 
@@ -70,7 +70,7 @@ whose output from its C library must be what the same program prints when run na
 - No network, no signals delivered, nothing can be written but the standard streams and `/dev/null`.
 - A program must be linked `-static -no-pie` and keep its symbols (for `longjmp` to be found; without `.symtab` and
   `.eh_frame` the lifter still finds what calls and data refer to).
-- No keyboard is wired to a title's standard input in the page; a terminal query a program sends is not answered.
+- No keyboard is wired to an app's standard input in the page; a terminal query a program sends is not answered.
 - x87 results are rounded twice (to 113 bits, then to 64): a result exactly between two 64-bit values can differ in
   its last bit. Transcendental x87 instructions (`fyl2x`, `f2xm1`) compute in doubles.
 
@@ -82,4 +82,4 @@ whose output from its C library must be what the same program prints when run na
 | L1 | the lifter reads an ELF, `syscall`, FS; `base/linux-x64:1`; a static musl program prints in Node | done |
 | L2 | a C library's start-up and the machine it finds: memory, files, `/proc`, `setjmp`, the x87 at 64 bits; `fixtures/linux-hello` against its native run | done |
 | L3 | fastfetch built from its source, lifted, run in Node in strict mode; its image by `pisco build` | done |
-| L4 | the page as a terminal: colours, a Linux title's image in headless Chrome | done |
+| L4 | the page as a terminal: colours, a Linux app's image in headless Chrome | done |

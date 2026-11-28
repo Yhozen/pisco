@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-// Doom (doomgeneric, GPL-2.0) as a console title: the platform layer of doomgeneric written against the console's
+// Doom (doomgeneric, GPL-2.0) as a console app: the platform layer of doomgeneric written against the console's
 // interfaces — D3D12.X (D3D12XboxCreateDevice, display back buffers, the frame clock, PresentX), GameInput
 // (keyboard and gamepad), XAudio2 (sound effects) and XGameRuntime (a user, the save folder).
 // The structure (device, queue, a texture the frame is copied into, a fullscreen pass, PresentX) follows
@@ -294,7 +294,7 @@ static void Mus_Play(void *h, boolean l) { (void)h; (void)l; }
 static boolean Mus_Playing(void) { return false; }
 music_module_t DG_music_module = {sound_devices, sizeof sound_devices / sizeof sound_devices[0], Mus_Init, Mus_Nop, Mus_SetVolume, Mus_Nop, Mus_Nop, Mus_Register, Mus_Unregister, Mus_Play, Mus_Nop, Mus_Playing, Mus_Nop};
 
-// ---- the title ----
+// ---- the app ----
 char *dg_save_dir = ".";
 int use_libsamplerate = 0;       // settings i_sound.c binds for SDL's module
 float libsamplerate_scale = 0.65f;
@@ -316,7 +316,7 @@ int main(int argc, char **argv) {
   if (FAILED(GameInputCreate(&gameinput))) gameinput = NULL;
   gfx_init();
   printf("doom: D3D12.X device ready (%dx%d)\n", W, H);
-  // the WAD is in the title's package
+  // the WAD is in the app's package
   int n = argc; char **args = malloc(sizeof(char *) * (size_t)(argc + 3));
   for (int i = 0; i < argc; i++) args[i] = argv[i];
   int has_iwad = 0; for (int i = 1; i < argc; i++) if (!strcmp(argv[i], "-iwad")) has_iwad = 1;

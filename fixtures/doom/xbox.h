@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // The console interfaces our Doom uses, written for this project (no Microsoft header is used or copied):
 // D3D12.X, GameInput, XAudio2 and XGameRuntime as C declarations with explicit vtable slots. Structures follow the
-// public D3D12 / XAudio2 layouts; the console's vtable order follows XCL's observations of retail titles
+// public D3D12 / XAudio2 layouts; the console's vtable order follows XCL's observations of retail apps
 // (github.com/ivall/xcl, GPL-2.0): command list methods from SetDescriptorHeaps on sit 4 slots after the PC's,
 // the frame clock is device #78-#80, PresentX is queue #30. Methods are called through VCALL.
 #pragma once

@@ -2,7 +2,7 @@
 // Guest CPU state and instruction helpers for lifted x86-64 code, and for lifted 32-bit x86 code.
 // Guest address == offset in wasm linear memory (the image is based below 4 GiB).
 #pragma once
-// The guest's width: the lifter defines GUEST_BITS 32 in the files of a 32-bit title, nothing in a 64-bit one's.
+// The guest's width: the lifter defines GUEST_BITS 32 in the files of a 32-bit app, nothing in a 64-bit one's.
 // A 32-bit guest uses r[0..7] (EAX..EDI, zero-extended), fs_base (its TEB), x87 and, when its code has it, x[0..7].
 #ifndef GUEST_BITS
 #define GUEST_BITS 64
@@ -17,9 +17,9 @@ typedef union { VEC(u8,16) b; VEC(u16,8) w; VEC(u32,4) d; VEC(u64,2) q;
                 VEC(float,4) ps; VEC(double,2) pd; } V;
 
 // An x87 register. Windows code runs the x87 at 53 bits of precision, so a double is the register (what is lost is
-// the exponent's range). A Linux title (-DGUEST_LINUX) runs it at its full 64 bits and its C library counts on them
+// the exponent's range). A Linux app (-DGUEST_LINUX) runs it at its full 64 bits and its C library counts on them
 // (long double: printf's digits, strtod): there a register is the module's long double (binary128, in software),
-// and each result is rounded to the precision the control word selects (64 bits unless the title changed it).
+// and each result is rounded to the precision the control word selects (64 bits unless the app changed it).
 #ifdef GUEST_LINUX
 typedef long double fpx;
 #define FXC(x) x##L
@@ -36,9 +36,9 @@ typedef struct Cpu {
   u16 fcw, fsw;   // x87 control and status
   u32 ftop;       // x87 stack top (0..7)
   u32 eflags;     // 32-bit guests: the EFLAGS bits pushfd / popfd carry beside the function's flags (AC, ID)
-  fpx st[8];      // x87 registers: doubles, or for a Linux title 64 bits of precision (fpx, below)
+  fpx st[8];      // x87 registers: doubles, or for a Linux app 64 bits of precision (fpx, below)
   struct Landing *landing; // the innermost frame an exception can resume in (rt/seh.c)
-  u64 resume;     // a Linux title: the return address the function entered next goes on from (0: its entry)
+  u64 resume;     // a Linux app: the return address the function entered next goes on from (0: its entry)
   V yh[16];       // AVX: the high 128 bits of ymm0..15 (rt/avx.h)
   u64 mm[8];      // MMX's registers, apart from the x87 ones (the lifter's mmx())
 } Cpu;
@@ -54,7 +54,7 @@ typedef struct Landing { void *jb; u64 entry_rsp; u64 resume; struct Landing *pr
 #endif
 typedef struct { u8 cf, zf, sf, of, pf, af, df; } Flags; // df: 32-bit code only (64-bit code assumes it clear)
 
-extern volatile u32 rt_last_pc;   // a title lifted with --trace-pc: the guest address of the block last entered
+extern volatile u32 rt_last_pc;   // an app lifted with --trace-pc: the guest address of the block last entered
 struct Cpu; void rt_pc(struct Cpu *c, u32 pc);   // --trace-pc: each block calls it (rt_last_pc, a ring of the last blocks, SW_BREAK)
 #define R (c->r)
 #define X (c->x)
@@ -87,8 +87,8 @@ void rt_trap(u64 addr) __attribute__((noreturn));
 void rt_unimpl(u64 addr) __attribute__((noreturn));
 void rt_call(Cpu *c, u64 target);       // each runtime's: its imports, then rt_dispatch
 void rt_dispatch(Cpu *c, u64 target);   // core.c: the lifted function at that address
-void rt_syscall(Cpu *c, u64 next);      // a Linux title's `syscall` instruction (rt/linux-x64/syscall.c); next: where it returns
-void rt_longjmp(Cpu *c);                // a Linux title's longjmp, in place of its C library's (rt/linux-x64/jump.c)
+void rt_syscall(Cpu *c, u64 next);      // a Linux app's `syscall` instruction (rt/linux-x64/syscall.c); next: where it returns
+void rt_longjmp(Cpu *c);                // a Linux app's longjmp, in place of its C library's (rt/linux-x64/jump.c)
 void rt_cpuid(Cpu *c);
 u64 rt_rdtsc(void);
 

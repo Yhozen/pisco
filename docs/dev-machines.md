@@ -5,7 +5,7 @@ change passes. An agent or a person may use `tools/boat.sh` when it helps, mostl
 machines at once, or to try a change on Ubuntu's gcc 13, and may as well not.
 
 The slow part of working on PISCO is compiling lifted C: a lifter change means clang again over every lifted
-function of every title touched (a minute or two a program on four cores). [boat.dev](https://boat.dev) sandboxes
+function of every app touched (a minute or two a program on four cores). [boat.dev](https://boat.dev) sandboxes
 are bare-metal Ubuntu machines started in about a second, billed by the second, that keep their disk as a snapshot:
 `tools/boat.sh` makes one with everything built (the snapshot `pisco-dev`), starts copies of it with this working
 tree on them, and runs commands and tests there. It needs the `boat` CLI, signed in (`boat login`, or
@@ -19,9 +19,9 @@ tools/boat.sh test                    # every test step on 7 sandboxes at once, 
 tools/boat.sh rm $id
 ```
 
-Bake again when the toolchains or the third-party titles' builds change (`tools/setup-toolchain.sh`,
+Bake again when the toolchains or the third-party apps' builds change (`tools/setup-toolchain.sh`,
 `tools/build-*.sh`): a sandbox from an old snapshot still gets this working tree, and `boat.sh test` builds the
-lifter and pisco again from it, but the Linux titles' roots and pisco's cache are the snapshot's.
+lifter and pisco again from it, but the Linux apps' roots and pisco's cache are the snapshot's.
 
 ## Measured
 
@@ -32,13 +32,13 @@ plan). "This workspace" is the 4-vCPU cloud VM the earlier work was done on.
 |---|---|---|
 | a machine ready | | 1.1 s new; 15.5 s from the snapshot with this working tree copied on |
 | toolchains, cargo, the test fixtures, from nothing | about 10 minutes | 1 m 43 s; the whole bake (and fastfetch's and neofetch's builds, the tests, the snapshot) 9 m 56 s |
-| `tools/build-title.sh` fastfetch (lift, compile, link) | 66 s | 36 s |
+| `tools/build-app.sh` fastfetch (lift, compile, link) | 66 s | 36 s |
 | `pisco build recipes/neofetch` from an empty cache (two programs) | 111 s | 27 s |
 | the default test steps | 50 s (its objects already built) | 61 s (from nothing) |
 | every test step (default, images, chrome, fastfetch, neofetch) | 15 to 20 minutes, one after another | 74 s on 7 sandboxes |
 
 The tests were not what was slow: lifting and compiling is, and the tests that lift (`images`, `chrome`, the Linux
-titles' steps) are the long ones. A second kind of speed came for nothing: the sandboxes are Ubuntu 24.04 with gcc
+apps' steps) are the long ones. A second kind of speed came for nothing: the sandboxes are Ubuntu 24.04 with gcc
 13, where this workspace has Amazon Linux with gcc 11, and the same programs built by the newer gcc showed three
 lifter bugs at once (below).
 

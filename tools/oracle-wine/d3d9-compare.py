@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 # usage: d3d9-compare.py WINE_LOG OUR_LOG
-# Sets what a title asked Direct3D 9 for under Wine against what it asked our null device for.
+# Sets what an app asked Direct3D 9 for under Wine against what it asked our null device for.
 #   WINE_LOG  a WINEDEBUG=+d3d9 log of a session (read once: a digest is kept beside it as WINE_LOG.d3d9.json)
 #   OUR_LOG   the output of the same session in our runtime with SW_D3D9_STATS=1 and SW_D3D9_FRAMES=1
 # Prints three comparisons:
@@ -21,7 +21,7 @@ here = os.path.dirname(os.path.abspath(__file__))
 src = open(os.path.join(here, 'summarize.py')).read()          # the state names live in summarize.py
 tables = {}; exec(src[src.index('RS = {'):src.index('pair = ')], tables)
 STATE_NAMES = {'device_SetRenderState': tables['RS'], 'device_SetTextureStageState': tables['TSS'], 'device_SetSamplerState': tables['SAMP'], 'device_SetTransform': tables['TS']}
-# Reference counting and interface queries: Wine logs its own along with the title's, under names of its own
+# Reference counting and interface queries: Wine logs its own along with the app's, under names of its own
 REFS = re.compile(r'(^|_)(AddRef|Release|QueryInterface|incref|decref)$')
 
 def number(v):
@@ -91,10 +91,10 @@ frames_w = wc.get('device_Present', 0) or 1; frames_o = oc.get('device_Present',
 print(f'== methods: Wine {len(wc)} called ({sum(wc.values())} calls, {frames_w} frames), here {len(oc)} ({sum(oc.values())} calls, {frames_o} frames)')
 both = [k for k in wc if k in oc]
 print(f'  in both: {len(both)}')
-for title, keys, side in (('only under Wine', [k for k in wc if k not in oc], wc), ('only here', [k for k in oc if k not in wc], oc)):
+for app, keys, side in (('only under Wine', [k for k in wc if k not in oc], wc), ('only here', [k for k in oc if k not in wc], oc)):
     plain = [k for k in keys if not REFS.search(k)]; refs = [k for k in keys if REFS.search(k)]
-    print(f'  {title}: ' + (', '.join(f'{k} {side[k]}' for k in plain) or 'none'))
-    if refs: print(f'  {title}, reference counting and interface queries: ' + ', '.join(f'{k} {side[k]}' for k in refs))
+    print(f'  {app}: ' + (', '.join(f'{k} {side[k]}' for k in plain) or 'none'))
+    if refs: print(f'  {app}, reference counting and interface queries: ' + ', '.join(f'{k} {side[k]}' for k in refs))
 print('  Wine\'s other trace lines (no method entry: its own reference counts and objects): ' + ', '.join(f'{k} {n}' for k, n in sorted(w['lines'].items(), key=lambda t: -t[1])))
 print('  calls in both, where the count is not a per-frame one (equal counts are not listed):')
 once = [(k, wc[k], oc[k]) for k in both if wc[k] != oc[k] and not REFS.search(k) and max(wc[k], oc[k]) < 3 * max(frames_w, frames_o) // 10]

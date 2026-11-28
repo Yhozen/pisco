@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #![no_std]
 #![no_main]
-// Threads and synchronisation as a title uses them: our own test code, built as a Windows executable.
+// Threads and synchronisation as an app uses them: our own test code, built as a Windows executable.
 use core::panic::PanicInfo;
 use core::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 #[panic_handler] fn panic(_: &PanicInfo) -> ! { unsafe { ExitProcess(99) } }

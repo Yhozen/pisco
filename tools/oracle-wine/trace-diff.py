@@ -1,18 +1,18 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 # usage: trace-diff.py WINE_LOG OUR_LOG [--image LO-HI] [--our-image LO-HI] [--skip DLL,...] [--unseen NAME,...] [--until NAME] [--context N]
-# Compares what a title asked Windows for under Wine with what it asked our runtime for, and shows the first
+# Compares what an app asked Windows for under Wine with what it asked our runtime for, and shows the first
 # place the two differ.
-#   WINE_LOG  a WINEDEBUG=+relay log; only calls made from the title's image count (--image, default 0x400000-0x7fffff)
+#   WINE_LOG  a WINEDEBUG=+relay log; only calls made from the app's image count (--image, default 0x400000-0x7fffff)
 #   OUR_LOG   the output of a run with SW_TRACE=2 (lines "[thread] dll!Name")
 # Both become the sequence of function names with repeats of one name, or of a pair, folded ("HeapAlloc x321"): how often a
 # function is called in a row depends on the machine (environment variables, locale), which one comes next
 # should not. --until NAME stops both at the first call of NAME (e.g. Direct3DCreate9). Exit status 1 if they differ.
-# --our-image: the title's image in our run, when it is not where Wine loaded it (a 64-bit exe: Wine puts it high,
+# --our-image: the app's image in our run, when it is not where Wine loaded it (a 64-bit exe: Wine puts it high,
 # the lifter at 0x10000000). --skip: DLLs whose calls Wine's side has and ours cannot (ours are lifted with the
-# title and called directly, as Microsoft's msvcp140 is: Wine relays its own builtin copy). --unseen: more calls
-# Wine does not relay for this title (64-bit Wine's kernel32 forwards GetSystemTimeAsFileTime to a system call).
+# app and called directly, as Microsoft's msvcp140 is: Wine relays its own builtin copy). --unseen: more calls
+# Wine does not relay for this app (64-bit Wine's kernel32 forwards GetSystemTimeAsFileTime to a system call).
 # usage: trace-diff.py WINE_LOG --record FILE [--image LO-HI] [--until NAME] writes Wine's folded sequence ("Name xCount"
-# a line: names and counts, nothing of the title's) to FILE; such a file can be given as WINE_LOG afterwards, so a
+# a line: names and counts, nothing of the app's) to FILE; such a file can be given as WINE_LOG afterwards, so a
 # check does not need Wine or its 800 MB log.
 import re, sys
 
@@ -71,7 +71,7 @@ def ours(path):
             name = ORDINAL.get(f'{m.group(1).lower()}!{m.group(2)}', m.group(2))
             if name.startswith('#'): continue
             a, b = our or (lo, hi)
-            if not m.group(3) or a <= int(m.group(3), 16) <= b: yield name   # calls from the title's image, as Wine's side
+            if not m.group(3) or a <= int(m.group(3), 16) <= b: yield name   # calls from the app's image, as Wine's side
 def recorded(path):  # a file --record wrote
     for line in open(path):
         if line.strip() and not line.startswith('#'):
@@ -83,7 +83,7 @@ w = fold(recorded(args[0]) if is_recorded(args[0]) else wine(args[0]))
 if '--record' in args:
     out = args[args.index('--record') + 1]
     with open(out, 'w') as f:
-        f.write(f'# Wine\'s calls from the title\'s image, repeats folded' + (f', up to {until}' if until else '') + '. Written by tools/oracle-wine/trace-diff.py --record.\n')
+        f.write(f'# Wine\'s calls from the app\'s image, repeats folded' + (f', up to {until}' if until else '') + '. Written by tools/oracle-wine/trace-diff.py --record.\n')
         for n, c in w: f.write(f'{n} x{c}\n')
     print(f'{out}: {len(w)} steps, {sum(c for _, c in w)} calls'); sys.exit(0)
 o = fold(ours(args[1]))

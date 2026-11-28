@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-// A 32-bit title for what old Visual C++ code leans on: the x87 (control word, precision, rounding, the
+// A 32-bit app for what old Visual C++ code leans on: the x87 (control word, precision, rounding, the
 // transcendental instructions, compares), the direction flag, EFLAGS.ID, a stdcall callback, and instructions
 // 64-bit code never uses (pushad, enter, loop, jecxz, rcl, rcr, xlat). It prints one line per check; the
 // expected output (expected.txt) is what the same program prints under Wine on a real CPU:
